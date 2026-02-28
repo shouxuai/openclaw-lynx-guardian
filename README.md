@@ -32,7 +32,7 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 在 OpenClaw 的对话框中直接输入以下指令即可自动安装并启用插件：
 
 ```text
-帮我安装lynx-guardian插件，插件地址： https://github.com/shouxuai/openclaw-lynx-guardian
+帮我安装openclaw lynx-guardian插件，插件地址： https://github.com/shouxuai/openclaw-lynx-guardian
 执行：git clone https://github.com/shouxuai/openclaw-lynx-guardian.git
 进入插件目录：cd openclaw-lynx-guardian
 安装依赖：npm install
