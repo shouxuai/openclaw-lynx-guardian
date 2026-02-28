@@ -1,0 +1,26 @@
+{
+  "name": "@openclaw/lynx-guardian",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lynx – known for its keen vision, symbolizing \"high-resolution perception\" of risks, multidimensionally identifying threats to intelligent agents, and reshaping the security boundaries of agents.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "vitest",
+    "build": "node scripts/build.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.1.26"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
