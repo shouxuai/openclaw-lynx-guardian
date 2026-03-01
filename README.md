@@ -33,10 +33,27 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 
 ```text
 帮我安装openclaw lynx-guardian插件，插件地址： https://github.com/shouxuai/openclaw-lynx-guardian
-执行：git clone https://github.com/shouxuai/openclaw-lynx-guardian.git
-进入插件目录：cd openclaw-lynx-guardian
-安装依赖：npm install
+
 ```
+手动安装步骤：
+
+1.  克隆插件仓库：
+    ```bash
+    git clone https://github.com/shouxuai/openclaw-lynx-guardian.git
+    ```
+2.  进入插件目录：
+    拷贝插件目录到 OpenClaw 插件目录：
+    ```bash
+    cp -r openclaw-lynx-guardian /path/to/openclaw/extensions/
+    ```
+3.  安装依赖：
+    ```bash
+    npm install
+    ```
+4.  启用插件：
+    ```bash
+    openclaw plugins add lynx-guardian
+    ```
 
 ## ⚙️ 配置说明
 
