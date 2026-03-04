@@ -57,8 +57,28 @@ openclaw对话框输入以下指令：
     npm install
     ```
 4.  启用插件：
-    ```bash
-    openclaw plugins add lynx-guardian
+    ```config 配置
+    "plugins": {
+        "entries": {
+            "openclaw-lynx-guardian": {
+                "enabled": true
+            }
+        },
+        "installs": {
+            "openclaw-lynx-guardian": {
+                "spec": "openclaw-lynx-guardian",
+                "installPath": "/path/to/openclaw/extensions/",
+                "version": "1.0.1",
+                "resolvedName": "openclaw-lynx-guardian",
+                "resolvedVersion": "1.0.1",
+                "resolvedSpec": "openclaw-lynx-guardian@1.0.1",
+                "shasum": "e8275df385212d82b495775658d813fb03a6eea6",
+            "resolvedAt": "2026-03-02T11:49:51.903Z",
+            "installedAt": "2026-03-02T11:49:51.923Z"
+        }
+        }
+    }
+    
     ```
 
 ## ⚙️ 配置说明
