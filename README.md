@@ -2,7 +2,8 @@
 # Lynx Guardian (首序猞猁)
 
 Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，象征对风险的“高分辨率感知”，多维识别智能体威胁，重塑 Agent 安全边界。
-[中文](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md)
+
+[中文](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md) | 
 [en](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md)
 ## 🛡️ 核心功能
 
