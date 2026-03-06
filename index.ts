@@ -3,6 +3,7 @@ import type { OpenClawPluginApi } from "./src/types.js";
 import { ensureUserRegistered, readRecentContext } from "./src/utils.js";
 import { registerUser, checkContent, checkTool, pushRecord } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
+import { SensitiveDataBlocker } from "./src/sensitive.js";
 
 function canonicalizePath(raw: string): string {
   if (typeof raw !== "string" || raw.length === 0) {
@@ -15,8 +16,7 @@ function canonicalizePath(raw: string): string {
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
   log.info("[lynx-guardian] Plugin loading...");
-
-  // 1. User Registration
+  const sensitiveDataBlocker = new SensitiveDataBlocker();
   let userId: string;
   try {
     userId = ensureUserRegistered();
@@ -30,7 +30,21 @@ export default function setup(api: OpenClawPluginApi) {
     return;
   }
 
-  // 2. Agent Input Detection (before_agent_start)
+  api.on("message_received", async(event, ctx) => {
+    try {
+      if (!event.content || event.content.length === 0) return;
+      if (sensitiveDataBlocker.containsSensitiveData(event.content)) {
+        log.warn(`[lynx-guardian] Sensitive data detected: ${event.content}`);
+        await pushRecord(userId, event.content, 1);
+        return {
+          block: true,
+          blockReason: "Sensitive data detected"
+        }
+      }
+    } catch (err: any) {
+      log.error(`[lynx-guardian] Sensitive data detected failed: ${err.message}`);
+    }
+  })
   api.on("before_agent_start", async (event, ctx) => {
     try {
       if (!event.prompt || !event.messages) return;
@@ -41,13 +55,14 @@ export default function setup(api: OpenClawPluginApi) {
       if (res.result.risk_level > 0) {
         let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}），`;
         if (warning.includes("个人隐私")) {
-          warning += "包含隐私内容需要进行脱敏处理。\n";
+          warning += "包含隐私内容需要进行脱敏处理。";
         } else if (!res.result.level_one.includes("其他")) {
           warning += "包含价值观不正当，进行价值观正向引导。\n";
         } else {
           warning += "插件已进行拦截。\n";
         }
         log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
+
         return {
           prependContext: warning
         } as any
@@ -57,8 +72,6 @@ export default function setup(api: OpenClawPluginApi) {
       log.error(`[lynx-guardian] Input check failed: ${err.message}`);
     }
   });
-
-  // 3. Agent Output Detection (agent_end)
   api.on("agent_end", async (event, ctx) => {
     try {
       log.info(JSON.stringify(ctx));
@@ -84,23 +97,21 @@ export default function setup(api: OpenClawPluginApi) {
     }
   });
 
-  // 4. Tool Call Detection (before_tool_call)
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
     
     // Local Blacklist Check
     let match = null;
-    log.info(params?.command)
     if (toolName === "exec") {
-      match = checkExecBlacklist((params?.command ?? "") as string);
+      const command = (params?.command ?? "") as string;
+      match = checkExecBlacklist(typeof command === "string" ? command : "");
     } else if (toolName === "write" || toolName === "edit") {
       const rawPath = (params?.file_path ?? params?.path ?? "") as string;
       log.info(`[lynx-guardian] Raw path: ${rawPath}`);
-      const safePath = canonicalizePath(rawPath);
+      const safePath = canonicalizePath(typeof rawPath === "string" ? rawPath : "");
       match = checkPathBlacklist(safePath);
     }
     log.info(`[lynx-guardian] Tool call: ${toolName} | ${JSON.stringify(params)}`);
-    log.info(JSON.stringify(match));  
     if (!match) return; // Safe
 
     log.warn(`[lynx-guardian] Blacklist hit: ${toolName} | ${match.reason}`);
@@ -108,7 +119,6 @@ export default function setup(api: OpenClawPluginApi) {
     const detail = toolName === "exec" ? (params?.command ?? "") : (params?.file_path ?? params?.path ?? "");
     const contentToReport = toolName === "exec" ? `执行 ${detail} 命令` : `${toolName} ${detail}`;
 
-    // Report to backend
     try {
       const riskLevel = match.level === "critical" ? 3 : 2;
       await pushRecord(userId, contentToReport, riskLevel);

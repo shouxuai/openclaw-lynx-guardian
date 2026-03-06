@@ -10,8 +10,20 @@ export interface PluginConfig {
   [key: string]: any;
 }
 
+export interface Message {
+  role: string;
+  content: string;
+  sender?: {
+    id: string;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
 export interface EventContext {
   sessionKey?: string;
+  sendMessage?: (message: Message) => Promise<void>;
+  terminateSession?: (options: { reason: string; silent: boolean }) => Promise<void>;
   [key: string]: any;
 }
 
@@ -28,6 +40,11 @@ export interface AgentStartEvent {
 export interface AgentEndEvent {
   output: string; // Assuming output is a string or object with output
   [key: string]: any;
+}
+
+export interface PatternRule {
+  type: string;
+  regex: RegExp;
 }
 
 export interface OpenClawPluginApi {
