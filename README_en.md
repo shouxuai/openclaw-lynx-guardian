@@ -2,6 +2,9 @@
 
 Lynx - First Order Lynx, an agent security product. Lynx—renowned for its keen vision, symbolizing "high-resolution perception" of risk, multi-dimensionally identifying agent threats and reshaping agent security boundaries.
 
+[中文](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md) | 
+[en](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md)
+
 ## 🛡️ Core Functions
 
 1. **Automatic Identity Registration and Management**
@@ -18,23 +21,27 @@ Lynx - First Order Lynx, an agent security product. Lynx—renowned for its keen
 
 - **Local Blacklist**: Millisecond-level interception of high-risk commands (such as `rm -rf /`, modifying `/etc/passwd`, etc.).
 
-- **Semantic Analysis**: Deeply analyzes the true intent of tool calls based on context to prevent bypass and injection attacks. **External Application Protection:**
+- **Semantic Analysis**: Deeply analyzes the true intent of tool calls based on context to prevent bypass and injection attacks. **Peripheral Application Protection:**
 
-- **Monitor and block unauthorized access to external systems (such as databases, file systems, etc.).**
+- **Monitors and blocks unauthorized access to external systems (such as databases, file systems, etc.).**
 
-- **Strict permission verification is performed on calls to external systems to prevent unauthorized access.**
+- **Strictly verifies permissions for calls to external systems to prevent unauthorized access.**
 
 3. **Tiered Response Mechanism:**
 
-- 🔴 **High Risk (Level 3)**: Operations are directly blocked and reported to the security center.
+- 🔴 **High Risk (Level 3)**: Directly blocks the operation and reports it to the security center.
 
-- 🟠 **Medium Risk (Level 2)**: Operations are blocked; explicit user confirmation (entering "Confirm" or "Agree") is required before permission is granted.
+- 🟠 **Medium Risk (Level 2)**: Blocks the operation; it can only be allowed after explicit user confirmation (entering "Confirm" or "Agree").
 
-- 🟡 **Low Risk (Level 1)**: Operations are allowed, but security prompts and value guidance are injected into the context.
+- 🟡 **Low Risk (Level 1)**: Allows the operation, but injects security prompts and value guidance into the context.
 
-4. **Real-Time Audit Reporting:**
+4. **Autonomous Security Enhancement:**
 
-- All blocked records and risk events are reported to the backend in real time, forming a complete security audit chain.
+- Based on metacognitive autonomous learning, enhances the Agent's capabilities and security awareness in the security domain.
+
+5. **Real-Time Audit Reporting:**
+
+- All interception records and risk events are reported to the backend in real time, forming a complete security audit chain.
 
 ## 📦 Installation Steps
 
@@ -69,27 +76,58 @@ Copy the plugin directory to the OpenClaw plugin directory:
 cp -r openclaw-lynx-guardian /path/to/openclaw/extensions/
 
 ```
-3. Install dependencies: 
-```bash 
-npm install 
+Copy the skill directory to OpenClaw Skills directory:
+
+``bash
+
+cp -r openclaw-lynx-guardian/skills/lynx-guardian-lesson /path/to/openclaw/skills/
+
 ```
-4. Enable the plugin: 
-```config configuration 
-"plugins": { 
-"entries": { 
-"openclaw-lynx-guardian": { 
-"enabled": true 
-} 
-}, 
-"installs": { 
-"openclaw-lynx-guardian": { 
-"spec": "openclaw-lynx-guardian", 
-"installPath": "/path/to/openclaw/extensions/", 
-"version": "1.0.1", 
-"resolvedName": "openclaw-lynx-guardian", 
-"resolvedVersion": "1.0.1", 
-"resolvedSpec": "openclaw-lynx-guardian@1.0.1", 
-"shasum": "e8275df385212d82b495775658d813fb03a6eea6", 
+Copy the hooks directory to the OpenClaw hooks directory:
+
+``bash
+
+cp -r openclaw-lynx-guardian/hooks/lynx-guardian-sensitiveData /path/to/openclaw/hooks/
+
+```
+3. Install dependencies:
+
+``bash
+
+npm install
+
+```
+4. Enable plugins:
+
+``config configuration
+
+"plugins": {
+
+"entries": {
+
+"openclaw-lynx-guardian": {
+
+"enabled": true
+
+}
+},
+
+"installs": {
+
+"openclaw-lynx-guardian": {
+
+"spec": "openclaw-lynx-guardian",
+
+"installPath": "/path/to/openclaw/extensions/", "version": "1.0.1",
+
+"resolvedName": "openclaw-lynx-guardian",
+
+"resolvedVersion": "1.0.1",
+
+"resolvedSpec": "openclaw-lynx-guardian@1.0.1",
+
+"shasum": "e8275df385212d82b495775658d813fb03a6eea6",
+
 "resolvedAt": "2026-03-02T11:49:51.903Z",
 
 "installedAt": "2026-03-02T11:49:51.923Z"
@@ -99,6 +137,12 @@ npm install
 }
 
 ``
+## 🔧 Enable Metacognition to Improve Security Decisions
+```bash
+openclaw hooks enable lynx-guardian-lesson
+openclaw skills enable lynx-guardian-sensitiveData
+
+```
 
 ## ⚙️ Configuration Instructions
 

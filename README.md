@@ -26,7 +26,10 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
     -   🟠 **中危 (Level 2)**: 拦截操作，必须由用户明确确认（输入“确认”或“同意”）后方可放行。
     -   🟡 **低危 (Level 1)**: 允许操作，但在上下文中注入安全提示与价值观引导。
 
-4.  **实时审计上报**
+4.  **自主安全提升**
+    -   基于元认知的自主学习，提升Agent在安全领域的能力和安全感知能力。
+
+5.  **实时审计上报**
     -   所有拦截记录与风险事件均会实时上报至后端，形成完整的安全审计链。
 
 ## 📦 安装步骤
@@ -52,6 +55,14 @@ openclaw对话框输入以下指令：
     拷贝插件目录到 OpenClaw 插件目录：
     ```bash
     cp -r openclaw-lynx-guardian /path/to/openclaw/extensions/
+    ```
+    拷贝skill目录到 OpenClaw skill目录：
+    ```bash
+    cp -r openclaw-lynx-guardian/skills/lynx-guardian-lesson /path/to/openclaw/skills/
+    ```
+    拷贝hooks目录到 OpenClaw hooks目录：
+    ```bash
+    cp -r openclaw-lynx-guardian/hooks/lynx-guardian-sensitiveData /path/to/openclaw/hooks/
     ```
 3.  安装依赖：
     ```bash
@@ -81,6 +92,11 @@ openclaw对话框输入以下指令：
     }
     
     ```
+## 🔧 启用元认知提升安全决策
+```bash
+    openclaw hooks enable lynx-guardian-lesson
+    openclaw skills enable lynx-guardian-sensitiveData
+```
 
 ## ⚙️ 配置说明
 

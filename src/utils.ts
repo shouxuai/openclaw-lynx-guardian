@@ -1,8 +1,12 @@
 
 import { homedir } from "os";
-import { join } from "path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from "fs";
+import { join, resolve, dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, lstatSync, copyFileSync } from "fs";
+import { fileURLToPath } from "url";
 import { CONFIG } from "./config.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export function getCacheDir(): string {
   const home = homedir();
@@ -100,13 +104,85 @@ export function readRecentContext(_sessionKey?: string): string {
           if (text && text.trim()) userMessages.push(text.trim().slice(0, 500));
         }
       } catch {
-        /* skip malformed lines */
+        /* ignore invalid lines */
       }
     }
 
-    // Get last 3 user messages
-    return userMessages.slice(-3).join("\n---\n") || "(no user messages found)";
-  } catch {
-    return "(failed to read session context)";
+    return userMessages.join("\n");
+  } catch (err) {
+    return "(error reading context)";
+  }
+}
+
+function copyFolderRecursiveSync(source: string, target: string) {
+  if (!existsSync(target)) {
+    mkdirSync(target, { recursive: true });
+  }
+
+  if (lstatSync(source).isDirectory()) {
+    const files = readdirSync(source);
+    files.forEach((file) => {
+      const curSource = join(source, file);
+      const curTarget = join(target, file);
+      if (lstatSync(curSource).isDirectory()) {
+        copyFolderRecursiveSync(curSource, curTarget);
+      } else {
+        copyFileSync(curSource, curTarget);
+      }
+    });
+  }
+}
+
+export function ensureResources() {
+  const home = homedir();
+  const openclawDir = join(home, ".openclaw");
+  const hooksDir = join(openclawDir, "hooks");
+  const skillsDir = join(openclawDir, "skills");
+
+  if (!existsSync(hooksDir)) {
+    mkdirSync(hooksDir, { recursive: true });
+  }
+  if (!existsSync(skillsDir)) {
+    mkdirSync(skillsDir, { recursive: true });
+  }
+
+  // Assuming we are running from dist/index.js (bundled) or src/utils.ts (ts-node)
+  // We need to find the project root where hooks/ and skills/ are located.
+  let projectRoot = __dirname;
+  
+  // 1. Check if hooks/ exists in current directory (dist/hooks case)
+  if (existsSync(join(projectRoot, "hooks"))) {
+    // Found it in current directory (e.g. dist/)
+  } else {
+    // 2. Check parent directory (dev case: src/../hooks)
+    projectRoot = resolve(__dirname, "..");
+    if (!existsSync(join(projectRoot, "hooks"))) {
+       // 3. Check one more level up just in case
+       projectRoot = resolve(projectRoot, "..");
+    }
+  }
+
+  const sourceHooksDir = join(projectRoot, "hooks", "lynx-guardian-sensitiveData");
+  const sourceSkillsDir = join(projectRoot, "skills", "lynx-guardian-lesson");
+
+  const targetHooksPath = join(hooksDir, "lynx-guardian-sensitiveData");
+  const targetSkillsPath = join(skillsDir, "lynx-guardian-lesson");
+
+  // Copy hooks if not exists
+  if (existsSync(sourceHooksDir) && !existsSync(targetHooksPath)) {
+    try {
+      copyFolderRecursiveSync(sourceHooksDir, targetHooksPath);
+    } catch (e) {
+      console.error(`[lynx-guardian] Failed to copy hooks: ${e}`);
+    }
+  }
+
+  // Copy skills if not exists
+  if (existsSync(sourceSkillsDir) && !existsSync(targetSkillsPath)) {
+    try {
+      copyFolderRecursiveSync(sourceSkillsDir, targetSkillsPath);
+    } catch (e) {
+      console.error(`[lynx-guardian] Failed to copy skills: ${e}`);
+    }
   }
 }

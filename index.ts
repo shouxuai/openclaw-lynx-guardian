@@ -1,6 +1,6 @@
 import { resolve, normalize } from "path";
 import type { OpenClawPluginApi } from "./src/types.js";
-import { ensureUserRegistered, readRecentContext } from "./src/utils.js";
+import { ensureUserRegistered, readRecentContext, ensureResources } from "./src/utils.js";
 import { registerUser, checkContent, checkTool, pushRecord } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/sensitive.js";
@@ -25,6 +25,13 @@ export default function setup(api: OpenClawPluginApi) {
     }).catch(err => {
       log.error(`[lynx-guardian] Registration failed: ${err.message}`);
     });
+
+    try {
+      ensureResources();
+      log.info("[lynx-guardian] Resources (hooks/skills) checked.");
+    } catch (err: any) {
+      log.error(`[lynx-guardian] Failed to ensure resources: ${err.message}`);
+    }
   } catch (err: any) {
     log.error(`[lynx-guardian] Failed to initialize user ID: ${err.message}`);
     return;

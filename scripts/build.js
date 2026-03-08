@@ -38,6 +38,17 @@ for (const file of filesToCopy) {
   }
 }
 
+// 3.1 Copy directories (hooks, skills)
+const dirsToCopy = ["hooks", "skills"];
+console.log("Copying directories...");
+for (const dir of dirsToCopy) {
+  const src = path.join(rootDir, dir);
+  const dest = path.join(distDir, dir);
+  if (fs.existsSync(src)) {
+    fs.cpSync(src, dest, { recursive: true });
+  }
+}
+
 // 4. Update package.json in dist to point to JS entry
 const distPkgPath = path.join(distDir, "package.json");
 if (fs.existsSync(distPkgPath)) {
