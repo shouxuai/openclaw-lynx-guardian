@@ -5,6 +5,11 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 
 [中文](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md) | 
 [en](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md)
+
+## 最新版本
+
+-   **v1.0.4**: 支持公网暴露访问检查，完善元认知安全自提升功能。
+
 ## 🛡️ 核心功能
 
 1.  **自动身份注册与管理**

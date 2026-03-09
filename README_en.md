@@ -5,6 +5,10 @@ Lynx - First Order Lynx, an agent security product. Lynx—renowned for its keen
 [中文](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md) | 
 [en](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md)
 
+## Latest Version
+
+- **v1.0.4**: Supports public network exposure access checks and improves metacognitive security self-elevation functionality.
+
 ## 🛡️ Core Functions
 
 1. **Automatic Identity Registration and Management**

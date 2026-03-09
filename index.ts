@@ -1,7 +1,7 @@
 import { resolve, normalize } from "path";
 import type { OpenClawPluginApi } from "./src/types.js";
-import { ensureUserRegistered, readRecentContext, ensureResources } from "./src/utils.js";
-import { registerUser, checkContent, checkTool, pushRecord } from "./src/api.js";
+import { ensureUserRegistered, readRecentContext, ensureResources, baseIpInfo } from "./src/utils.js";
+import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/sensitive.js";
 
@@ -18,6 +18,7 @@ export default function setup(api: OpenClawPluginApi) {
   log.info("[lynx-guardian] Plugin loading...");
   const sensitiveDataBlocker = new SensitiveDataBlocker();
   let userId: string;
+  
   try {
     userId = ensureUserRegistered();
     registerUser(userId).then(res => {
@@ -55,12 +56,26 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("before_agent_start", async (event, ctx) => {
     try {
       if (!event.prompt || !event.messages) return;
-      const input = typeof event.prompt === 'string' ? event.prompt.replace(/^\[[^\]]+\]\s*/, "") : JSON.stringify(event.prompt);
+      let prependContext = ""
+      // Public access check
+      const ipInfo = await baseIpInfo();
       
+      if (ipInfo.type == "next_check") {
+        const res = await checkPublicAccess(userId,ipInfo.ip, ipInfo.port);
+        if (res.result.is_public) {
+          log.error(`[lynx-guardian] Public access check failed`);
+          const warning = `⚠️重要提醒：当前IP ${ipInfo.ip} 暴露在公网环境，强烈建议配置防火墙规则，仅允许必要端口暴露。\n`;
+          prependContext += warning
+        } else {
+          log.info(`[lynx-guardian] Public access check passed`);
+        }
+      }
+      // Check input risk
+      const input = typeof event.prompt === 'string' ? event.prompt.replace(/^\[[^\]]+\]\s*/, "") : JSON.stringify(event.prompt);
       const res = await checkContent(userId, input, 1);
       
       if (res.result.risk_level > 0) {
-        let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}），`;
+        let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}），\n`;
         if (warning.includes("个人隐私")) {
           warning += "包含隐私内容需要进行脱敏处理。";
         } else if (!res.result.level_one.includes("其他")) {
@@ -70,11 +85,11 @@ export default function setup(api: OpenClawPluginApi) {
         }
         log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
 
-        return {
-          prependContext: warning
-        } as any
+        prependContext += warning
       }
-      return;
+      return {
+        prependContext
+      } as any
     } catch (err: any) {
       log.error(`[lynx-guardian] Input check failed: ${err.message}`);
     }
