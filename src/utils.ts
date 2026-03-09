@@ -24,7 +24,7 @@ export function generateUserId(): string {
   // Format: LYNX00 (6 chars) + 8 digits (timestamp) + 4 digits (random)
   // Total length: 18 chars
   const prefix = "LYNX00";
-  
+
   // 8 digits timestamp: YYYYMMDD
   const now = new Date();
   const year = now.getFullYear().toString();
@@ -103,7 +103,7 @@ export function readRecentContext(_sessionKey?: string): string {
               .map((b: any) => b.text)
               .join(" ");
           }
-          
+
           if (text && text.trim()) userMessages.push(text.trim().slice(0, 500));
         }
       } catch {
@@ -152,7 +152,7 @@ export function ensureResources() {
   // Assuming we are running from dist/index.js (bundled) or src/utils.ts (ts-node)
   // We need to find the project root where hooks/ and skills/ are located.
   let projectRoot = __dirname;
-  
+
   // 1. Check if hooks/ exists in current directory (dist/hooks case)
   if (existsSync(join(projectRoot, "hooks"))) {
     // Found it in current directory (e.g. dist/)
@@ -160,8 +160,8 @@ export function ensureResources() {
     // 2. Check parent directory (dev case: src/../hooks)
     projectRoot = resolve(__dirname, "..");
     if (!existsSync(join(projectRoot, "hooks"))) {
-       // 3. Check one more level up just in case
-       projectRoot = resolve(projectRoot, "..");
+      // 3. Check one more level up just in case
+      projectRoot = resolve(projectRoot, "..");
     }
   }
 
@@ -265,4 +265,13 @@ export async function baseIpInfo() {
       port
     };
   }
+}
+
+export function extractContentAfterDate(str: string): string {
+  const bracketEndIndex = str.indexOf(']');
+  if (bracketEndIndex === -1) {
+    return '';
+  }
+  const content = str.slice(bracketEndIndex + 1).trim();
+  return content;
 }

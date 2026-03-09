@@ -1,6 +1,6 @@
 import { resolve, normalize } from "path";
 import type { OpenClawPluginApi } from "./src/types.js";
-import { ensureUserRegistered, readRecentContext, ensureResources, baseIpInfo } from "./src/utils.js";
+import { ensureUserRegistered, readRecentContext, ensureResources, baseIpInfo, extractContentAfterDate } from "./src/utils.js";
 import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/sensitive.js";
@@ -18,7 +18,7 @@ export default function setup(api: OpenClawPluginApi) {
   log.info("[lynx-guardian] Plugin loading...");
   const sensitiveDataBlocker = new SensitiveDataBlocker();
   let userId: string;
-  
+
   try {
     userId = ensureUserRegistered();
     registerUser(userId).then(res => {
@@ -38,7 +38,7 @@ export default function setup(api: OpenClawPluginApi) {
     return;
   }
 
-  api.on("message_received", async(event, ctx) => {
+  api.on("message_received", async (event, ctx) => {
     try {
       if (!event.content || event.content.length === 0) return;
       if (sensitiveDataBlocker.containsSensitiveData(event.content)) {
@@ -59,9 +59,8 @@ export default function setup(api: OpenClawPluginApi) {
       let prependContext = ""
       // Public access check
       const ipInfo = await baseIpInfo();
-      
       if (ipInfo.type == "next_check") {
-        const res = await checkPublicAccess(userId,ipInfo.ip, ipInfo.port);
+        const res = await checkPublicAccess(userId, ipInfo.ip, ipInfo.port);
         if (res.result.is_public) {
           log.error(`[lynx-guardian] Public access check failed`);
           const warning = `⚠️重要提醒：当前IP ${ipInfo.ip} 暴露在公网环境，强烈建议配置防火墙规则，仅允许必要端口暴露。\n`;
@@ -70,10 +69,10 @@ export default function setup(api: OpenClawPluginApi) {
           log.info(`[lynx-guardian] Public access check passed`);
         }
       }
+      log.info(`[lynx-guardian] Input messages: ${JSON.stringify(event.prompt)}`);
       // Check input risk
-      const input = typeof event.prompt === 'string' ? event.prompt.replace(/^\[[^\]]+\]\s*/, "") : JSON.stringify(event.prompt);
+      const input = extractContentAfterDate(event.prompt);
       const res = await checkContent(userId, input, 1);
-      
       if (res.result.risk_level > 0) {
         let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}），\n`;
         if (warning.includes("个人隐私")) {
@@ -99,12 +98,12 @@ export default function setup(api: OpenClawPluginApi) {
       log.info(JSON.stringify(ctx));
       if (!event.messages) return;
       const lastContent = event.messages[event.messages.length - 1].content;
-      const lastMessage = lastContent[lastContent.length -1];
+      const lastMessage = lastContent[lastContent.length - 1];
       const output = lastMessage?.text ?? "";
       const res = await checkContent(userId, output, 2);
 
       if (res.result.risk_level > 0) {
-        
+
         let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}）`;
         if (warning.includes("个人隐私")) {
           warning += "隐私内容需要进行脱敏处理，请勿在非必要场景随意提供。";
@@ -121,7 +120,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
-    
+
     // Local Blacklist Check
     let match = null;
     if (toolName === "exec") {
@@ -176,7 +175,7 @@ export default function setup(api: OpenClawPluginApi) {
       } else if (riskLevel === 1) {
         // Low Risk -> Safety Advice
         log.info(`[lynx-guardian] 识别到内容风险: ${res.result.content}`);
-        return; 
+        return;
       } else {
         // No Risk -> Pass
         return;
