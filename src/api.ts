@@ -7,6 +7,14 @@ export interface RegisterResponse {
   message: string;
 }
 
+export interface PublicAccessCheckResponse {
+  code: number;
+  result: {
+    is_public: boolean;
+  };
+  message: string;
+}
+
 export interface ContentCheckResponse {
   code: number;
   result: {
@@ -93,4 +101,21 @@ export async function pushRecord(
     }),
   });
   return response.json() as Promise<PushRecordResponse>;
+}
+
+export async function checkPublicAccess(
+  id: string,
+  publicIP: string,
+  port: number,
+): Promise<PublicAccessCheckResponse> {
+  const response = await fetch(`${CONFIG.API_BASE_URL}/api/v1/check_public_access`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id,
+      publicIP,
+      port,
+    }),
+  });
+  return response.json() as Promise<PublicAccessCheckResponse>;
 }

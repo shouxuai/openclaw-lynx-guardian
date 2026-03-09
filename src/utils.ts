@@ -1,7 +1,10 @@
 
-import { homedir } from "os";
+import { homedir, platform } from "os";
 import { join, resolve, dirname } from "path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, lstatSync, copyFileSync } from "fs";
+import path from "path";
+import { execSync } from "child_process";
+
 import { fileURLToPath } from "url";
 import { CONFIG } from "./config.js";
 
@@ -184,5 +187,82 @@ export function ensureResources() {
     } catch (e) {
       console.error(`[lynx-guardian] Failed to copy skills: ${e}`);
     }
+  }
+}
+
+function getOpenClawPort() {
+  const configPath = path.join(
+    homedir(),
+    ".openclaw",
+    "openclaw.json"
+  );
+  try {
+    const config = JSON.parse(
+      readFileSync(configPath, "utf8")
+    );
+    return config?.gateway?.port ?? 18789;
+  } catch {
+    return 18789;
+  }
+}
+
+export async function baseIpInfo() {
+  const port = getOpenClawPort();
+  const run_platform = platform();
+  let cmd;
+
+  if (run_platform === "linux") {
+    cmd = `ss -lntp | grep ${port}`;
+  }
+
+  else if (run_platform === "darwin") {
+    cmd = `lsof -i :${port}`;
+  }
+
+  else if (run_platform === "win32") {
+    cmd = `netstat -ano | findstr ${port}`;
+  }
+  if (!cmd) return {
+    type: "unknown",
+    ip: "unknown",
+    port
+  };
+  try {
+    const result = execSync(cmd).toString();
+    if (result.includes("0.0.0.0")) {
+      try {
+        const ip_res = await fetch("https://api.ipify.org");
+        const ip = (await ip_res.text()).trim();
+        return {
+          type: "next_check",
+          ip,
+          port
+        }
+      } catch (error) {
+        return {
+          type: "unknown",
+          ip: "unknown",
+          port
+        };
+      }
+    }
+    if (result.includes("127.0.0.1") || result.includes("localhost")) {
+      return {
+        type: "loopback",
+        ip: "127.0.0.1",
+        port
+      };
+    }
+    return {
+      type: "unknown",
+      ip: "unknown",
+      port
+    };
+  } catch {
+    return {
+      type: "closed",
+      ip: "closed",
+      port
+    };
   }
 }
