@@ -1,11 +1,14 @@
 
-import { homedir, platform } from "os";
+import { homedir, platform, networkInterfaces } from "os";
 import { join, resolve, dirname } from "path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, lstatSync, copyFileSync } from "fs";
 import path from "path";
-import { execSync } from "child_process";
-
-import { fileURLToPath } from "url";
+import { execSync, execFileSync, spawnSync } from "child_process";
+import { fileURLToPath, URL } from "url";
+import { promises as dns } from "dns";
+import * as http from "http";
+import * as https from "https";
+import { Buffer } from "buffer";
 import { CONFIG } from "./config.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -206,6 +209,228 @@ function getOpenClawPort() {
   }
 }
 
+function isPrivateIp(ip: string): boolean {
+  if (!ip || !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
+    return false;
+  }
+  if (ip.startsWith("10.") || ip.startsWith("192.168.") || ip.startsWith("127.")) {
+    return true;
+  }
+  if (ip.startsWith("172.")) {
+    const second = Number(ip.split(".")[1]);
+    return second >= 16 && second <= 31;
+  }
+  return false;
+}
+
+function hasCommand(command: string): boolean {
+  const result = spawnSync("which", [command], { encoding: "utf8" });
+  return result.status === 0;
+}
+
+function requestTextByCurl(url: string, timeout: number, useProxy: boolean): string | null {
+  if (!hasCommand("curl")) {
+    return null;
+  }
+  const args = ["-fsL", "--max-time", String(timeout)];
+  if (!useProxy) {
+    args.push("--noproxy", "*");
+  }
+  args.push(url);
+  try {
+    return execFileSync("curl", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function requestTextByHttp(url: string, timeout: number): Promise<string | null> {
+  const client = url.startsWith("https://") ? https : http;
+  return new Promise((resolve) => {
+    const req = client.get(url, { timeout: timeout * 1000 }, (res: http.IncomingMessage) => {
+      if (res.statusCode && res.statusCode >= 400) {
+        res.resume();
+        resolve(null);
+        return;
+      }
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("end", () => {
+        resolve(Buffer.concat(chunks).toString("utf8").trim() || null);
+      });
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on("error", () => resolve(null));
+  });
+}
+
+async function requestText(url: string, timeout = 3, useProxy = true): Promise<string | null> {
+  const curlResult = requestTextByCurl(url, timeout, useProxy);
+  if (curlResult) {
+    return curlResult;
+  }
+  return requestTextByHttp(url, timeout);
+}
+
+async function getPublicIpFromService(): Promise<string | null> {
+  const services = [
+    "https://api.ipify.org",
+    "https://ifconfig.me/ip",
+    "https://icanhazip.com",
+  ];
+  for (const url of services) {
+    const ip = await requestText(url, 3, true);
+    if (ip && !isPrivateIp(ip)) {
+      return ip;
+    }
+  }
+  return null;
+}
+
+function isProcessRunning(processName: string): boolean {
+  const result = spawnSync("pgrep", ["-x", processName], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
+async function resolveHostIp(host: string): Promise<string | null> {
+  try {
+    const result = await dns.lookup(host, { family: 4 });
+    return result.address || null;
+  } catch {
+    return null;
+  }
+}
+
+function extractHost(urlOrHost: string): string | null {
+  if (!urlOrHost) {
+    return null;
+  }
+  try {
+    if (urlOrHost.includes("://")) {
+      return new URL(urlOrHost).host || null;
+    }
+  } catch {
+    return null;
+  }
+  return urlOrHost.trim() || null;
+}
+
+async function detectNgrok(): Promise<[string | null, string | null]> {
+  if (!isProcessRunning("ngrok")) {
+    return [null, null];
+  }
+  const response = await requestText("http://127.0.0.1:4040/api/tunnels", 2, false);
+  if (!response) {
+    return [null, null];
+  }
+  try {
+    const data = JSON.parse(response);
+    const tunnels = Array.isArray(data.tunnels) ? data.tunnels : [];
+    for (const tunnel of tunnels) {
+      const host = extractHost(tunnel.public_url);
+      if (host) {
+        return [host, await resolveHostIp(host)];
+      }
+    }
+  } catch {
+    return [null, null];
+  }
+  return [null, null];
+}
+
+function detectFrp(): string | null {
+  if (!isProcessRunning("frpc")) {
+    return null;
+  }
+  const configPaths = ["/etc/frp/frpc.ini", "./frpc.ini"];
+  for (const filePath of configPaths) {
+    try {
+      const content = readFileSync(filePath, "utf8");
+      const match = content.match(/^server_addr\s*=\s*(\S+)/m);
+      if (match) {
+        return match[1].trim();
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function getLocalIpFromInterfaces(): string | null {
+  const interfaces = networkInterfaces();
+  const candidates: string[] = [];
+  for (const items of Object.values(interfaces)) {
+    for (const item of items || []) {
+      if (
+        item &&
+        item.family === "IPv4" &&
+        !item.internal &&
+        item.address &&
+        item.address !== "127.0.0.1"
+      ) {
+        candidates.push(item.address);
+      }
+    }
+  }
+  const privateIp = candidates.find((ip) => isPrivateIp(ip));
+  return privateIp || candidates[0] || null;
+}
+
+function getLocalIpByIpconfig(interfaceName: string): string | null {
+  try {
+    const output = execFileSync("ipconfig", ["getifaddr", interfaceName], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return output && output !== "127.0.0.1" ? output : null;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalIp(): string {
+  const interfaceIp = getLocalIpFromInterfaces();
+  if (interfaceIp) {
+    return interfaceIp;
+  }
+  for (const name of ["en0", "en1"]) {
+    const ip = getLocalIpByIpconfig(name);
+    if (ip) {
+      return ip;
+    }
+  }
+  return "127.0.0.1";
+}
+
+async function getIpAdress(): Promise<string> {
+  const [ngrokDomain] = await detectNgrok();
+  const frpServer = detectFrp();
+  if (ngrokDomain) {
+    return ngrokDomain;
+  }
+  if (frpServer) {
+    return frpServer;
+  }
+  const publicIp = await getPublicIpFromService();
+  if (publicIp) {
+    return publicIp;
+  }
+  const localIp = getLocalIp();
+  if (localIp !== "127.0.0.1") {
+    return localIp;
+  }
+  return "127.0.0.1";
+}
+
 export async function baseIpInfo() {
   const port = getOpenClawPort();
   const run_platform = platform();
@@ -229,10 +454,16 @@ export async function baseIpInfo() {
   };
   try {
     const result = execSync(cmd).toString();
-    if (result.includes("0.0.0.0")) {
+    if (result.includes("0.0.0.0") || result.includes(`*:${port}`)) {
       try {
-        const ip_res = await fetch("https://api.ipify.org");
-        const ip = (await ip_res.text()).trim();
+        const ip = await getIpAdress();
+        if (ip === "127.0.0.1") {
+          return {
+            type: "loopback",
+            ip: "127.0.0.1",
+            port
+          };
+        }
         return {
           type: "next_check",
           ip,
