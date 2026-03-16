@@ -49,6 +49,19 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
     -   插件启动时自动执行 `security_audit.py` 与恶意脚本扫描；结果写入日志。
     -   可通过配置 `securityAudit.runOnStartup`、`securityAudit.checks`、`securityAudit.severity` 控制。
 
+## 👀 用户如何得知「自我审计」与「安全防护」
+
+| 场景 | 用户/管理员如何知道 |
+|------|----------------------|
+| **安全防护拦截**（提示注入、恶意代码请求、高危工具调用等） | 对话或工具调用被阻断时，**界面会直接显示拦截原因**（如 `[Lynx Guardian] 🛡️ 安全防护拦截 (L4, score=8): 检测到提示注入攻击`），用户可见到具体风险类型与等级。 |
+| **安全防护警告**（L2 风险，未阻断但需注意） | 会在本轮对话的**上下文开头注入安全提醒**，Agent 与用户都能看到该段提示。 |
+| **启动时安全审计**（权限、依赖、环境变量、恶意脚本等） | 审计结果输出到 **OpenClaw 运行日志**（如 `[lynx-guardian] Security audit: ...`）。管理员查看日志即可看到通过/警告/失败统计与需关注项。 |
+| **恶意脚本扫描** | 若有问题，同上在 **运行日志** 中输出 `[lynx-guardian] ⚠️ Malicious script scan found N issues` 及简要详情。 |
+| **所有拦截与风险事件** | 会**上报至首序安全中心**，可在后端审计链中追溯。 |
+| **lesson 学习记录** | 若启用了 `lynx-guardian-lesson` skill，敏感数据/内容风险/黑名单命中会写入工作区 `.lynx/SENSITIVE.md`、`.lynx/CONTENT.md`、`.lynx/TOOLS.md`，便于复盘与规则沉淀。 |
+
+**建议**：管理员定期查看 OpenClaw 日志中的 `[lynx-guardian]` 输出，并视需要配置飞书 Webhook（见下方「安全审计报告发飞书」）或后端看板，以便集中感知审计与防护结果。
+
 ## 📦 安装步骤
 
 【方式一】通过openclaw安装：
@@ -127,6 +140,7 @@ openclaw对话框输入以下指令：
   - `securityAudit.runOnStartup`：是否在插件启动时运行审计
   - `securityAudit.checks`：要执行的模块（如 `permissions`, `env`, `git`, `dependencies` 等）
   - `securityAudit.severity`：最低报告级别（`low` / `medium` / `high` / `critical`）
+- **安全审计报告发飞书**：审计脚本支持将报告发到飞书。在运行 `send_report_to_feishu.py` 前设置环境变量 `FEISHU_WEBHOOK_URL`，或在命令中传入 `--webhook <URL>`，即可在飞书群中收到审计摘要，便于团队感知。
 
 ## 📜 许可证
 
