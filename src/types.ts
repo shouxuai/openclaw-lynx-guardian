@@ -7,6 +7,19 @@ export interface Logger {
 }
 
 export interface PluginConfig {
+  enabled?: boolean;
+  selfSafetyGuard?: {
+    enabled?: boolean;
+    inputGuard?: boolean;
+    outputGuard?: boolean;
+    toolGuard?: boolean;
+  };
+  securityAudit?: {
+    enabled?: boolean;
+    runOnStartup?: boolean;
+    checks?: string[];
+    severity?: string;
+  };
   [key: string]: any;
 }
 
@@ -33,12 +46,12 @@ export interface ToolCallEvent {
 }
 
 export interface AgentStartEvent {
-  input: string; // Assuming input is a string or object with input
+  input: string;
   [key: string]: any;
 }
 
 export interface AgentEndEvent {
-  output: string; // Assuming output is a string or object with output
+  output: string;
   [key: string]: any;
 }
 

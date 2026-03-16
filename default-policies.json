@@ -1,3 +1,14 @@
 {
-  "enabled": true
+  "enabled": true,
+  "selfSafetyGuard": {
+    "enabled": true,
+    "inputGuard": true,
+    "outputGuard": true,
+    "toolGuard": true
+  },
+  "securityAudit": {
+    "enabled": true,
+    "runOnStartup": true,
+    "severity": "low"
+  }
 }

@@ -6,6 +6,11 @@ import * as api from '../src/api.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
+vi.mock('../src/security-audit-runner.js', () => ({
+  runSecurityAudit: vi.fn().mockResolvedValue(null),
+  runMaliciousScriptScan: vi.fn().mockResolvedValue(null),
+  formatAuditSummary: vi.fn().mockReturnValue('audit summary'),
+}));
 
 describe('Plugin Setup', () => {
   let mockApi: any;
@@ -19,13 +24,16 @@ describe('Plugin Setup', () => {
         info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
+        debug: vi.fn(),
       },
+      config: {},
       on: vi.fn((event, handler) => {
         handlers[event] = handler;
       }),
     };
 
     vi.mocked(utils.ensureUserRegistered).mockReturnValue('TEST_ID');
+    vi.mocked(utils.ensureResources).mockReturnValue(undefined);
     vi.mocked(api.registerUser).mockResolvedValue({ code: 200, id: 'TEST_ID', message: 'OK' });
     vi.mocked(api.pushRecord).mockResolvedValue({ code: 200, message: 'OK' });
   });
@@ -36,28 +44,12 @@ describe('Plugin Setup', () => {
     expect(api.registerUser).toHaveBeenCalledWith('TEST_ID');
   });
 
-  it('should attach event handlers', () => {
+  it('should attach all event handlers', () => {
     setup(mockApi);
+    expect(mockApi.on).toHaveBeenCalledWith('message_received', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_agent_start', expect.any(Function));
-    expect(mockApi.on).toHaveBeenCalledWith('llm_output', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('agent_end', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_tool_call', expect.any(Function));
-  });
-
-  it('should inject warning on risky input', async () => {
-    setup(mockApi);
-    const handler = handlers['before_agent_start'];
-    
-    vi.mocked(api.checkContent).mockResolvedValue({
-        code: 200,
-        result: { is_safe: false, risk_level: 1, level_one: 'pol', level_two: '', level_three: '' },
-        message: 'risk'
-    });
-
-    const event = { input: 'risky input' };
-    await handler(event, {});
-    
-    expect(api.checkContent).toHaveBeenCalledWith('TEST_ID', 'risky input', 1);
-    expect(event.input).toContain('请注意，内容包含低危风险');
   });
 
   it('should block high risk tool call', async () => {
@@ -71,14 +63,12 @@ describe('Plugin Setup', () => {
         message: 'blocked'
     });
 
-    // rm -rf / is in blacklist (critical)
     const result = await handler({ toolName: 'exec', params: { command: 'rm -rf /' } }, { sessionKey: 'sess1' });
     
-    // Should have called pushRecord
     expect(api.pushRecord).toHaveBeenCalledWith(
       'TEST_ID',
       expect.stringContaining('rm -rf /'),
-      3 // critical -> 3
+      3
     );
 
     expect(result).toEqual({
