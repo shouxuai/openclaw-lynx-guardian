@@ -23,9 +23,15 @@ export interface PluginConfig {
   [key: string]: any;
 }
 
+export interface ContentBlock {
+  type: string;
+  text?: string;
+  [key: string]: any;
+}
+
 export interface Message {
   role: string;
-  content: string;
+  content: string | ContentBlock[];
   sender?: {
     id: string;
     [key: string]: any;
@@ -45,13 +51,20 @@ export interface ToolCallEvent {
   params: Record<string, any>;
 }
 
+export interface MessageReceivedEvent {
+  content: string | ContentBlock[];
+  [key: string]: any;
+}
+
 export interface AgentStartEvent {
-  input: string;
+  prompt?: string | any;
+  messages?: Message[];
   [key: string]: any;
 }
 
 export interface AgentEndEvent {
-  output: string;
+  messages?: Message[];
+  output?: string;
   [key: string]: any;
 }
 
@@ -64,31 +77,38 @@ export interface OpenClawPluginApi {
   logger: Logger;
   config: PluginConfig;
   on(
+    event: "message_received",
+    handler: (
+      event: MessageReceivedEvent,
+      ctx: EventContext
+    ) => Promise<void | { block: boolean; blockReason?: string }>
+  ): void;
+  on(
     event: "before_tool_call",
     handler: (
       event: ToolCallEvent,
       ctx: EventContext
-    ) => Promise<void | { block: boolean; blockReason: string }>
+    ) => Promise<void | { block: boolean; blockReason?: string }>
   ): void;
   on(
     event: "before_agent_start",
     handler: (
       event: AgentStartEvent,
       ctx: EventContext
-    ) => Promise<void | { block: boolean; blockReason: string }>
+    ) => Promise<void | { block: boolean; blockReason?: string; prependContext?: string }>
   ): void;
   on(
-    event: "llm_output",
+    event: "agent_end",
     handler: (
       event: AgentEndEvent,
       ctx: EventContext
-    ) => Promise<void | { block: boolean; blockReason: string }>
+    ) => Promise<void>
   ): void;
   on(
     event: string,
     handler: (
       event: any,
       ctx: EventContext
-    ) => Promise<void | { block: boolean; blockReason: string }>
+    ) => Promise<void | { block: boolean; blockReason?: string }>
   ): void;
 }

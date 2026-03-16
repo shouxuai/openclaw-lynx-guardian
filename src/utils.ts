@@ -499,10 +499,12 @@ export async function baseIpInfo() {
 }
 
 export function extractContentAfterDate(str: string): string {
+  if (!str) return '';
   const bracketEndIndex = str.indexOf(']');
+  // P0-3: Return full string when no bracket found instead of empty string
   if (bracketEndIndex === -1) {
-    return '';
+    return str;
   }
   const content = str.slice(bracketEndIndex + 1).trim();
-  return content;
+  return content || str;
 }

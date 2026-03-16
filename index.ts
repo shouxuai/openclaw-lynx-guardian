@@ -89,10 +89,19 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       if (!event.content || event.content.length === 0) return;
 
+      // P0-1: Normalize content - may be string or Array<{type, text}>
+      const text = typeof event.content === 'string'
+        ? event.content
+        : Array.isArray(event.content)
+          ? event.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join(' ')
+          : String(event.content);
+
+      if (!text || text.length === 0) return;
+
       // Sensitive data check
-      if (sensitiveDataBlocker.containsSensitiveData(event.content)) {
+      if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn(`[lynx-guardian] Sensitive data detected in message`);
-        await pushRecord(userId, event.content, 1);
+        await pushRecord(userId, text, 1);
         return {
           block: true,
           blockReason: "Sensitive data detected"
@@ -101,7 +110,7 @@ export default function setup(api: OpenClawPluginApi) {
 
       // Self-safety-guard: input guard (M1 prompt injection + M2 system prompt extraction)
       if (selfSafetyGuardConfig.inputGuard !== false) {
-        const decision = guardInput(event.content, ctx.sessionKey);
+        const decision = guardInput(text, ctx.sessionKey);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${decision.riskAssessment.description} (${decision.riskAssessment.level}, score=${decision.riskAssessment.score})`);
           try {
@@ -162,7 +171,7 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       // Check input risk via API
-      const input = extractContentAfterDate(event.prompt);
+      const input = extractContentAfterDate(promptText);
       const res = await checkContent(userId, input, 1);
       if (res.result.risk_level > 0) {
         let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}），\n`;
@@ -174,6 +183,14 @@ export default function setup(api: OpenClawPluginApi) {
           warning += "插件已进行拦截。\n";
         }
         log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
+
+        // P1-10: Block high-risk content instead of just warning
+        if (res.result.risk_level >= 3) {
+          return {
+            block: true,
+            blockReason: `[Lynx Guardian] ${warning}`,
+          } as any;
+        }
         prependContext += warning;
       }
 
@@ -189,8 +206,13 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("agent_end", async (event, ctx) => {
     try {
       log.info(JSON.stringify(ctx));
-      if (!event.messages) return;
-      const lastContent = event.messages[event.messages.length - 1].content;
+      if (!event.messages || event.messages.length === 0) return;
+
+      // P0-2: Defensive property chain access
+      const lastMsg = event.messages[event.messages.length - 1];
+      if (!lastMsg?.content) return;
+      const lastContent = Array.isArray(lastMsg.content) ? lastMsg.content : [{ text: typeof lastMsg.content === 'string' ? lastMsg.content : '' }];
+      if (lastContent.length === 0) return;
       const lastMessage = lastContent[lastContent.length - 1];
       const output = lastMessage?.text ?? "";
 
@@ -303,10 +325,16 @@ export default function setup(api: OpenClawPluginApi) {
 
     } catch (err: any) {
       log.error(`[lynx-guardian] Tool check failed: ${err.message}`);
-      return {
-        block: true,
-        blockReason: `[Lynx Guardian] 安全检测失败: ${err.message}`
-      };
+      // P0-4: Only fail-closed for critical matches; fail-open for warnings
+      if (match.level === "critical") {
+        return {
+          block: true,
+          blockReason: `[Lynx Guardian] 安全检测失败(高危操作): ${err.message}`
+        };
+      }
+      // Warning-level: fail-open when API is unreachable
+      log.warn(`[lynx-guardian] API unreachable, allowing warning-level operation: ${match.reason}`);
+      return;
     }
   });
 }

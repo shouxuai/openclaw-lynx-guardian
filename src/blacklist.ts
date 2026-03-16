@@ -51,8 +51,8 @@ const CRITICAL_EXEC: Rule[] = [
   // Absolute path to rm
   { pattern: /\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
   { pattern: /\/usr\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
-  // eval with dangerous content
-  { pattern: /\beval\s+/, reason: "eval execution (arbitrary code)" },
+  // eval with dangerous content (narrowed: only flag eval with suspicious args)
+  { pattern: /\beval\s+.*\b(base64|curl|wget|nc\b|bash\s+-i|\/dev\/tcp)/, reason: "eval with suspicious payload" },
 
   // ── Interpreter inline code — dangerous operations ──
 
@@ -188,6 +188,8 @@ const CRITICAL_PATH: Rule[] = [
 // ── WARNING: risky but possibly intentional ────────────────────────
 
 const WARNING_EXEC: Rule[] = [
+  // P0-6: General eval usage (moved from CRITICAL, safe patterns whitelisted above)
+  { pattern: /\beval\s+/, reason: "eval execution (review recommended)" },
   { pattern: /\btrash\s+/, reason: "file deletion (trash)" },
   { pattern: /\brm\s+/, reason: "file deletion (rm)" },
   { pattern: /\brmdir\s+/, reason: "directory removal (rmdir)" },
@@ -210,7 +212,8 @@ const WARNING_EXEC: Rule[] = [
   { pattern: /chown\s+-R\s+/, reason: "recursive ownership change" },
   // setuid/setgid
   { pattern: /chmod\s+[ug]\+s\b/, reason: "setuid/setgid bit (privilege escalation)" },
-  { pattern: /chmod\s+[2-7][0-7]{3}\b/, reason: "special permission bits (setuid/setgid/sticky)" },
+  // P2-8: Only catch setuid(4)/setgid(2)/sticky(1) special permission bits, not standard permissions
+  { pattern: /chmod\s+[1-7][0-7]{3}\b/, reason: "special permission bits (setuid/setgid/sticky)" },
   // Force kill
   { pattern: /kill\s+-9\s+/, reason: "force kill process (SIGKILL)" },
   { pattern: /\bkillall\s+/, reason: "killall processes" },
@@ -258,6 +261,10 @@ const SAFE_EXEC: RegExp[] = [
   /^(?:apt|dpkg|pip|npm)\s+(?:list|show|info|search)\b/,
   // node -p is print-only (safe)
   /^node\s+-p\s+/,
+  // P0-6: Common safe eval patterns
+  /^eval\s+["']?\$\((?:ssh-agent|brew\s+shellenv|direnv)/,
+  // npm/npx run commands are generally safe
+  /^(?:npm|npx|yarn|pnpm)\s+(?:run|test|start|build|dev|lint|format)\b/,
 ];
 
 // ── Quote/Comment Detection ────────────────────────────────────────

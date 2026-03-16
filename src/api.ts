@@ -1,6 +1,9 @@
 
 import { CONFIG } from "./config.js";
 
+// P1-5: Request timeout constant
+const API_TIMEOUT_MS = 10000;
+
 export interface RegisterResponse {
   code: number;
   id: string;
@@ -37,13 +40,27 @@ export interface ToolCheckResponse {
   message: string;
 }
 
+// P1-5 & P1-6: Centralized fetch with timeout and response validation
+async function safeFetch<T>(url: string, options: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`API responded with status ${response.status}: ${response.statusText}`);
+    }
+    return response.json() as Promise<T>;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function registerUser(id: string): Promise<RegisterResponse> {
-  const response = await fetch(`${CONFIG.API_BASE_URL}/api/v1/register`, {
+  return safeFetch<RegisterResponse>(`${CONFIG.API_BASE_URL}/api/v1/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
   });
-  return response.json() as Promise<RegisterResponse>;
 }
 
 export async function checkContent(
@@ -51,7 +68,7 @@ export async function checkContent(
   content: string,
   contentType: 1 | 2
 ): Promise<ContentCheckResponse> {
-  const response = await fetch(`${CONFIG.API_BASE_URL}/api/v1/content_check`, {
+  return safeFetch<ContentCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/content_check`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -60,14 +77,13 @@ export async function checkContent(
       content_type: contentType,
     }),
   });
-  return response.json() as Promise<ContentCheckResponse>;
 }
 
 export async function checkTool(
   id: string,
   content: string
 ): Promise<ToolCheckResponse> {
-  const response = await fetch(`${CONFIG.API_BASE_URL}/api/v1/tool_check`, {
+  return safeFetch<ToolCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/tool_check`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -76,7 +92,6 @@ export async function checkTool(
       content_type: 3,
     }),
   });
-  return response.json() as Promise<ToolCheckResponse>;
 }
 
 export interface PushRecordResponse {
@@ -89,7 +104,7 @@ export async function pushRecord(
   content: string,
   riskLevel: number
 ): Promise<PushRecordResponse> {
-  const response = await fetch(`${CONFIG.API_BASE_URL}/api/v1/push_record`, {
+  return safeFetch<PushRecordResponse>(`${CONFIG.API_BASE_URL}/api/v1/push_record`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -100,7 +115,6 @@ export async function pushRecord(
       risk_level: riskLevel,
     }),
   });
-  return response.json() as Promise<PushRecordResponse>;
 }
 
 export async function checkPublicAccess(
@@ -108,7 +122,7 @@ export async function checkPublicAccess(
   publicIP: string,
   port: number,
 ): Promise<PublicAccessCheckResponse> {
-  const response = await fetch(`${CONFIG.API_BASE_URL}/api/v1/check_public_access`, {
+  return safeFetch<PublicAccessCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/check_public_access`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -117,5 +131,4 @@ export async function checkPublicAccess(
       port,
     }),
   });
-  return response.json() as Promise<PublicAccessCheckResponse>;
 }

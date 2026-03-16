@@ -87,16 +87,16 @@ export function runSecurityAudit(
   checks?: string[],
   severity?: string,
 ): Promise<AuditReport | null> {
-  return new Promise((resolve) => {
+  return new Promise((done) => {
     const scriptsDir = findScriptsDir();
     if (!scriptsDir) {
-      resolve(null);
+      done(null);
       return;
     }
 
     const auditScript = join(scriptsDir, "security_audit.py");
     if (!existsSync(auditScript)) {
-      resolve(null);
+      done(null);
       return;
     }
 
@@ -111,14 +111,14 @@ export function runSecurityAudit(
 
     execFile(python, args, { timeout: 120000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
       if (error && !stdout) {
-        resolve(null);
+        done(null);
         return;
       }
       try {
         const report = JSON.parse(stdout) as AuditReport;
-        resolve(report);
+        done(report);
       } catch {
-        resolve(null);
+        done(null);
       }
     });
   });
@@ -129,16 +129,16 @@ export function runSecurityAudit(
  * Returns structured findings or null on failure.
  */
 export function runMaliciousScriptScan(): Promise<ScanFinding[] | null> {
-  return new Promise((resolve) => {
+  return new Promise((done) => {
     const scriptsDir = findScriptsDir();
     if (!scriptsDir) {
-      resolve(null);
+      done(null);
       return;
     }
 
     const scannerScript = join(scriptsDir, "malicious_script_scanner.py");
     if (!existsSync(scannerScript)) {
-      resolve(null);
+      done(null);
       return;
     }
 
@@ -146,7 +146,7 @@ export function runMaliciousScriptScan(): Promise<ScanFinding[] | null> {
     execFile(python, [scannerScript], { timeout: 60000, maxBuffer: 2 * 1024 * 1024 }, (error, stdout) => {
       // The scanner returns exit code 1 when findings exist — that's expected
       if (!stdout) {
-        resolve(error ? null : []);
+        done(error ? null : []);
         return;
       }
 
@@ -180,7 +180,7 @@ export function runMaliciousScriptScan(): Promise<ScanFinding[] | null> {
         findings.push(currentFinding as ScanFinding);
       }
 
-      resolve(findings);
+      done(findings);
     });
   });
 }

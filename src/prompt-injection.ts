@@ -31,10 +31,11 @@ const DIRECT_INJECTION: { pattern: RegExp; label: string }[] = [
   { pattern: /you\s+are\s+now\s+in\s+developer\s+mode/i, label: "developer_mode" },
   { pattern: /new\s+system\s+prompt\s*:/i, label: "new_system_prompt" },
   { pattern: /\[SYSTEM\]\s*:/i, label: "fake_system_tag" },
-  { pattern: /override\s*:\s*/i, label: "override_directive" },
+  // P1-9: Narrowed from /override\s*:\s*/ to require security-related context
+  { pattern: /(?:instruction|rule|system|prompt|safety)\s+override\s*:/i, label: "override_directive" },
   { pattern: /act\s+as\s+an?\s+unrestricted\s+AI/i, label: "unrestricted_ai" },
   { pattern: /jailbreak\s+mode/i, label: "jailbreak_mode" },
-  { pattern: /do\s+anything\s+now/i, label: "do_anything" },
+  { pattern: /you\s+can\s+do\s+anything\s+now/i, label: "do_anything" },
   { pattern: /no\s+restrictions?\s+(mode|apply|allowed)/i, label: "no_restrictions" },
   { pattern: /bypass\s+(all\s+)?(your\s+)?(safety|security|filter|restriction)/i, label: "bypass_safety" },
   { pattern: /you\s+must\s+obey\s+me/i, label: "force_obey" },
@@ -51,7 +52,7 @@ const DIRECT_INJECTION: { pattern: RegExp; label: string }[] = [
 // ── Role Hijacking Patterns ────────────────────────────────────────
 
 const ROLE_HIJACKING: { pattern: RegExp; label: string }[] = [
-  { pattern: /pretend\s+(that\s+)?you\s+are/i, label: "pretend_you_are" },
+  { pattern: /pretend\s+(that\s+)?you\s+are\s+(?:an?\s+)?(?:unrestricted|unfiltered|jailbroken|hacker|evil)/i, label: "pretend_you_are" },
   { pattern: /imagine\s+you\s+are\s+a/i, label: "imagine_you_are" },
   { pattern: /in\s+this\s+hypothetical\s+scenario/i, label: "hypothetical_scenario" },
   { pattern: /for\s+educational\s+purposes?\s*,?\s*act\s+as/i, label: "educational_act_as" },
@@ -69,10 +70,11 @@ const ROLE_HIJACKING: { pattern: RegExp; label: string }[] = [
 // ── Encoding / Obfuscation Indicators ──────────────────────────────
 
 const ENCODING_OBFUSCATION: { pattern: RegExp; label: string }[] = [
-  { pattern: /\u200b|\u200c|\u200d|\ufeff/g, label: "zero_width_chars" },
-  { pattern: /[\u202a-\u202e\u2066-\u2069]/g, label: "bidi_control_chars" },
+  // P0-5: Removed 'g' flag to prevent lastIndex statefulness bug with test()
+  { pattern: /\u200b|\u200c|\u200d|\ufeff/, label: "zero_width_chars" },
+  { pattern: /[\u202a-\u202e\u2066-\u2069]/, label: "bidi_control_chars" },
   { pattern: /aWdub3Jl|Zm9yZ2V0|c3lzdGVt|b3ZlcnJpZGU/i, label: "base64_injection_keywords" },
-  { pattern: /&#x?[0-9a-f]+;/gi, label: "html_entities" },
+  { pattern: /&#x?[0-9a-f]+;/i, label: "html_entities" },
   { pattern: /%5B%53%59%53%54%45%4D%5D/i, label: "url_encoded_system" },
 ];
 

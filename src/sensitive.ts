@@ -1,4 +1,4 @@
-import { PatternRule, Message, EventContext } from "./types.js";
+import { PatternRule } from "./types.js";
 
 export class SensitiveDataBlocker {
     blockedTerms: string[];
@@ -31,8 +31,9 @@ export class SensitiveDataBlocker {
 
         this.genericPatterns = [
             { type: "api_key_assignment", regex: /(api|secret|access|auth)[-_]?key\s*[:=]\s*["']?[A-Za-z0-9_\-]{16,}["']?/i },
-            { type: "hex_key", regex: /\b[0-9a-f]{40,}\b/i },
-            { type: "base64_key", regex: /\b[A-Za-z0-9+/]{40,}={0,2}\b/ }
+            // P1-7: Exclude git SHA-1 hashes (exactly 40 hex chars) by requiring 41+ chars
+            { type: "hex_key", regex: /\b[0-9a-f]{41,}\b/i },
+            { type: "base64_key", regex: /\b[A-Za-z0-9+/]{40,}={1,2}\b/ }
         ];
     }
 
@@ -50,7 +51,8 @@ export class SensitiveDataBlocker {
             entropy -= p * Math.log2(p);
         }
 
-        return entropy > 4.5;
+        // P1-7: Raise entropy threshold to reduce false positives
+        return entropy > 5.0;
     }
 
     // Check if message contains sensitive data
@@ -90,42 +92,4 @@ export class SensitiveDataBlocker {
         return false;
     }
 
-    // Main plugin function
-    async onMessage(message: Message, context: EventContext): Promise<{ continue?: boolean; blocked?: boolean }> {
-        try {
-            // Skip if it's a system message or from the assistant itself
-            if (message.role === 'system' || message.sender?.id === 'openclaw') {
-                return { continue: true };
-            }
-
-            const content = message.content || '';
-
-            if (this.containsSensitiveData(content)) {
-                console.log('⚠️ Sensitive data detected - blocking conversation');
-
-                // Send warning message
-                if (context.sendMessage) {
-                    await context.sendMessage({
-                        content: '🔒 **Security Alert**: Sensitive data detected! This conversation has been terminated to protect your security.',
-                        role: 'system'
-                    });
-                }
-
-                // Terminate the session
-                if (context.terminateSession) {
-                    await context.terminateSession({
-                        reason: 'sensitive_data_detected',
-                        silent: false
-                    });
-                }
-
-                return { blocked: true };
-            }
-
-            return { continue: true };
-        } catch (error) {
-            console.error('Error in sensitive data detection:', error);
-            return { continue: true };
-        }
-    }
 }

@@ -70,19 +70,46 @@ interface SessionState {
   recentScores: number[];
   rejectedTopics: Map<string, number>;
   lastTopicCategory: string;
+  lastActiveTime: number;
 }
 
+const SESSION_MAX_SIZE = 1000;
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
 const sessionStates = new Map<string, SessionState>();
+
+// P1-1: Evict stale sessions to prevent memory leak
+function evictStaleSessions(): void {
+  if (sessionStates.size <= SESSION_MAX_SIZE) return;
+  const now = Date.now();
+  for (const [key, state] of sessionStates) {
+    if (now - state.lastActiveTime > SESSION_TTL_MS) {
+      sessionStates.delete(key);
+    }
+  }
+  // If still over limit, remove oldest entries
+  if (sessionStates.size > SESSION_MAX_SIZE) {
+    const entries = [...sessionStates.entries()].sort((a, b) => a[1].lastActiveTime - b[1].lastActiveTime);
+    const toRemove = entries.slice(0, entries.length - SESSION_MAX_SIZE);
+    for (const [key] of toRemove) {
+      sessionStates.delete(key);
+    }
+  }
+}
 
 function getSessionState(sessionKey: string): SessionState {
   let state = sessionStates.get(sessionKey);
   if (!state) {
+    evictStaleSessions();
     state = {
       recentScores: [],
       rejectedTopics: new Map(),
       lastTopicCategory: "normal",
+      lastActiveTime: Date.now(),
     };
     sessionStates.set(sessionKey, state);
+  } else {
+    state.lastActiveTime = Date.now();
   }
   return state;
 }
@@ -90,6 +117,9 @@ function getSessionState(sessionKey: string): SessionState {
 function computeAnomalyAdjustment(sessionKey: string, baseScore: number, triggeredModules: string[]): number {
   const state = getSessionState(sessionKey);
   let adjustment = 0;
+
+  // P1-3: Only record scores and track topics when modules are actually triggered
+  if (triggeredModules.length === 0) return 0;
 
   state.recentScores.push(baseScore);
   if (state.recentScores.length > 10) state.recentScores.shift();
@@ -241,7 +271,8 @@ export function guardInput(text: string, sessionKey?: string): GuardDecision {
     intentClarity: 0,
     potentialHarm: 0,
     reversibility: 0,
-    authorizationStatus: 1, // uncertain by default
+    // P1-2: Default to 0 (authorized), only escalate when actual uncertainty detected
+    authorizationStatus: 0,
     patternMatch: 0,
   };
 
@@ -399,7 +430,8 @@ export function guardToolCall(
     intentClarity: 0,
     potentialHarm: 0,
     reversibility: 0,
-    authorizationStatus: 1,
+    // P1-2: Default to 0 (authorized), only escalate when actual uncertainty detected
+    authorizationStatus: 0,
     patternMatch: 0,
   };
 
