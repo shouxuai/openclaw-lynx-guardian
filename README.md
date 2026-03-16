@@ -6,9 +6,11 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 [中文](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md) | 
 [en](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md)
 
-## 最新版本
+## 最新版本 (v2.0)
 
--   支持公网暴露访问检查，完善元认知安全自提升功能。
+- **AI 自我安全防护 (SX-self-safety-guard)**：提示注入检测 (M1)、系统提示保护 (M2)、过度代理检测 (M3)、凭证窃取防护 (M5)、恶意代码请求拦截 (M6)，五级风险评估 (L0–L4)。
+- **全方位安全审计 (SX-security-audit)**：插件启动时自动运行安全审计与恶意脚本扫描；支持权限、环境变量、依赖、Git、网络、Shell、macOS 等模块。
+- 支持公网暴露访问检查，完善元认知安全自提升功能。
 
 ## 🛡️ 核心功能
 
@@ -36,6 +38,16 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 
 5.  **实时审计上报**
     -   所有拦截记录与风险事件均会实时上报至后端，形成完整的安全审计链。
+
+6.  **AI 自我安全防护 (v2.0)**
+    -   **输入防护**：在 `message_received`、`before_agent_start` 时检测提示注入、系统提示探测、过度代理、凭证窃取、恶意代码请求。
+    -   **输出防护**：在 `agent_end` 时检测输出中是否泄露系统提示/受保护配置。
+    -   **工具防护**：在 `before_tool_call` 时检测凭证访问、过度代理与「致命三角」风险。
+    -   风险达 L3/L4 时自动拦截并上报。
+
+7.  **安全审计 (v2.0)**
+    -   插件启动时自动执行 `security_audit.py` 与恶意脚本扫描；结果写入日志。
+    -   可通过配置 `securityAudit.runOnStartup`、`securityAudit.checks`、`securityAudit.severity` 控制。
 
 ## 📦 安装步骤
 
@@ -105,7 +117,16 @@ openclaw对话框输入以下指令：
 
 ## ⚙️ 配置说明
 
-插件默认连接首序服务器环境。如需修改后端 API 地址，请设置环境变量 `LYNX_API_URL`。
+- **后端 API**：插件默认连接首序服务器环境。如需修改，请设置环境变量 `LYNX_API_URL`。
+- **自我安全防护 (v2.0)**：在 OpenClaw 插件配置中可设置：
+  - `selfSafetyGuard.enabled`：总开关
+  - `selfSafetyGuard.inputGuard`：输入防护（提示注入、系统提示探测等）
+  - `selfSafetyGuard.outputGuard`：输出防护（系统提示泄露检测）
+  - `selfSafetyGuard.toolGuard`：工具调用防护（凭证窃取、过度代理、致命三角）
+- **安全审计 (v2.0)**：
+  - `securityAudit.runOnStartup`：是否在插件启动时运行审计
+  - `securityAudit.checks`：要执行的模块（如 `permissions`, `env`, `git`, `dependencies` 等）
+  - `securityAudit.severity`：最低报告级别（`low` / `medium` / `high` / `critical`）
 
 ## 📜 许可证
 
