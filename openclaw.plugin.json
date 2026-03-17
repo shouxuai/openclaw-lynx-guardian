@@ -81,6 +81,43 @@
             "description": "Automatically quarantine flagged Skills (default: false, manual opt-in required)"
           }
         }
+      },
+      "tokenOptimizer": {
+        "type": "object",
+        "description": "Token optimization configuration (SX-openclaw-token-optimizer): context lazy-loading, model routing, heartbeat optimization, budget tracking",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable token optimizer (context optimization, model routing, heartbeat, budget)"
+          },
+          "contextOptimizer": {
+            "type": "boolean",
+            "default": true,
+            "description": "Recommend minimal context file loading per prompt (50-80% token savings)"
+          },
+          "modelRouter": {
+            "type": "boolean",
+            "default": true,
+            "description": "Suggest cheaper model tiers for simple tasks (e.g., Haiku for greetings)"
+          },
+          "heartbeatOptimizer": {
+            "type": "boolean",
+            "default": true,
+            "description": "Optimize heartbeat check intervals and enforce quiet hours"
+          },
+          "budgetTracking": {
+            "type": "boolean",
+            "default": true,
+            "description": "Monitor daily token budget and alert when approaching limits"
+          },
+          "dailyBudgetUsd": {
+            "type": "number",
+            "default": 5.0,
+            "description": "Daily spending limit in USD (default: $5.00)"
+          }
+        }
       }
     }
   }

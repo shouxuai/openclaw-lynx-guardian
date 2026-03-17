@@ -26,6 +26,14 @@ export interface PluginConfig {
     verifyIntegrity?: boolean;   // default true, verify Skill integrity on startup
     autoQuarantine?: boolean;    // default false, auto-quarantine requires manual opt-in
   };
+  tokenOptimizer?: {
+    enabled?: boolean;             // default true
+    contextOptimizer?: boolean;    // default true, recommend minimal context per prompt
+    modelRouter?: boolean;         // default true, suggest cheaper model tiers
+    heartbeatOptimizer?: boolean;  // default true, optimize heartbeat intervals
+    budgetTracking?: boolean;      // default true, monitor daily token budget
+    dailyBudgetUsd?: number;       // default 5.0, daily spending limit
+  };
   [key: string]: any;
 }
 

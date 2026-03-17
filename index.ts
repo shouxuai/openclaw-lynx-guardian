@@ -9,6 +9,11 @@ import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./
 import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skill-guard.js";
 import { quarantineSkill } from "./src/skill-cleanup.js";
 import type { MaliciousSkillEntry } from "./src/skill-blacklist-data.js";
+import {
+  recommendContext, routeModel, checkBudget, planHeartbeat,
+  formatContextRecommendation, formatModelRouting, formatBudgetStatus,
+  buildOptimizationHints, isTokenOptimizerAvailable,
+} from "./src/token-optimizer-runner.js";
 
 function canonicalizePath(raw: string): string {
   if (typeof raw !== "string" || raw.length === 0) {
@@ -26,6 +31,7 @@ export default function setup(api: OpenClawPluginApi) {
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const securityAuditConfig = config.securityAudit ?? {};
   const skillGuardConfig = config.skillGuard ?? {};
+  const tokenOptimizerConfig = config.tokenOptimizer ?? {};
   let userId: string;
 
   try {
@@ -121,6 +127,42 @@ export default function setup(api: OpenClawPluginApi) {
     })();
   }
 
+  // ── Startup Token Optimizer (SX-openclaw-token-optimizer) ─────────
+  if (tokenOptimizerConfig.enabled !== false && isTokenOptimizerAvailable()) {
+    (async () => {
+      try {
+        // Budget check on startup
+        if (tokenOptimizerConfig.budgetTracking !== false) {
+          const budget = await checkBudget();
+          if (budget) {
+            log.info(`[lynx-guardian] ${formatBudgetStatus(budget)}`);
+            if (budget.status === "exceeded") {
+              log.warn(`[lynx-guardian] ⚠️ ${budget.alert}`);
+            } else if (budget.status === "warning") {
+              log.warn(`[lynx-guardian] ${budget.alert}`);
+            }
+          }
+        }
+
+        // Heartbeat optimization on startup
+        if (tokenOptimizerConfig.heartbeatOptimizer !== false) {
+          const plan = await planHeartbeat();
+          if (plan) {
+            if (plan.can_skip) {
+              log.info(`[lynx-guardian] Heartbeat: all checks skipped (${plan.skipped.length} deferred)`);
+            } else {
+              log.info(`[lynx-guardian] Heartbeat: ${plan.planned.length} checks planned, ${plan.skipped.length} deferred`);
+            }
+          }
+        }
+
+        log.info("[lynx-guardian] Token optimizer initialized");
+      } catch (err: any) {
+        log.error(`[lynx-guardian] Token optimizer startup failed: ${err.message}`);
+      }
+    })();
+  }
+
   // ── Event: message_received ──────────────────────────────────────
   api.on("message_received", async (event, ctx) => {
     try {
@@ -206,6 +248,47 @@ export default function setup(api: OpenClawPluginApi) {
         }
         if (decision.warning) {
           prependContext += decision.warning + "\n";
+        }
+      }
+
+      // Token Optimizer: context optimization + model routing
+      if (tokenOptimizerConfig.enabled !== false && isTokenOptimizerAvailable()) {
+        try {
+          let ctxRec = null;
+          let modelRec = null;
+          let budgetRec = null;
+
+          // Context optimization: recommend minimal file loading
+          if (tokenOptimizerConfig.contextOptimizer !== false) {
+            ctxRec = await recommendContext(promptText);
+            if (ctxRec) {
+              log.info(`[lynx-guardian] ${formatContextRecommendation(ctxRec)}`);
+            }
+          }
+
+          // Model routing: suggest cheaper tier
+          if (tokenOptimizerConfig.modelRouter !== false) {
+            modelRec = await routeModel(promptText);
+            if (modelRec) {
+              log.info(`[lynx-guardian] ${formatModelRouting(modelRec)}`);
+            }
+          }
+
+          // Budget check: warn if approaching limit
+          if (tokenOptimizerConfig.budgetTracking !== false) {
+            budgetRec = await checkBudget();
+            if (budgetRec && budgetRec.status !== "ok") {
+              log.warn(`[lynx-guardian] ${formatBudgetStatus(budgetRec)}`);
+            }
+          }
+
+          // Build optimization hints for the agent
+          const hints = buildOptimizationHints(ctxRec, modelRec, budgetRec);
+          if (hints) {
+            prependContext += hints + "\n";
+          }
+        } catch (err: any) {
+          log.error(`[lynx-guardian] Token optimizer failed: ${err.message}`);
         }
       }
 
