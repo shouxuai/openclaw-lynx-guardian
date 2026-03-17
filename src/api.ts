@@ -132,3 +132,64 @@ export async function checkPublicAccess(
     }),
   });
 }
+
+// ── Skill Guard API ─────────────────────────────────────────────────
+
+export interface SkillBlacklistResponse {
+  code: number;
+  result: {
+    entries: Array<{
+      name?: string;
+      namePattern?: string;
+      hash?: string;
+      reason: string;
+      severity: "critical" | "warning";
+    }>;
+  };
+  message: string;
+}
+
+export interface SkillCheckResponse {
+  code: number;
+  result: {
+    is_safe: boolean;
+    risk_level: number;
+    reason: string;
+  };
+  message: string;
+}
+
+/**
+ * Fetch remote malicious Skill blacklist.
+ */
+export async function fetchMaliciousSkillBlacklist(): Promise<SkillBlacklistResponse> {
+  return safeFetch<SkillBlacklistResponse>(
+    `${CONFIG.API_BASE_URL}/api/v1/skill_blacklist`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
+/**
+ * Check a specific Skill against the remote security service.
+ */
+export async function checkSkill(
+  id: string,
+  skillName: string,
+  skillHash: string,
+): Promise<SkillCheckResponse> {
+  return safeFetch<SkillCheckResponse>(
+    `${CONFIG.API_BASE_URL}/api/v1/skill_check`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        skill_name: skillName,
+        skill_hash: skillHash,
+      }),
+    },
+  );
+}

@@ -1,11 +1,14 @@
 import { resolve, normalize } from "path";
 import type { OpenClawPluginApi } from "./src/types.js";
 import { ensureUserRegistered, readRecentContext, ensureResources, baseIpInfo, extractContentAfterDate } from "./src/utils.js";
-import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess } from "./src/api.js";
+import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, fetchMaliciousSkillBlacklist } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/safety-guard.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/security-audit-runner.js";
+import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skill-guard.js";
+import { quarantineSkill } from "./src/skill-cleanup.js";
+import type { MaliciousSkillEntry } from "./src/skill-blacklist-data.js";
 
 function canonicalizePath(raw: string): string {
   if (typeof raw !== "string" || raw.length === 0) {
@@ -22,6 +25,7 @@ export default function setup(api: OpenClawPluginApi) {
   const config = api.config ?? {};
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const securityAuditConfig = config.securityAudit ?? {};
+  const skillGuardConfig = config.skillGuard ?? {};
   let userId: string;
 
   try {
@@ -80,6 +84,39 @@ export default function setup(api: OpenClawPluginApi) {
         }
       } catch (err: any) {
         log.error(`[lynx-guardian] Malicious script scan failed: ${err.message}`);
+      }
+    })();
+  }
+
+  // ── Startup Skill Integrity Verification ─────────────────────────
+  if (skillGuardConfig.enabled !== false && skillGuardConfig.verifyIntegrity !== false) {
+    (async () => {
+      try {
+        const results = verifyAllInstalledSkills();
+        const invalid = results.filter((r) => !r.valid);
+
+        if (invalid.length > 0) {
+          log.warn(`[lynx-guardian] ⚠️ Skill integrity check: ${invalid.length} Skill(s) with hash mismatch`);
+          for (const r of invalid) {
+            log.warn(`[lynx-guardian]   [${r.skillName}] ${r.reason}`);
+          }
+
+          // Auto-quarantine if enabled
+          if (skillGuardConfig.autoQuarantine) {
+            for (const r of invalid) {
+              try {
+                quarantineSkill(r.path, r.reason ?? "Integrity check failed");
+                log.warn(`[lynx-guardian]   Quarantined: ${r.skillName}`);
+              } catch (qErr: any) {
+                log.error(`[lynx-guardian]   Failed to quarantine ${r.skillName}: ${qErr.message}`);
+              }
+            }
+          }
+        } else if (results.length > 0) {
+          log.info(`[lynx-guardian] Skill integrity check: ${results.length} Skill(s) verified`);
+        }
+      } catch (err: any) {
+        log.error(`[lynx-guardian] Skill integrity check failed: ${err.message}`);
       }
     })();
   }
@@ -151,9 +188,11 @@ export default function setup(api: OpenClawPluginApi) {
 
       log.info(`[lynx-guardian] Input messages: ${JSON.stringify(event.prompt)}`);
 
+      // Normalize prompt text for both SSG guard and API check
+      const promptText = typeof event.prompt === "string" ? event.prompt : JSON.stringify(event.prompt ?? "");
+
       // Self-safety-guard: input guard on prompt
       if (selfSafetyGuardConfig.inputGuard !== false && event.prompt) {
-        const promptText = typeof event.prompt === "string" ? event.prompt : JSON.stringify(event.prompt);
         const decision = guardInput(promptText, ctx.sessionKey);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
@@ -266,6 +305,77 @@ export default function setup(api: OpenClawPluginApi) {
         }
       } catch (err: any) {
         log.error(`[lynx-guardian] Self-safety-guard tool check error: ${err.message}`);
+      }
+    }
+
+    // Skill Guard: detect and assess Skill installation attempts
+    if (skillGuardConfig.enabled !== false && skillGuardConfig.blockMalicious !== false) {
+      try {
+        const installAttempt = detectSkillInstall(toolName, params);
+        if (installAttempt) {
+          log.info(`[lynx-guardian] Skill install detected: ${installAttempt.skillName} via ${installAttempt.installMethod}`);
+
+          // Quick local blacklist check (synchronous, fast)
+          const quick = quickBlacklistCheck(installAttempt.skillName);
+          if (quick.blocked) {
+            log.warn(`[lynx-guardian] 🛡️ Malicious Skill blocked: ${installAttempt.skillName} — ${quick.reason}`);
+            try {
+              await pushRecord(userId, `[SkillGuard] blocked: ${installAttempt.skillName} (${quick.reason})`, 3);
+            } catch { /* best-effort */ }
+            return {
+              block: true,
+              blockReason: `[Lynx Guardian] 🛡️ 恶意Skill拦截: "${installAttempt.skillName}" — ${quick.reason}`,
+            };
+          }
+
+          // Full async assessment (blacklist + content + integrity)
+          const fetchRemote = async (): Promise<MaliciousSkillEntry[] | null> => {
+            try {
+              const res = await fetchMaliciousSkillBlacklist();
+              if (res.code === 0 && res.result?.entries) {
+                return res.result.entries.map((e) => ({
+                  ...e,
+                  namePattern: e.namePattern ? new RegExp(e.namePattern) : undefined,
+                }));
+              }
+            } catch { /* remote unavailable */ }
+            return null;
+          };
+
+          const assessment = await assessSkillRisk(installAttempt, fetchRemote);
+
+          if (assessment.block) {
+            log.warn(`[lynx-guardian] ${assessment.message}`);
+            try {
+              await pushRecord(userId, `[SkillGuard] ${assessment.level}: ${installAttempt.skillName}`, 3);
+            } catch { /* best-effort */ }
+
+            // Auto-quarantine if the Skill already exists on disk
+            if (skillGuardConfig.autoQuarantine && installAttempt.skillPath) {
+              try {
+                const { existsSync } = await import("fs");
+                if (existsSync(installAttempt.skillPath)) {
+                  quarantineSkill(installAttempt.skillPath, assessment.reasons.join("; "));
+                  log.warn(`[lynx-guardian] Auto-quarantined: ${installAttempt.skillName}`);
+                }
+              } catch { /* best-effort */ }
+            }
+
+            return {
+              block: true,
+              blockReason: assessment.message,
+            };
+          }
+
+          if (assessment.level === "warning") {
+            log.warn(`[lynx-guardian] ${assessment.message}`);
+            try {
+              await pushRecord(userId, `[SkillGuard] warning: ${installAttempt.skillName}`, 1);
+            } catch { /* best-effort */ }
+          }
+        }
+      } catch (err: any) {
+        log.error(`[lynx-guardian] Skill guard check error: ${err.message}`);
       }
     }
 

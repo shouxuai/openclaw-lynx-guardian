@@ -20,6 +20,12 @@ export interface PluginConfig {
     checks?: string[];
     severity?: string;
   };
+  skillGuard?: {
+    enabled?: boolean;           // default true
+    blockMalicious?: boolean;    // default true, block malicious Skills
+    verifyIntegrity?: boolean;   // default true, verify Skill integrity on startup
+    autoQuarantine?: boolean;    // default false, auto-quarantine requires manual opt-in
+  };
   [key: string]: any;
 }
 

@@ -54,6 +54,33 @@
             "description": "Minimum severity level to report"
           }
         }
+      },
+      "skillGuard": {
+        "type": "object",
+        "description": "Skill security guard configuration (install interception, blacklist, integrity verification, cleanup)",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable Skill security guard (install detection, blacklist matching, integrity verification)"
+          },
+          "blockMalicious": {
+            "type": "boolean",
+            "default": true,
+            "description": "Block malicious Skills on install (blacklist + content pattern matching)"
+          },
+          "verifyIntegrity": {
+            "type": "boolean",
+            "default": true,
+            "description": "Verify Skill integrity via SHA-256 hash on startup"
+          },
+          "autoQuarantine": {
+            "type": "boolean",
+            "default": false,
+            "description": "Automatically quarantine flagged Skills (default: false, manual opt-in required)"
+          }
+        }
       }
     }
   }
