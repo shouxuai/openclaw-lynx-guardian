@@ -6,6 +6,14 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 [中文](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md) | 
 [en](https://github.com/shouxuai/openclaw-lynx-guardian/blob/main/README_en.md)
 
+## 💬 联系我们
+
+扫码加入**猞猁官方微信群**，获取产品最新动态、技术答疑解惑、最佳实践分享：
+
+<p align="center">
+  <img src="./README.png" alt="猞猁官方微信群" width="300" />
+</p>
+
 ## 最新版本 (v1.2.1)
 
 - **AI 自我安全防护 (SX-self-safety-guard)**：提示注入检测 (M1)、系统提示保护 (M2)、过度代理检测 (M3)、凭证窃取防护 (M5)、恶意代码请求拦截 (M6)，五级风险评估 (L0–L4)。
