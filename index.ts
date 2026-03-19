@@ -5,6 +5,7 @@ import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, f
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/safety-guard.js";
+import type { GuardContext } from "./src/safety-guard.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/security-audit-runner.js";
 import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skill-guard.js";
 import { quarantineSkill } from "./src/skill-cleanup.js";
@@ -21,6 +22,75 @@ function canonicalizePath(raw: string): string {
   }
   if (raw.startsWith("~/")) raw = raw.replace("~", process.env.HOME ?? "/root");
   return normalize(resolve(raw));
+}
+
+function normalizeString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => normalizeString(item)).filter(Boolean)
+    : [];
+}
+
+function buildGuardContext(config: any, event: any, ctx: any): GuardContext {
+  const ownerVerification = config?.selfSafetyGuard?.ownerVerification ?? {};
+  const requesterId = normalizeString(
+    event?.sender?.id
+    ?? event?.userId
+    ?? ctx?.userId
+    ?? ctx?.senderId,
+  );
+  const channel = normalizeString(
+    event?.channel
+    ?? event?.source
+    ?? ctx?.channel
+    ?? ctx?.source,
+  );
+
+  const trustedUserIds = new Set(
+    normalizeStringList(ownerVerification.trustedUserIds).map((item) => item.toLowerCase()),
+  );
+  const trustedChannels = new Set(
+    normalizeStringList(ownerVerification.trustedChannels).map((item) => item.toLowerCase()),
+  );
+
+  const verifiedOwner = ownerVerification.enabled === false
+    ? false
+    : event?.verifiedOwner === true
+      || ctx?.verifiedOwner === true
+      || (requesterId.length > 0 && trustedUserIds.has(requesterId.toLowerCase()))
+      || (channel.length > 0 && trustedChannels.has(channel.toLowerCase()));
+
+  return {
+    verifiedOwner,
+    requesterId,
+    channel,
+  };
+}
+
+function redactAgentOutput(event: any, replacement: string): void {
+  if (!event) return;
+  if (typeof event.output === "string") {
+    event.output = replacement;
+  }
+
+  if (!Array.isArray(event.messages) || event.messages.length === 0) return;
+  const lastMessage = event.messages[event.messages.length - 1];
+  if (!lastMessage) return;
+
+  if (typeof lastMessage.content === "string") {
+    lastMessage.content = replacement;
+    return;
+  }
+
+  if (Array.isArray(lastMessage.content) && lastMessage.content.length > 0) {
+    const lastBlock = lastMessage.content[lastMessage.content.length - 1];
+    if (lastBlock && typeof lastBlock === "object") {
+      lastBlock.text = replacement;
+    }
+  }
 }
 
 export default function setup(api: OpenClawPluginApi) {
@@ -189,7 +259,8 @@ export default function setup(api: OpenClawPluginApi) {
 
       // Self-safety-guard: input guard (M1 prompt injection + M2 system prompt extraction)
       if (selfSafetyGuardConfig.inputGuard !== false) {
-        const decision = guardInput(text, ctx.sessionKey);
+        const guardContext = buildGuardContext(config, event, ctx);
+        const decision = guardInput(text, ctx.sessionKey, guardContext);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${decision.riskAssessment.description} (${decision.riskAssessment.level}, score=${decision.riskAssessment.score})`);
           try {
@@ -235,7 +306,8 @@ export default function setup(api: OpenClawPluginApi) {
 
       // Self-safety-guard: input guard on prompt
       if (selfSafetyGuardConfig.inputGuard !== false && event.prompt) {
-        const decision = guardInput(promptText, ctx.sessionKey);
+        const guardContext = buildGuardContext(config, event, ctx);
+        const decision = guardInput(promptText, ctx.sessionKey, guardContext);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
           try {
@@ -343,6 +415,8 @@ export default function setup(api: OpenClawPluginApi) {
         const decision = guardOutput(output);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
+          // Best effort: redact mutable event payloads when the host exposes them by reference.
+          redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险。");
           try {
             await pushRecord(userId, `[SSG:output] ${decision.riskAssessment.modules.join(",")}`, 2);
           } catch { /* best-effort */ }
@@ -375,7 +449,8 @@ export default function setup(api: OpenClawPluginApi) {
     // Self-safety-guard: tool call guard (M3 over-agency, M5 credential theft, fatal triangle)
     if (selfSafetyGuardConfig.toolGuard !== false) {
       try {
-        const decision = guardToolCall(toolName, params, ctx.sessionKey);
+        const guardContext = buildGuardContext(config, event, ctx);
+        const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${decision.riskAssessment.description}`);
           try {

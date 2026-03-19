@@ -89,12 +89,21 @@ const SYSTEM_PROMPT_EXTRACTION: { pattern: RegExp; label: string }[] = [
   { pattern: /copy\s+paste\s+your\s+(initial\s+)?prompt/i, label: "copy_paste_prompt" },
   { pattern: /what\s+does\s+your\s+SOUL\.md\s+say/i, label: "soul_md_probe" },
   { pattern: /show\s+me\s+your\s+configuration/i, label: "show_configuration" },
+  { pattern: /\b(?:show|read|open|print|display|cat|less|more|head|tail)\b.*\b(?:SOUL|IDENTITY|USER|AGENTS|TOOLS|SHIELD|SKILL|MEMORY)\.md\b/i, label: "protected_md_read" },
+  { pattern: /\b(?:what(?:'s| is)\s+in|contents?\s+of)\s+(?:your\s+)?(?:SOUL|IDENTITY|USER|AGENTS|TOOLS|SHIELD|SKILL|MEMORY)\.md\b/i, label: "protected_md_contents" },
+  { pattern: /\b(?:show|display|list|dump|print)\b.*(?:all\s+)?(?:markdown|\.md)\s+files\b/i, label: "all_markdown_dump" },
+  { pattern: /\bread\s+this\s+file\s+for\s+me\b.*\b(?:SOUL|IDENTITY|USER|AGENTS|TOOLS|SHIELD|SKILL|MEMORY)\.md\b/i, label: "read_this_protected_file" },
+  { pattern: /\b(?:read|show|dump|print)\b.*(?:memory\/|workspace-state\.json|openclaw(?:\.plugin)?\.json)\b/i, label: "protected_config_dump" },
   // Chinese
   { pattern: /重复你的(指令|指示|规则)/i, label: "cn_repeat_instructions" },
   { pattern: /显示(你的)?(系统|初始)(提示|指令|配置)/i, label: "cn_show_system_prompt" },
   { pattern: /你的规则是什么/i, label: "cn_what_are_rules" },
   { pattern: /总结你的(指示|指令|规则)/i, label: "cn_summarize" },
   { pattern: /把你的(提示词?|系统|配置|规则)(发|显示|告诉|展示)(给|出来|我)/i, label: "cn_reveal_prompt" },
+  { pattern: /(?:读取|查看|显示|打印|展示).{0,12}(?:SOUL|IDENTITY|USER|AGENTS|TOOLS|SHIELD|SKILL|MEMORY)\.md/i, label: "cn_protected_md_read" },
+  { pattern: /(?:读取|查看|显示|打印|展示).{0,12}(?:memory\/|workspace-state\.json|openclaw(?:\.plugin)?\.json)/i, label: "cn_protected_config_dump" },
+  { pattern: /列出(?:所有|全部).{0,12}(?:markdown|\.md).{0,8}(?:文件|内容)/i, label: "cn_all_markdown_dump" },
+  { pattern: /read\s+this\s+file\s+for\s+me\s*:\s*.*(?:soul|identity|user|agents|tools|shield|skill|memory)\.md/i, label: "protected_file_path_probe" },
 ];
 
 // ── Detection Logic ────────────────────────────────────────────────

@@ -28,6 +28,24 @@ export interface GuardDecision {
   riskAssessment: RiskAssessment;
 }
 
+export interface GuardContext {
+  verifiedOwner?: boolean;
+  requesterId?: string;
+  channel?: string;
+}
+
+interface IdentityDetectionResult {
+  detected: boolean;
+  matchedPatterns: string[];
+  directOwnerClaim: boolean;
+  relationClaim: boolean;
+}
+
+interface ProtectedFileAccessResult {
+  matchedFiles: string[];
+  operation: "read" | "write" | "unknown";
+}
+
 // ── 5-Dimensional Scoring ──────────────────────────────────────────
 
 interface ScoreDimensions {
@@ -62,6 +80,36 @@ function levelToAction(level: RiskLevel): "allow" | "log" | "warn" | "block" | "
     case "L3": return "block";
     case "L4": return "deny";
   }
+}
+
+function levelRank(level: RiskLevel): number {
+  switch (level) {
+    case "L0": return 0;
+    case "L1": return 1;
+    case "L2": return 2;
+    case "L3": return 3;
+    case "L4": return 4;
+  }
+}
+
+function maxLevel(current: RiskLevel | null, next: RiskLevel): RiskLevel {
+  if (!current) return next;
+  return levelRank(next) > levelRank(current) ? next : current;
+}
+
+function minScoreForLevel(level: RiskLevel): number {
+  switch (level) {
+    case "L0": return 0;
+    case "L1": return 1;
+    case "L2": return 4;
+    case "L3": return 7;
+    case "L4": return 9;
+  }
+}
+
+function applyMinimumLevel(score: number, minLevel: RiskLevel | null): number {
+  if (!minLevel) return score;
+  return Math.max(score, minScoreForLevel(minLevel));
 }
 
 // ── Session Anomaly Tracker ────────────────────────────────────────
@@ -151,6 +199,104 @@ function computeAnomalyAdjustment(sessionKey: string, baseScore: number, trigger
   return adjustment;
 }
 
+// ── Identity Verification (M0) ─────────────────────────────────────
+
+const DIRECT_OWNER_CLAIM_PATTERNS: { pattern: RegExp; label: string }[] = [
+  { pattern: /(?:我是|我就是).{0,10}(?:这个(?:工作区|workspace)|这个系统|你的)?(?:的)?(?:主人|所有者|管理员|开发者|创建者)/i, label: "cn_owner_claim" },
+  { pattern: /(?:请|要|按).{0,4}(?:主人|管理员).{0,4}(?:权限|身份).{0,4}(?:处理|执行)/i, label: "cn_owner_treatment_request" },
+  { pattern: /\b(?:i am|i'm)\s+(?:the\s+)?(?:owner|administrator|admin|creator|developer|maintainer)\b.*(?:of\s+(?:this\s+workspace|this\s+system)|here|for\s+this\s+agent)/i, label: "en_owner_claim" },
+  { pattern: /\b(?:treat|handle)\s+me\s+as\s+(?:the\s+)?(?:owner|admin(?:istrator)?)\b/i, label: "en_owner_treatment_request" },
+];
+
+const RELATION_CLAIM_PATTERNS: { pattern: RegExp; label: string }[] = [
+  { pattern: /(?:我是|我代表).{0,12}(?:主人|管理员|开发者).{0,8}(?:朋友|家人|同事|助理|代理人)/i, label: "cn_relation_claim" },
+  { pattern: /\b(?:i am|i'm)\s+(?:the\s+)?(?:friend|family|coworker|assistant|agent)\s+of\s+(?:the\s+)?(?:owner|admin(?:istrator)?|creator|developer)\b/i, label: "en_relation_claim" },
+];
+
+function detectIdentityClaims(text: string): IdentityDetectionResult {
+  const matched: string[] = [];
+  let directOwnerClaim = false;
+  let relationClaim = false;
+
+  for (const { pattern, label } of DIRECT_OWNER_CLAIM_PATTERNS) {
+    if (pattern.test(text)) {
+      matched.push(label);
+      directOwnerClaim = true;
+    }
+  }
+
+  for (const { pattern, label } of RELATION_CLAIM_PATTERNS) {
+    if (pattern.test(text)) {
+      matched.push(label);
+      relationClaim = true;
+    }
+  }
+
+  return {
+    detected: matched.length > 0,
+    matchedPatterns: matched,
+    directOwnerClaim,
+    relationClaim,
+  };
+}
+
+// ── Protected File Access (M2) ─────────────────────────────────────
+
+const PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
+  { pattern: /\bSOUL\.md\b/i, label: "SOUL.md" },
+  { pattern: /\bIDENTITY\.md\b/i, label: "IDENTITY.md" },
+  { pattern: /\bUSER\.md\b/i, label: "USER.md" },
+  { pattern: /\bAGENTS\.md\b/i, label: "AGENTS.md" },
+  { pattern: /\bTOOLS\.md\b/i, label: "TOOLS.md" },
+  { pattern: /\bSHIELD\.md\b/i, label: "SHIELD.md" },
+  { pattern: /\bSKILL\.md\b/i, label: "SKILL.md" },
+  { pattern: /\bMEMORY\.md\b/i, label: "MEMORY.md" },
+  { pattern: /(?:^|[\\/])memory[\\/]/i, label: "memory/" },
+  { pattern: /\bworkspace-state\.json\b/i, label: "workspace-state.json" },
+  { pattern: /\bopenclaw\.plugin\.json\b/i, label: "openclaw.plugin.json" },
+  { pattern: /\bopenclaw\.json\b/i, label: "openclaw.json" },
+];
+
+const PROTECTED_FILE_READ_PATTERNS: RegExp[] = [
+  /\b(?:cat|less|more|head|tail|read|open|show|print|display|type|dump)\b/i,
+  /(?:读取|查看|显示|打印|展示|列出|导出)/i,
+];
+
+const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
+  /\b(?:write|edit|modify|update|append|overwrite|rewrite|rename|move|delete|remove|rm|mv|cp|tee)\b/i,
+  /sed\s+-i/i,
+  /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)/i,
+];
+
+function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFileAccessResult {
+  const matchedFiles: string[] = [];
+  for (const { pattern, label } of PROTECTED_FILE_PATTERNS) {
+    if (pattern.test(text)) {
+      matchedFiles.push(label);
+    }
+  }
+
+  if (matchedFiles.length === 0) {
+    return { matchedFiles: [], operation: "unknown" };
+  }
+
+  let operation: ProtectedFileAccessResult["operation"] = "unknown";
+  if (toolName === "write" || toolName === "edit") {
+    operation = "write";
+  }
+  if (PROTECTED_FILE_READ_PATTERNS.some((pattern) => pattern.test(text))) {
+    operation = "read";
+  }
+  if (PROTECTED_FILE_WRITE_PATTERNS.some((pattern) => pattern.test(text))) {
+    operation = "write";
+  }
+
+  return {
+    matchedFiles: [...new Set(matchedFiles)],
+    operation,
+  };
+}
+
 // ── Credential Theft Detection (M5) ────────────────────────────────
 
 const CREDENTIAL_ACCESS_PATTERNS: { pattern: RegExp; label: string }[] = [
@@ -183,7 +329,8 @@ const OVER_AGENCY_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /(?:disable|turn\s+off|deactivate)\s+(?:safety|security|guard)/i, label: "disable_safety_en" },
   { pattern: /提升\s*(?:你的|自己的)\s*权限/i, label: "privilege_escalation" },
   { pattern: /elevate\s+(?:your|own)\s+privilege/i, label: "privilege_escalation_en" },
-  { pattern: /(?:修改|编辑|更改|覆盖)\s*(?:SOUL|IDENTITY|SKILL|AGENTS)\.md/i, label: "core_file_modify" },
+  { pattern: /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)\s*(?:SOUL|IDENTITY|USER|SKILL|AGENTS|TOOLS|SHIELD|MEMORY)\.md/i, label: "core_file_modify" },
+  { pattern: /(?:modify|edit|update|append|overwrite|rewrite|delete|remove|rename|move)\s+(?:SOUL|IDENTITY|USER|SKILL|AGENTS|TOOLS|SHIELD|MEMORY)\.md/i, label: "core_file_modify_en" },
 ];
 
 function detectOverAgency(text: string): string[] {
@@ -219,6 +366,22 @@ function detectMaliciousCodeRequest(text: string): string[] {
     }
   }
   return matched;
+}
+
+const LEGAL_SECURITY_CONTEXT_PATTERNS: RegExp[] = [
+  /\bCTF\b/i,
+  /capture\s+the\s+flag/i,
+  /authorized\s+(?:pentest|penetration\s+test|security\s+assessment)/i,
+  /security\s+(?:research|training|education|lab)/i,
+  /defensive\s+security/i,
+  /for\s+(?:detection|defense|analysis)/i,
+  /授权(?:渗透测试|安全测试|安全研究)/i,
+  /安全(?:研究|教学|实验|演练|防御)/i,
+  /仅限(?:授权|实验室|教学|CTF)/i,
+];
+
+function hasLegalSecurityContext(text: string): boolean {
+  return LEGAL_SECURITY_CONTEXT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 // ── "Fatal Triangle" Check ─────────────────────────────────────────
@@ -265,7 +428,7 @@ function checkFatalTriangle(
 
 // ── Public API: Input Guard ────────────────────────────────────────
 
-export function guardInput(text: string, sessionKey?: string): GuardDecision {
+export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
   const modules: string[] = [];
   const dims: ScoreDimensions = {
     intentClarity: 0,
@@ -275,6 +438,18 @@ export function guardInput(text: string, sessionKey?: string): GuardDecision {
     authorizationStatus: 0,
     patternMatch: 0,
   };
+  let forcedMinLevel: RiskLevel | null = null;
+  const verifiedOwner = context?.verifiedOwner === true;
+
+  // M0: Identity verification / impersonation
+  const identityClaims = detectIdentityClaims(text);
+  if (identityClaims.detected && !verifiedOwner) {
+    modules.push("M0:identity_verification");
+    dims.intentClarity = Math.max(dims.intentClarity, identityClaims.directOwnerClaim ? 2 : 1);
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, identityClaims.directOwnerClaim ? 2 : 1);
+    dims.patternMatch = Math.max(dims.patternMatch, identityClaims.directOwnerClaim ? 2 : 1);
+    forcedMinLevel = maxLevel(forcedMinLevel, "L2");
+  }
 
   // M1: Prompt injection (CRITICAL — per SKILL.md, L4 deny)
   const injection = detectPromptInjection(text);
@@ -284,6 +459,11 @@ export function guardInput(text: string, sessionKey?: string): GuardDecision {
     dims.intentClarity = injection.confidence >= 0.6 ? 2 : 1;
     dims.potentialHarm = 2;
     dims.reversibility = 1;
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, 1);
+    forcedMinLevel = maxLevel(
+      forcedMinLevel,
+      injection.confidence >= 0.85 || injection.category === "indirect_injection" ? "L4" : "L3",
+    );
   }
 
   // M2: System prompt extraction (HIGH — L4 deny)
@@ -293,6 +473,20 @@ export function guardInput(text: string, sessionKey?: string): GuardDecision {
     dims.patternMatch = Math.max(dims.patternMatch, sysprompt.confidence >= 0.7 ? 2 : 1);
     dims.intentClarity = Math.max(dims.intentClarity, 2);
     dims.potentialHarm = Math.max(dims.potentialHarm, 2);
+    dims.reversibility = Math.max(dims.reversibility, 1);
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, 2);
+    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
+  }
+
+  const protectedAccess = detectProtectedFileAccess(text);
+  if (protectedAccess.matchedFiles.length > 0) {
+    modules.push("M2:protected_file_access");
+    dims.intentClarity = Math.max(dims.intentClarity, protectedAccess.operation === "unknown" ? 1 : 2);
+    dims.potentialHarm = Math.max(dims.potentialHarm, 2);
+    dims.reversibility = Math.max(dims.reversibility, protectedAccess.operation === "write" ? 2 : 1);
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, 2);
+    dims.patternMatch = Math.max(dims.patternMatch, 2);
+    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
   }
 
   // M3: Over-agency (HIGH — self-modification is L4 deny)
@@ -305,26 +499,52 @@ export function guardInput(text: string, sessionKey?: string): GuardDecision {
     dims.intentClarity = Math.max(dims.intentClarity, isSelfModify ? 2 : 1);
     dims.potentialHarm = 2;
     dims.reversibility = isSelfModify ? 2 : 1;
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, isSelfModify ? 2 : 1);
     dims.patternMatch = Math.max(dims.patternMatch, overAgency.length >= 2 ? 2 : 1);
+    forcedMinLevel = maxLevel(forcedMinLevel, isSelfModify ? "L4" : "L3");
   }
 
   // M5: Credential theft intent
   const credentialTheft = detectCredentialTheft(text);
   if (credentialTheft.length > 0) {
     modules.push("M5:credential_theft");
+    dims.intentClarity = Math.max(dims.intentClarity, credentialTheft.length >= 2 ? 2 : 1);
     dims.potentialHarm = Math.max(dims.potentialHarm, 2);
-    dims.patternMatch = Math.max(dims.patternMatch, 1);
+    dims.reversibility = Math.max(dims.reversibility, 1);
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, 1);
+    dims.patternMatch = Math.max(dims.patternMatch, credentialTheft.length >= 2 ? 2 : 1);
+    const accessesPrimarySecrets = credentialTheft.some((label) =>
+      ["env_file_read", "ssh_key_access", "aws_credentials", "gnupg_access", "credentials_read"].includes(label),
+    );
+    forcedMinLevel = maxLevel(forcedMinLevel, accessesPrimarySecrets ? "L4" : "L3");
   }
 
   // M6: Malicious code request (L4 deny)
   const maliciousCode = detectMaliciousCodeRequest(text);
   if (maliciousCode.length > 0) {
+    const legalSecurityContext = hasLegalSecurityContext(text);
     modules.push("M6:malicious_code");
     dims.intentClarity = 2;
     dims.potentialHarm = 2;
     dims.reversibility = 2;
-    dims.authorizationStatus = 2;
+    dims.authorizationStatus = legalSecurityContext ? 1 : 2;
     dims.patternMatch = 2;
+    const dualUseExploitOnly = maliciousCode.every((label) =>
+      label.includes("exploit_request"),
+    );
+    forcedMinLevel = maxLevel(
+      forcedMinLevel,
+      legalSecurityContext && dualUseExploitOnly ? "L3" : "L4",
+    );
+  }
+
+  if (!verifiedOwner && identityClaims.detected && (
+    modules.includes("M2:system_prompt_extraction")
+    || modules.includes("M2:protected_file_access")
+    || modules.includes("M3:over_agency")
+  )) {
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, 2);
+    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
   }
 
   let score = computeRiskScore(dims);
@@ -334,6 +554,12 @@ export function guardInput(text: string, sessionKey?: string): GuardDecision {
     const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
     score = Math.min(score + anomalyAdj, 10);
   }
+
+  if (verifiedOwner && score > 0) {
+    score = Math.max(0, score - 2);
+  }
+
+  score = Math.min(applyMinimumLevel(score, forcedMinLevel), 10);
 
   const level = scoreToLevel(score);
   const action = levelToAction(level);
@@ -378,13 +604,17 @@ export function guardInput(text: string, sessionKey?: string): GuardDecision {
 export function guardOutput(output: string): GuardDecision {
   const modules: string[] = [];
   let score = 0;
+  let forcedMinLevel: RiskLevel | null = null;
 
   // M2: Check for system prompt leakage in output
   const leak = detectSystemPromptLeak(output);
   if (leak.isLeak) {
     modules.push("M2:system_prompt_leak");
     score += leak.severity === "high" ? 6 : 3;
+    forcedMinLevel = maxLevel(forcedMinLevel, leak.severity === "high" ? "L4" : "L3");
   }
+
+  score = Math.min(applyMinimumLevel(score, forcedMinLevel), 10);
 
   const level = scoreToLevel(score);
   const action = levelToAction(level);
@@ -424,6 +654,7 @@ export function guardToolCall(
   toolName: string,
   params: Record<string, any>,
   sessionKey?: string,
+  context?: GuardContext,
 ): GuardDecision {
   const modules: string[] = [];
   const dims: ScoreDimensions = {
@@ -434,17 +665,37 @@ export function guardToolCall(
     authorizationStatus: 0,
     patternMatch: 0,
   };
+  let forcedMinLevel: RiskLevel | null = null;
+  const verifiedOwner = context?.verifiedOwner === true;
 
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
   const combined = `${command} ${filePath}`;
 
+  const protectedAccess = detectProtectedFileAccess(combined, toolName);
+  if (protectedAccess.matchedFiles.length > 0) {
+    modules.push("M2:protected_file_access");
+    dims.intentClarity = 2;
+    dims.potentialHarm = 2;
+    dims.reversibility = protectedAccess.operation === "write" ? 2 : 1;
+    dims.authorizationStatus = 2;
+    dims.patternMatch = 2;
+    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
+  }
+
   // M5: Credential theft via tool
   const credTheft = detectCredentialTheft(combined);
   if (credTheft.length > 0) {
     modules.push("M5:credential_theft");
+    dims.intentClarity = Math.max(dims.intentClarity, credTheft.length >= 2 ? 2 : 1);
     dims.potentialHarm = 2;
+    dims.reversibility = Math.max(dims.reversibility, 1);
+    dims.authorizationStatus = Math.max(dims.authorizationStatus, 1);
     dims.patternMatch = credTheft.length >= 2 ? 2 : 1;
+    const accessesPrimarySecrets = credTheft.some((label) =>
+      ["env_file_read", "ssh_key_access", "aws_credentials", "gnupg_access", "credentials_read"].includes(label),
+    );
+    forcedMinLevel = maxLevel(forcedMinLevel, accessesPrimarySecrets ? "L4" : "L3");
   }
 
   // M3: Over-agency in tool params
@@ -454,14 +705,24 @@ export function guardToolCall(
     dims.intentClarity = 2;
     dims.potentialHarm = 2;
     dims.reversibility = 2;
+    dims.authorizationStatus = 2;
+    dims.patternMatch = Math.max(dims.patternMatch, overAgency.length >= 2 ? 2 : 1);
+    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
   }
 
   // Fatal Triangle
   const triangle = checkFatalTriangle(toolName, params);
   if (triangle.hitCount >= 2) {
     modules.push("fatal_triangle");
+    dims.intentClarity = Math.max(dims.intentClarity, triangle.hitCount >= 3 ? 2 : 1);
     dims.potentialHarm = Math.max(dims.potentialHarm, 2);
+    dims.reversibility = Math.max(dims.reversibility, triangle.outputToExternal ? 2 : 1);
     dims.authorizationStatus = 2;
+    dims.patternMatch = Math.max(dims.patternMatch, triangle.hitCount >= 3 ? 2 : 1);
+    forcedMinLevel = maxLevel(
+      forcedMinLevel,
+      triangle.hitCount >= 3 || (triangle.accessesSensitiveData && triangle.outputToExternal) ? "L4" : "L3",
+    );
   }
 
   let score = computeRiskScore(dims);
@@ -470,6 +731,12 @@ export function guardToolCall(
     const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
     score = Math.min(score + anomalyAdj, 10);
   }
+
+  if (verifiedOwner && score > 0) {
+    score = Math.max(0, score - 2);
+  }
+
+  score = Math.min(applyMinimumLevel(score, forcedMinLevel), 10);
 
   const level = scoreToLevel(score);
   const action = levelToAction(level);
@@ -499,8 +766,10 @@ function buildDescription(modules: string[], level: RiskLevel): string {
   if (modules.length === 0) return "安全";
 
   const moduleNames: Record<string, string> = {
+    "M0:identity_verification": "身份冒充/未验证身份声明",
     "M1:prompt_injection": "提示注入攻击",
     "M2:system_prompt_extraction": "系统提示探测",
+    "M2:protected_file_access": "核心配置文件访问",
     "M2:system_prompt_leak": "系统提示泄露",
     "M3:over_agency": "过度代理/权限提升",
     "M5:credential_theft": "凭证窃取风险",

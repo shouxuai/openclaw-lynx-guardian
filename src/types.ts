@@ -13,6 +13,11 @@ export interface PluginConfig {
     inputGuard?: boolean;
     outputGuard?: boolean;
     toolGuard?: boolean;
+    ownerVerification?: {
+      enabled?: boolean;
+      trustedUserIds?: string[];
+      trustedChannels?: string[];
+    };
   };
   securityAudit?: {
     enabled?: boolean;

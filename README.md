@@ -17,7 +17,7 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 ## 最新版本
 - **token-optimizer**：让你的龙虾越用越省。
 - **Skills 安全检测**：设置隔离区 匹配恶意Skill黑名单 比对受信注册表识别假冒 启动时扫描所有已安装Skill完整  合并本地+远程黑名单（带TTL缓存）。
-- **AI 自我安全防护 (SX-self-safety-guard)**：提示注入检测 (M1)、系统提示保护 (M2)、过度代理检测 (M3)、凭证窃取防护 (M5)、恶意代码请求拦截 (M6)，五级风险评估 (L0–L4)。
+- **AI 自我安全防护 (SX-self-safety-guard)**：身份冒充检测 (M0)、提示注入检测 (M1)、系统提示与核心文件保护 (M2)、过度代理检测 (M3)、凭证窃取防护 (M5)、恶意代码请求拦截 (M6)，五级风险评估 (L0–L4)。
 - **全方位安全审计 (SX-security-audit)**：插件启动时自动运行安全审计与恶意脚本扫描；支持权限、环境变量、依赖、Git、网络、Shell、macOS 等模块。
 - 支持公网暴露访问检查，完善元认知安全自提升功能。
 
@@ -49,9 +49,9 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
     -   所有拦截记录与风险事件均会实时上报至后端，形成完整的安全审计链。
 
 6.  **AI 自我安全防护 (v2.0)**
-    -   **输入防护**：在 `message_received`、`before_agent_start` 时检测提示注入、系统提示探测、过度代理、凭证窃取、恶意代码请求。
-    -   **输出防护**：在 `agent_end` 时检测输出中是否泄露系统提示/受保护配置。
-    -   **工具防护**：在 `before_tool_call` 时检测凭证访问、过度代理与「致命三角」风险。
+    -   **输入防护**：在 `message_received`、`before_agent_start` 时检测身份冒充、提示注入、系统提示探测、核心文件访问、过度代理、凭证窃取、恶意代码请求。
+    -   **输出防护**：在 `agent_end` 时检测输出中是否泄露系统提示/受保护配置，并对可变消息对象执行 best-effort 脱敏替换。
+    -   **工具防护**：在 `before_tool_call` 时检测核心文件访问、凭证访问、过度代理与「致命三角」风险。
     -   风险达 L3/L4 时自动拦截并上报。
 
 7.  **安全审计 (v2.0)**
@@ -142,9 +142,11 @@ openclaw对话框输入以下指令：
 - **后端 API**：插件默认连接首序服务器环境。如需修改，请设置环境变量 `LYNX_API_URL`。
 - **自我安全防护 (v2.0)**：在 OpenClaw 插件配置中可设置：
   - `selfSafetyGuard.enabled`：总开关
-  - `selfSafetyGuard.inputGuard`：输入防护（提示注入、系统提示探测等）
-  - `selfSafetyGuard.outputGuard`：输出防护（系统提示泄露检测）
-  - `selfSafetyGuard.toolGuard`：工具调用防护（凭证窃取、过度代理、致命三角）
+  - `selfSafetyGuard.inputGuard`：输入防护（身份冒充、提示注入、系统提示/核心文件探测等）
+  - `selfSafetyGuard.outputGuard`：输出防护（系统提示泄露检测 + best-effort 脱敏）
+  - `selfSafetyGuard.toolGuard`：工具调用防护（核心文件访问、凭证窃取、过度代理、致命三角）
+  - `selfSafetyGuard.ownerVerification.trustedUserIds`：配置已验证主人的请求方 ID 列表，命中后应用 `-2` 风险调整
+  - `selfSafetyGuard.ownerVerification.trustedChannels`：配置已验证主人的通道/来源名称列表
 - **安全审计 (v2.0)**：
   - `securityAudit.runOnStartup`：是否在插件启动时运行审计
   - `securityAudit.checks`：要执行的模块（如 `permissions`, `env`, `git`, `dependencies` 等）
