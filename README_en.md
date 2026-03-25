@@ -7,9 +7,15 @@ Lynx - First Order Lynx, an agent security product. Lynx—renowned for its keen
 
 ## Latest Version
 
-- Automatic OpenClaw service discovery: after startup, the plugin scans local `127.0.0.1:18789` and LAN targets using `DEFAULT_CANDIDATE_PORTS` by default, with optional full-port scanning.
-- Plugin-private discovery config: on first run, the plugin creates `lynx-discovery.config.json` inside the plugin directory; use this file to control `fullScan` without editing `openclaw.json`.
+- OpenClaw service discovery: the plugin no longer scans automatically on startup. On first run it only creates `lynx-discovery.config.json` in the plugin directory. Run detection manually with `check`, `/check`, `lynx-check`, `/lynx-check`, `openclaw-check`, or `/openclaw-check`.
+- Plugin-private discovery config: use `lynx-discovery.config.json` inside the plugin directory to control `fullScan` and other discovery options without editing `openclaw.json`.
 -  Supports public network exposure access checks and improves metacognitive security self-elevation functionality.
+
+## 🔎 How To Start Discovery
+
+- The plugin does not run IP/port discovery automatically during startup. Startup only loads or creates `lynx-discovery.config.json`.
+- To start discovery manually, enter `check`, `/check`, `lynx-check`, `/lynx-check`, `openclaw-check`, or `/openclaw-check` in the OpenClaw chat.
+- After triggering, the plugin runs OpenClaw service discovery and writes the process to runtime logs. If the current session channel supports it, the plugin also tries to return the result to the frontend message list.
 
 ## 🛡️ Core Functions
 
