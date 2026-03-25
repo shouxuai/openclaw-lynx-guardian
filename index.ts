@@ -49,6 +49,120 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function hasKeyword(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function isManualDiscoveryRequest(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+
+  const exactCommands = [
+    "/check",
+    "/lynx-check",
+    "/openclaw-check",
+  ];
+  if (exactCommands.some((command) => normalized === command || normalized.startsWith(`${command} `))) {
+    return true;
+  }
+
+  const compact = normalized.replace(/\s+/g, "");
+  const actionKeywords = ["检查", "检测", "扫描", "探测", "排查", "check", "scan"];
+  const targetKeywords = ["openclaw", "龙虾"];
+  const signalKeywords = ["服务", "进程", "网关", "ip", "端口", "地址"];
+
+  return hasKeyword(compact, actionKeywords)
+    && hasKeyword(compact, targetKeywords)
+    && hasKeyword(compact, signalKeywords);
+}
+
+async function sendPluginMessage(ctx: any, content: string): Promise<void> {
+  if (typeof ctx?.sendMessage !== "function") {
+    return;
+  }
+  await ctx.sendMessage({
+    role: "assistant",
+    content,
+  });
+}
+
+function formatManualDiscoveryReply(report: any): string {
+  const confirmed = report.hits.filter((hit: any) => hit.score >= 80);
+  const likely = report.hits.filter((hit: any) => hit.score >= 50 && hit.score < 80);
+
+  const lines = [
+    "OpenClaw 服务检测结果",
+    `扫描目标数: ${report.scannedTargets}`,
+    `展开主机数: ${report.expandedHosts}`,
+    `检测耗时: ${(report.elapsedMs / 1000).toFixed(1)}s`,
+    `已确认: ${confirmed.length} 个`,
+    `高度疑似: ${likely.length} 个`,
+  ];
+
+  if (confirmed.length > 0) {
+    lines.push("已确认实例:");
+    for (const hit of confirmed.slice(0, 10)) {
+      lines.push(`- ${hit.host}:${hit.port} (${hit.scheme || "http"}, ${hit.score}分)`);
+    }
+  }
+
+  if (likely.length > 0) {
+    lines.push("高度疑似实例:");
+    for (const hit of likely.slice(0, 10)) {
+      lines.push(`- ${hit.host}:${hit.port} (${hit.scheme || "http"}, ${hit.score}分)`);
+    }
+  }
+
+  if (confirmed.length === 0 && likely.length === 0) {
+    lines.push("未发现高置信度或高度疑似的 OpenClaw 服务。");
+  }
+
+  if (Array.isArray(report.warnings) && report.warnings.length > 0) {
+    lines.push(`提示: ${report.warnings[0]}`);
+  }
+
+  return lines.join("\n");
+}
+
+async function runDiscoveryAndNotify(
+  log: any,
+  ctx: any,
+  discoveryConfig: any,
+  discoveryRuntimePath: string,
+): Promise<boolean> {
+  try {
+    const targets = await resolveDiscoveryTargets(discoveryConfig);
+    if (targets.length === 0) {
+      await sendPluginMessage(ctx, "OpenClaw 服务检测已跳过：未能解析到可检测的目标。");
+      return true;
+    }
+
+    const scanMode = discoveryConfig.fullScan === true ? "全端口扫描" : "候选端口扫描";
+    await sendPluginMessage(
+      ctx,
+      `OpenClaw 服务检测已立即启动，模式: ${scanMode}\n配置文件: ${discoveryRuntimePath}\n目标: ${targets.join(", ")}`,
+    );
+
+    log.info(
+      `[lynx-guardian] 手动触发 OpenClaw 服务检测（不受后台锁限制，立即执行），模式: ${scanMode}，配置文件: ${discoveryRuntimePath}，目标: ${targets.join(", ")}`,
+    );
+
+    const report = await discoverOpenClaw({
+      ...discoveryConfig,
+      enabled: true,
+      targets,
+    });
+
+    log.info(`[lynx-guardian] ${formatDiscoverySummary(report)}`);
+    await sendPluginMessage(ctx, formatManualDiscoveryReply(report));
+    return true;
+  } catch (err: any) {
+    log.error(`[lynx-guardian] 手动 OpenClaw 服务检测失败: ${err.message}`);
+    await sendPluginMessage(ctx, `OpenClaw 服务检测失败: ${err.message}`);
+    return true;
+  }
+}
+
 async function resolveDiscoveryTargets(config: any): Promise<string[]> {
   const configuredTargets = normalizeStringList(config?.targets);
   if (configuredTargets.length > 0) {
@@ -301,7 +415,7 @@ export default function setup(api: OpenClawPluginApi) {
           return;
         }
 
-        const startupDelayMs = 15000;
+        const startupDelayMs = 3000;
         log.info(`[lynx-guardian] OpenClaw 服务检测已排队，将在 ${startupDelayMs / 1000} 秒后后台启动，优先让网关完成启动。`);
         await sleep(startupDelayMs);
 
@@ -344,6 +458,16 @@ export default function setup(api: OpenClawPluginApi) {
           : String(event.content);
 
       if (!text || text.length === 0) return;
+
+      if (isManualDiscoveryRequest(text)) {
+        const handled = await runDiscoveryAndNotify(log, ctx, openClawDiscoveryConfig, discoveryRuntime.path);
+        if (handled) {
+          return {
+            block: true,
+            blockReason: "[Lynx Guardian] 已执行 OpenClaw 服务检测请求。",
+          };
+        }
+      }
 
       // Sensitive data check
       if (sensitiveDataBlocker.containsSensitiveData(text)) {

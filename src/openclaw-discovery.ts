@@ -548,6 +548,50 @@ function sortHits(hits: DiscoveryHit[]): DiscoveryHit[] {
   });
 }
 
+function normalizeHitHost(host: string): string {
+  const value = host.trim().toLowerCase();
+  if (value === "localhost" || value === "::1" || value === "[::1]") {
+    return "127.0.0.1";
+  }
+  return value;
+}
+
+function dedupeHits(hits: DiscoveryHit[]): DiscoveryHit[] {
+  const deduped = new Map<string, DiscoveryHit>();
+
+  for (const hit of hits) {
+    const normalizedHost = normalizeHitHost(hit.host);
+    const key = `${normalizedHost}|${hit.port}|${hit.scheme || ""}`;
+    const existing = deduped.get(key);
+
+    if (!existing) {
+      deduped.set(key, {
+        ...hit,
+        host: normalizedHost === "127.0.0.1" ? "127.0.0.1" : hit.host,
+      });
+      continue;
+    }
+
+    const preferred = hit.score > existing.score ? hit : existing;
+    const mergedFeatures = [...new Set([
+      ...existing.matchedFeatures,
+      ...hit.matchedFeatures,
+    ])];
+
+    deduped.set(key, {
+      ...preferred,
+      host: normalizedHost === "127.0.0.1" ? "127.0.0.1" : preferred.host,
+      matchedFeatures: mergedFeatures,
+      score: Math.max(existing.score, hit.score),
+      statusCode: preferred.statusCode ?? existing.statusCode,
+      confidence: preferred.score >= existing.score ? preferred.confidence : existing.confidence,
+      confidenceDesc: preferred.score >= existing.score ? preferred.confidenceDesc : existing.confidenceDesc,
+    });
+  }
+
+  return [...deduped.values()];
+}
+
 export async function discoverOpenClaw(config: OpenClawDiscoveryConfig = {}): Promise<DiscoveryReport> {
   const timeoutMs = clamp(config.timeoutMs, 2000, 250, 15000);
   const hostConcurrency = clamp(config.hostConcurrency, 20, 1, 128);
@@ -573,7 +617,7 @@ export async function discoverOpenClaw(config: OpenClawDiscoveryConfig = {}): Pr
     }),
   );
 
-  const hits = sortHits(batches.flat());
+  const hits = sortHits(dedupeHits(batches.flat()));
 
   return {
     scannedTargets: rawTargets.length,

@@ -3,9 +3,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import setup from '../index.js';
 import * as utils from '../src/utils.js';
 import * as api from '../src/api.js';
+import * as discovery from '../src/openclaw-discovery.js';
+import * as runtimeConfig from '../src/discovery-runtime-config.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
+vi.mock('../src/openclaw-discovery.js', () => ({
+  discoverOpenClaw: vi.fn(),
+  formatDiscoverySummary: vi.fn().mockReturnValue('discovery summary'),
+}));
+vi.mock('../src/discovery-runtime-config.js', () => ({
+  loadDiscoveryRuntimeConfig: vi.fn(),
+}));
 vi.mock('../src/security-audit-runner.js', () => ({
   runSecurityAudit: vi.fn().mockResolvedValue(null),
   runMaliciousScriptScan: vi.fn().mockResolvedValue(null),
@@ -34,12 +43,44 @@ describe('Plugin Setup', () => {
 
     vi.mocked(utils.ensureUserRegistered).mockReturnValue('TEST_ID');
     vi.mocked(utils.ensureResources).mockReturnValue(undefined);
+    vi.mocked(utils.baseIpInfo).mockResolvedValue({ ip: '127.0.0.1', port: 18789, type: 'next_check' } as any);
+    vi.mocked(utils.listLocalSubnetCidrs).mockReturnValue([]);
     vi.mocked(api.registerUser).mockResolvedValue({ code: 200, id: 'TEST_ID', message: 'OK' });
     vi.mocked(api.pushRecord).mockResolvedValue({ code: 200, message: 'OK' });
     vi.mocked(api.checkContent).mockResolvedValue({
       code: 200,
       result: { risk_level: 0, level_one: '其他', level_two: '其他', level_three: '其他' },
       message: 'ok',
+    } as any);
+    vi.mocked(runtimeConfig.loadDiscoveryRuntimeConfig).mockReturnValue({
+      config: {
+        enabled: true,
+        runOnStartup: false,
+        fullScan: false,
+      },
+      path: 'D:\\all-sunday\\openclaw-lynx\\openclaw-lynx-guardian\\lynx-discovery.config.json',
+      created: false,
+      warnings: [],
+    });
+    vi.mocked(discovery.discoverOpenClaw).mockResolvedValue({
+      scannedTargets: 2,
+      expandedHosts: 2,
+      elapsedMs: 1200,
+      hits: [
+        {
+          target: '127.0.0.1:18789',
+          host: '127.0.0.1',
+          port: 18789,
+          alive: true,
+          score: 90,
+          confidence: '确认',
+          confidenceDesc: 'OpenClaw 网关 [高置信度]',
+          matchedFeatures: ['openclaw'],
+          version: '',
+          scheme: 'http',
+        },
+      ],
+      warnings: [],
     } as any);
   });
 
@@ -109,5 +150,52 @@ describe('Plugin Setup', () => {
       expect.stringContaining('[SSG:output]'),
       2,
     );
+  });
+
+  it('should trigger discovery reply on /check and send result messages', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handler(
+      { content: '/check' },
+      { sessionKey: 'sess-check', sendMessage },
+    );
+
+    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('OpenClaw 服务检测已立即启动'),
+      }),
+    );
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('OpenClaw 服务检测结果'),
+      }),
+    );
+    expect(result).toEqual({
+      block: true,
+      blockReason: expect.stringContaining('OpenClaw 服务检测请求'),
+    });
+  });
+
+  it('should trigger discovery reply on chinese detection prompt', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await handler(
+      { content: '帮我做一下ip检测龙虾进程' },
+      { sessionKey: 'sess-check-cn', sendMessage },
+    );
+
+    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage.mock.calls[1][0].content).toContain('127.0.0.1:18789');
   });
 });
