@@ -19,7 +19,15 @@ Lynx-首序猞猁，智能体安全产品。猞猁——以敏锐视觉著称，
 - **Skills 安全检测**：设置隔离区 匹配恶意Skill黑名单 比对受信注册表识别假冒 启动时扫描所有已安装Skill完整  合并本地+远程黑名单（带TTL缓存）。
 - **AI 自我安全防护 (SX-self-safety-guard)**：身份冒充检测 (M0)、提示注入检测 (M1)、系统提示与核心文件保护 (M2)、过度代理检测 (M3)、凭证窃取防护 (M5)、恶意代码请求拦截 (M6)，五级风险评估 (L0–L4)。
 - **全方位安全审计 (SX-security-audit)**：插件启动时自动运行安全审计与恶意脚本扫描；支持权限、环境变量、依赖、Git、网络、Shell、macOS 等模块。
+- **OpenClaw 服务检测**：默认不在插件启动时自动扫描；首次运行只会在插件目录生成 `lynx-discovery.config.json`。需要手动输入 `check`、`/check`、`lynx-check`、`/lynx-check`、`openclaw-check` 或 `/openclaw-check` 触发检测。
+- **插件私有检测配置**：通过插件目录下的 `lynx-discovery.config.json` 控制 `fullScan` 等检测参数，无需修改 `openclaw.json`。
 - 支持公网暴露访问检查，完善元认知安全自提升功能。
+
+## 🔎 如何启动检测服务
+
+- 插件启动时不会自动进行 IP/端口扫描，只会加载或生成 `lynx-discovery.config.json`。
+- 需要手动检测时，请在 OpenClaw 对话框中输入 `check`、`/check`、`lynx-check`、`/lynx-check`、`openclaw-check` 或 `/openclaw-check`。
+- 触发后，插件会执行 OpenClaw 服务检测，并将检测过程写入运行日志；若当前会话通道支持，也会尝试把检测结果返回到前台消息列表。
 
 ## 🛡️ 核心功能
 
