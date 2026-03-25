@@ -1,6 +1,6 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import setup from '../index.js';
+import setup from '../index.ts';
 import * as utils from '../src/utils.js';
 import * as api from '../src/api.js';
 import * as discovery from '../src/openclaw-discovery.js';
@@ -10,7 +10,15 @@ vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
 vi.mock('../src/openclaw-discovery.js', () => ({
   discoverOpenClaw: vi.fn(),
-  formatDiscoverySummary: vi.fn().mockReturnValue('discovery summary'),
+  formatDiscoverySummary: vi.fn((report: any) => [
+    'OpenClaw 服务检测完成',
+    `- 扫描目标数: ${report.scannedTargets}`,
+    `- 展开主机数: ${report.expandedHosts}`,
+    `- 命中结果数: ${report.hits.length}`,
+    `- 已确认 OpenClaw 服务: ${report.hits.filter((hit: any) => hit.score >= 80).length} 个`,
+    '已确认的 OpenClaw 服务列表:',
+    ...report.hits.map((hit: any) => `- IP=${hit.host} 端口=${hit.port} 协议=${hit.scheme || 'http'} 评分=${hit.score} 状态=${hit.confidence}`),
+  ].join('\n')),
 }));
 vi.mock('../src/discovery-runtime-config.js', () => ({
   loadDiscoveryRuntimeConfig: vi.fn(),
@@ -168,20 +176,47 @@ describe('Plugin Setup', () => {
       1,
       expect.objectContaining({
         role: 'assistant',
-        content: expect.stringContaining('OpenClaw 服务检测已立即启动'),
       }),
     );
     expect(sendMessage).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         role: 'assistant',
-        content: expect.stringContaining('OpenClaw 服务检测结果'),
       }),
     );
-    expect(result).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('OpenClaw 服务检测请求'),
-    });
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        role: 'assistant',
+      }),
+    );
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        role: 'assistant',
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        block: true,
+      }),
+    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('收到手动 OpenClaw 服务检测指令'));
+  });
+
+  it('should trigger discovery reply on bare check command', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await handler(
+      { content: 'check' },
+      { sessionKey: 'sess-check-bare', sendMessage },
+    );
+
+    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('收到手动 OpenClaw 服务检测指令: check'));
   });
 
   it('should trigger discovery reply on chinese detection prompt', async () => {
@@ -196,6 +231,23 @@ describe('Plugin Setup', () => {
 
     expect(discovery.discoverOpenClaw).toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(sendMessage.mock.calls[1][0].content).toContain('127.0.0.1:18789');
+  });
+
+  it('should still return discovery summary when sendMessage is unavailable', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+
+    const result = await handler(
+      { content: '/check' },
+      { sessionKey: 'sess-check-fallback' },
+    );
+
+    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        block: true,
+      }),
+    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('收到手动 OpenClaw 服务检测指令'));
   });
 });

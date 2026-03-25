@@ -16,7 +16,7 @@ export interface DiscoveryRuntimeConfigLoadResult {
 const DEFAULT_DISCOVERY_RUNTIME_CONFIG: { openclawDiscovery: OpenClawDiscoveryConfig } = {
   openclawDiscovery: {
     enabled: true,
-    runOnStartup: true,
+    runOnStartup: false,
     fullScan: false,
   },
 };
