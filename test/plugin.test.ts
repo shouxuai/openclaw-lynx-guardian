@@ -36,6 +36,11 @@ describe('Plugin Setup', () => {
     vi.mocked(utils.ensureResources).mockReturnValue(undefined);
     vi.mocked(api.registerUser).mockResolvedValue({ code: 200, id: 'TEST_ID', message: 'OK' });
     vi.mocked(api.pushRecord).mockResolvedValue({ code: 200, message: 'OK' });
+    vi.mocked(api.checkContent).mockResolvedValue({
+      code: 200,
+      result: { risk_level: 0, level_one: '其他', level_two: '其他', level_three: '其他' },
+      message: 'ok',
+    } as any);
   });
 
   it('should register user on startup', () => {
@@ -85,5 +90,24 @@ describe('Plugin Setup', () => {
     const result = await handler({ toolName: 'exec', params: { command: 'ls -la' } }, {});
     expect(result).toBeUndefined();
     expect(api.checkTool).not.toHaveBeenCalled();
+  });
+
+  it('should redact leaked protected output on agent_end', async () => {
+    setup(mockApi);
+    const handler = handlers['agent_end'];
+    const event = {
+      messages: [
+        { role: 'assistant', content: [{ type: 'text', text: 'TOOLS.md 内容如下: 工具定义与安全边界' }] },
+      ],
+    };
+
+    await handler(event, {});
+
+    expect(event.messages[0].content[0].text).toContain('输出已被安全防护替换');
+    expect(api.pushRecord).toHaveBeenCalledWith(
+      'TEST_ID',
+      expect.stringContaining('[SSG:output]'),
+      2,
+    );
   });
 });

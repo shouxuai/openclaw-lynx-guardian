@@ -17,17 +17,38 @@
           "inputGuard": {
             "type": "boolean",
             "default": true,
-            "description": "Enable input guard: prompt injection (M1), system prompt extraction (M2), over-agency (M3), credential theft (M5), malicious code request (M6)"
+            "description": "Enable input guard: identity impersonation (M0), prompt injection (M1), system prompt/core file extraction (M2), over-agency (M3), credential theft (M5), malicious code request (M6)"
           },
           "outputGuard": {
             "type": "boolean",
             "default": true,
-            "description": "Enable output guard: system prompt leak detection (M2)"
+            "description": "Enable output guard: system prompt leak detection with best-effort redaction (M2)"
           },
           "toolGuard": {
             "type": "boolean",
             "default": true,
-            "description": "Enable tool call guard: over-agency (M3), credential theft (M5), fatal triangle check"
+            "description": "Enable tool call guard: core file access (M2), over-agency (M3), credential theft (M5), fatal triangle check"
+          },
+          "ownerVerification": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional identity verification hints for M0. If configured, matching requester IDs or channels receive the verified-owner risk adjustment.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "trustedUserIds": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Requester IDs that should be treated as verified owner identities"
+              },
+              "trustedChannels": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Channel/source names that should be treated as verified owner channels"
+              }
+            }
           }
         }
       },
