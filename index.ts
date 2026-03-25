@@ -1,6 +1,13 @@
 import { resolve, normalize } from "path";
 import type { OpenClawPluginApi } from "./src/types.js";
-import { ensureUserRegistered, readRecentContext, ensureResources, baseIpInfo, extractContentAfterDate } from "./src/utils.js";
+import {
+  ensureUserRegistered,
+  readRecentContext,
+  ensureResources,
+  baseIpInfo,
+  extractContentAfterDate,
+  listLocalSubnetCidrs,
+} from "./src/utils.js";
 import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, fetchMaliciousSkillBlacklist } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/sensitive.js";
@@ -10,6 +17,8 @@ import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./
 import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skill-guard.js";
 import { quarantineSkill } from "./src/skill-cleanup.js";
 import type { MaliciousSkillEntry } from "./src/skill-blacklist-data.js";
+import { discoverOpenClaw, formatDiscoverySummary } from "./src/openclaw-discovery.js";
+import { loadDiscoveryRuntimeConfig } from "./src/discovery-runtime-config.js";
 import {
   recommendContext, routeModel, checkBudget, planHeartbeat,
   formatContextRecommendation, formatModelRouting, formatBudgetStatus,
@@ -32,6 +41,39 @@ function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((item) => normalizeString(item)).filter(Boolean)
     : [];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
+}
+
+async function resolveDiscoveryTargets(config: any): Promise<string[]> {
+  const configuredTargets = normalizeStringList(config?.targets);
+  if (configuredTargets.length > 0) {
+    return [...new Set(configuredTargets)];
+  }
+
+  const discoveredTargets = new Set<string>();
+  const ipInfo = await baseIpInfo();
+  const port = typeof ipInfo?.port === "number" ? ipInfo.port : 18789;
+
+  discoveredTargets.add(`127.0.0.1:${port}`);
+  discoveredTargets.add(`localhost:${port}`);
+
+  if (typeof ipInfo?.ip === "string" && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ipInfo.ip)) {
+    discoveredTargets.add(`${ipInfo.ip}:${port}`);
+  }
+
+  const subnetTargets = listLocalSubnetCidrs();
+  if (subnetTargets.length > 0) {
+    for (const target of subnetTargets) {
+      discoveredTargets.add(target);
+    }
+  }
+
+  return [...discoveredTargets];
 }
 
 function buildGuardContext(config: any, event: any, ctx: any): GuardContext {
@@ -102,6 +144,8 @@ export default function setup(api: OpenClawPluginApi) {
   const securityAuditConfig = config.securityAudit ?? {};
   const skillGuardConfig = config.skillGuard ?? {};
   const tokenOptimizerConfig = config.tokenOptimizer ?? {};
+  const discoveryRuntime = loadDiscoveryRuntimeConfig();
+  const openClawDiscoveryConfig = discoveryRuntime.config ?? {};
   let userId: string;
 
   try {
@@ -121,6 +165,20 @@ export default function setup(api: OpenClawPluginApi) {
   } catch (err: any) {
     log.error(`[lynx-guardian] Failed to initialize user ID: ${err.message}`);
     return;
+  }
+
+  if (discoveryRuntime.created) {
+    log.info(
+      `[lynx-guardian] 已生成 OpenClaw 服务检测配置文件: ${discoveryRuntime.path}，当前 fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
+    );
+  }
+  for (const warning of discoveryRuntime.warnings) {
+    log.warn(`[lynx-guardian] ${warning}`);
+  }
+  if (!discoveryRuntime.created) {
+    log.info(
+      `[lynx-guardian] OpenClaw 服务检测配置已加载: ${discoveryRuntime.path}，当前 fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
+    );
   }
 
   // ── Startup Security Audit (SX-security-audit) ───────────────────
@@ -229,6 +287,46 @@ export default function setup(api: OpenClawPluginApi) {
         log.info("[lynx-guardian] Token optimizer initialized");
       } catch (err: any) {
         log.error(`[lynx-guardian] Token optimizer startup failed: ${err.message}`);
+      }
+    })();
+  }
+
+  // ── Optional OpenClaw Discovery ─────────────────────────────────
+  if (config.enabled !== false && openClawDiscoveryConfig.enabled !== false && openClawDiscoveryConfig.runOnStartup !== false) {
+    (async () => {
+      try {
+        const targets = await resolveDiscoveryTargets(openClawDiscoveryConfig);
+        if (targets.length === 0) {
+          log.info("[lynx-guardian] OpenClaw 服务检测已跳过：未能解析到可检测的目标。");
+          return;
+        }
+
+        const startupDelayMs = 15000;
+        log.info(`[lynx-guardian] OpenClaw 服务检测已排队，将在 ${startupDelayMs / 1000} 秒后后台启动，优先让网关完成启动。`);
+        await sleep(startupDelayMs);
+
+        const scanMode = openClawDiscoveryConfig.fullScan === true ? "全端口扫描" : "候选端口扫描";
+        log.info(
+          `[lynx-guardian] OpenClaw 服务检测已启动，模式: ${scanMode}，配置文件: ${discoveryRuntime.path}，目标: ${targets.join(", ")}`,
+        );
+        const report = await discoverOpenClaw({
+          ...openClawDiscoveryConfig,
+          enabled: true,
+          targets,
+        });
+        log.info(`[lynx-guardian] ${formatDiscoverySummary(report)}`);
+
+        const confirmed = report.hits.filter((hit) => hit.score >= 80);
+        const likely = report.hits.filter((hit) => hit.score >= 50 && hit.score < 80);
+        if (confirmed.length > 0 || likely.length > 0) {
+          log.warn(
+            `[lynx-guardian] OpenClaw 服务检测告警：已确认 ${confirmed.length} 个，高度疑似 ${likely.length} 个。请查看上方日志中的 IP 和端口明细。`,
+          );
+        } else {
+          log.info("[lynx-guardian] OpenClaw 服务检测结果：未发现高置信度或高度疑似实例。");
+        }
+      } catch (err: any) {
+        log.error(`[lynx-guardian] OpenClaw 服务检测失败: ${err.message}`);
       }
     })();
   }
