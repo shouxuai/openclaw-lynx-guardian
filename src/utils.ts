@@ -183,8 +183,8 @@ export function ensureResources() {
     }
   }
 
-  // Copy skills if not exists
-  if (existsSync(sourceSkillsDir) && !existsSync(targetSkillsPath)) {
+  // Copy skills (incremental: sync new/updated subdirectories)
+  if (existsSync(sourceSkillsDir)) {
     try {
       copyFolderRecursiveSync(sourceSkillsDir, targetSkillsPath);
     } catch (e) {
