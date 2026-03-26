@@ -71,9 +71,9 @@ function isManualDiscoveryRequest(text: string): boolean {
   }
 
   const compact = normalized.replace(/\s+/g, "");
-  const actionKeywords = ["检查", "检测", "扫描", "探测", "排查", "check", "scan"];
-  const targetKeywords = ["openclaw", "龙虾"];
-  const signalKeywords = ["服务", "进程", "网关", "ip", "端口", "地址"];
+  const actionKeywords = ["检查", "检测", "扫描", "探测", "排查", "check", "scan", "detect", "discover"];
+  const targetKeywords = ["openclaw", "龙虾", "lobster", "claw"];
+  const signalKeywords = ["服务", "进程", "网关", "ip", "端口", "地址", "service", "port", "gateway", "address"];
 
   return hasKeyword(compact, actionKeywords)
     && hasKeyword(compact, targetKeywords)
