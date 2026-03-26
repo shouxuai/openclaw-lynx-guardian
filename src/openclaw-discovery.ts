@@ -9,6 +9,7 @@ export interface OpenClawDiscoveryConfig {
   targets?: string[];
   candidatePorts?: number[];
   fullScan?: boolean;
+  localOnly?: boolean;
   timeoutMs?: number;
   hostConcurrency?: number;
   portConcurrency?: number;

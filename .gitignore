@@ -32,7 +32,7 @@ webpack-stats.json
 *.zip
 *.tar.gz
 *.rar
-
+.claude
 # -------------------------- 编辑器/IDE 配置 --------------------------
 # VSCode
 .vscode/

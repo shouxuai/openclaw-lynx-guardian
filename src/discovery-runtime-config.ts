@@ -18,6 +18,7 @@ const DEFAULT_DISCOVERY_RUNTIME_CONFIG: { openclawDiscovery: OpenClawDiscoveryCo
     enabled: true,
     runOnStartup: false,
     fullScan: false,
+    localOnly: false,
   },
 };
 
