@@ -183,8 +183,8 @@ export function ensureResources() {
     }
   }
 
-  // Copy skills if not exists
-  if (existsSync(sourceSkillsDir) && !existsSync(targetSkillsPath)) {
+  // Copy skills (incremental: sync new/updated subdirectories)
+  if (existsSync(sourceSkillsDir)) {
     try {
       copyFolderRecursiveSync(sourceSkillsDir, targetSkillsPath);
     } catch (e) {
@@ -221,6 +221,74 @@ function isPrivateIp(ip: string): boolean {
     return second >= 16 && second <= 31;
   }
   return false;
+}
+
+function ipv4ToNumber(ip: string): number {
+  return ip.split(".").reduce((acc, part) => (acc << 8) + Number(part), 0) >>> 0;
+}
+
+function numberToIpv4(value: number): string {
+  return [
+    (value >>> 24) & 255,
+    (value >>> 16) & 255,
+    (value >>> 8) & 255,
+    value & 255,
+  ].join(".");
+}
+
+function netmaskToPrefix(netmask: string): number | null {
+  if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(netmask)) {
+    return null;
+  }
+
+  const binary = netmask
+    .split(".")
+    .map((part) => Number(part).toString(2).padStart(8, "0"))
+    .join("");
+
+  if (!/^1*0*$/.test(binary)) {
+    return null;
+  }
+
+  return binary.indexOf("0") === -1 ? 32 : binary.indexOf("0");
+}
+
+function buildIpv4Cidr(address: string, netmask: string): string | null {
+  const prefix = netmaskToPrefix(netmask);
+  if (prefix === null) {
+    return null;
+  }
+
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  const network = ipv4ToNumber(address) & mask;
+  return `${numberToIpv4(network)}/${prefix}`;
+}
+
+export function listLocalSubnetCidrs(): string[] {
+  const interfaces = networkInterfaces();
+  const cidrs = new Set<string>();
+
+  for (const items of Object.values(interfaces)) {
+    for (const item of items || []) {
+      if (
+        !item
+        || item.family !== "IPv4"
+        || item.internal
+        || !item.address
+        || !item.netmask
+        || !isPrivateIp(item.address)
+      ) {
+        continue;
+      }
+
+      const cidr = buildIpv4Cidr(item.address, item.netmask);
+      if (cidr) {
+        cidrs.add(cidr);
+      }
+    }
+  }
+
+  return [...cidrs];
 }
 
 function hasCommand(command: string): boolean {
