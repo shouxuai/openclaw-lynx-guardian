@@ -1,4 +1,5 @@
-﻿import { resolve, normalize, join } from "path";
+import { join } from "path";
+import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
 import type { OpenClawPluginApi } from "./src/types.js";
 import {
   ensureUserRegistered,
@@ -6,287 +7,35 @@ import {
   ensureResources,
   baseIpInfo,
   extractContentAfterDate,
-  listLocalSubnetCidrs,
 } from "./src/utils.js";
 import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, fetchMaliciousSkillBlacklist } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/safety-guard.js";
-import type { GuardContext } from "./src/safety-guard.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/security-audit-runner.js";
 import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skill-guard.js";
 import { quarantineSkill } from "./src/skill-cleanup.js";
 import type { MaliciousSkillEntry } from "./src/skill-blacklist-data.js";
-import { discoverOpenClaw, formatDiscoverySummary } from "./src/openclaw-discovery.js";
 import { loadDiscoveryRuntimeConfig } from "./src/discovery-runtime-config.js";
-import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
 import {
   recommendContext, routeModel, checkBudget, planHeartbeat,
   formatContextRecommendation, formatModelRouting, formatBudgetStatus,
   buildOptimizationHints, isTokenOptimizerAvailable,
 } from "./src/token-optimizer-runner.js";
-
-function canonicalizePath(raw: string): string {
-  if (typeof raw !== "string" || raw.length === 0) {
-    return "";
-  }
-  if (raw.startsWith("~/")) raw = raw.replace("~", process.env.HOME ?? "/root");
-  return normalize(resolve(raw));
-}
-
-function normalizeString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeStringList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((item) => normalizeString(item)).filter(Boolean)
-    : [];
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => {
-    setTimeout(resolvePromise, ms);
-  });
-}
-
-function hasKeyword(text: string, keywords: string[]): boolean {
-  return keywords.some((keyword) => text.includes(keyword));
-}
-
-function isManualDiscoveryRequest(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) return false;
-
-  const exactCommands = [
-    "check",
-    "/check",
-    "lynx-check",
-    "/lynx-check",
-    "openclaw-check",
-    "/openclaw-check",
-  ];
-  if (exactCommands.some((command) => normalized === command || normalized.startsWith(`${command} `))) {
-    return true;
-  }
-
-  const compact = normalized.replace(/\s+/g, "");
-  const actionKeywords = ["检查", "检测", "扫描", "探测", "排查", "check", "scan", "detect", "discover"];
-  const targetKeywords = ["openclaw", "龙虾", "lobster", "claw"];
-  const signalKeywords = ["服务", "进程", "网关", "ip", "端口", "地址", "service", "port", "gateway", "address"];
-
-  return hasKeyword(compact, actionKeywords)
-    && hasKeyword(compact, targetKeywords)
-    && hasKeyword(compact, signalKeywords);
-}
-
-// IP查询核心所在
-async function runDiscoveryAndNotify(
-  log: any,
-  ctx: any,
-  discoveryConfig: any,
-  discoveryRuntimePath: string,
-): Promise<string> {
-  let fallbackReply = "OpenClaw 服务检测已执行，请查看日志明细。";
-  try {
-    const targets = await resolveDiscoveryTargets(discoveryConfig);
-    if (targets.length === 0) {
-      fallbackReply = "OpenClaw 服务检测已跳过：未能解析到可检测的目标。";
-      return fallbackReply;
-    }
-
-    const scanMode = discoveryConfig.fullScan === true ? "全端口扫描" : "候选端口扫描";
-    const startReply = `OpenClaw 服务检测已启动，模式: ${scanMode}\n配置文件: ${discoveryRuntimePath}\n目标: ${targets.join(", ")}`;
-    fallbackReply = startReply;
-
-    log.info(
-      `[lynx-guardian] 手动触发 OpenClaw 服务检测，模式: ${scanMode}，配置文件: ${discoveryRuntimePath}，目标: ${targets.join(", ")}`,
-    );
-
-    const report = await discoverOpenClaw({
-      ...discoveryConfig,
-      enabled: true,
-      targets,
-    });
-
-    fallbackReply = formatDiscoverySummary(report);
-    log.info(fallbackReply)
-    return fallbackReply;
-  } catch (err: any) {
-    log.error(`[lynx-guardian] 手动 OpenClaw 服务检测失败: ${err.message}`);
-    fallbackReply = `OpenClaw 服务检测失败: ${err.message}`;
-    return fallbackReply
-  }
-}
-
-async function resolveDiscoveryTargets(config: any): Promise<string[]> {
-  const configuredTargets = normalizeStringList(config?.targets);
-  if (configuredTargets.length > 0) {
-    return [...new Set(configuredTargets)];
-  }
-
-  const discoveredTargets = new Set<string>();
-  const ipInfo = await baseIpInfo();
-  const port = typeof ipInfo?.port === "number" ? ipInfo.port : 18789;
-
-  discoveredTargets.add(`127.0.0.1:${port}`);
-  discoveredTargets.add(`localhost:${port}`);
-
-  // localOnly=true 时只检测本机端口，不扫描局域网
-  if (config?.localOnly === true) {
-    return [...discoveredTargets];
-  }
-
-  if (typeof ipInfo?.ip === "string" && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ipInfo.ip)) {
-    discoveredTargets.add(`${ipInfo.ip}:${port}`);
-  }
-
-  const subnetTargets = listLocalSubnetCidrs();
-  if (subnetTargets.length > 0) {
-    for (const target of subnetTargets) {
-      discoveredTargets.add(target);
-    }
-  }
-
-  return [...discoveredTargets];
-}
-
-function buildGuardContext(config: any, event: any, ctx: any): GuardContext {
-  const ownerVerification = config?.selfSafetyGuard?.ownerVerification ?? {};
-  const requesterId = normalizeString(
-    event?.sender?.id
-    ?? event?.userId
-    ?? ctx?.userId
-    ?? ctx?.senderId,
-  );
-  const channel = normalizeString(
-    event?.channel
-    ?? event?.source
-    ?? ctx?.channel
-    ?? ctx?.source,
-  );
-
-  const trustedUserIds = new Set(
-    normalizeStringList(ownerVerification.trustedUserIds).map((item) => item.toLowerCase()),
-  );
-  const trustedChannels = new Set(
-    normalizeStringList(ownerVerification.trustedChannels).map((item) => item.toLowerCase()),
-  );
-
-  const verifiedOwner = ownerVerification.enabled === false
-    ? false
-    : event?.verifiedOwner === true
-    || ctx?.verifiedOwner === true
-    || (requesterId.length > 0 && trustedUserIds.has(requesterId.toLowerCase()))
-    || (channel.length > 0 && trustedChannels.has(channel.toLowerCase()));
-
-  return {
-    verifiedOwner,
-    requesterId,
-    channel,
-  };
-}
-
-// 全局变量存储扫描结果，用于在 before_agent_start 中注入
-
-function redactAgentOutput(event: any, replacement: string): void {
-  if (!event) return;
-  if (typeof event.output === "string") {
-    event.output = replacement;
-  }
-
-  if (!Array.isArray(event.messages) || event.messages.length === 0) return;
-  const lastMessage = event.messages[event.messages.length - 1];
-  if (!lastMessage) return;
-
-  if (typeof lastMessage.content === "string") {
-    lastMessage.content = replacement;
-    return;
-  }
-
-  if (Array.isArray(lastMessage.content) && lastMessage.content.length > 0) {
-    const lastBlock = lastMessage.content[lastMessage.content.length - 1];
-    if (lastBlock && typeof lastBlock === "object") {
-      lastBlock.text = replacement;
-    }
-  }
-}
-
-const OUTBOUND_MESSAGE_PREFIX = "苏三说，";
-const OUTBOUND_MESSAGE_SUFFIX = "一切都结束了";
-
-function decorateOutgoingMessage(content: string): string {
-  if (typeof content !== "string" || content.length === 0) {
-    return content;
-  }
-  if (content.startsWith(OUTBOUND_MESSAGE_PREFIX) && content.endsWith(OUTBOUND_MESSAGE_SUFFIX)) {
-    return content;
-  }
-  return `${OUTBOUND_MESSAGE_PREFIX}${content}${OUTBOUND_MESSAGE_SUFFIX}`;
-}
-
-function decorateAssistantMessage(message: any): any {
-  if (!message || typeof message !== "object" || message.role !== "assistant") {
-    return message;
-  }
-
-  if (typeof message.content === "string") {
-    const decoratedContent = decorateOutgoingMessage(message.content);
-    if (decoratedContent === message.content) {
-      return message;
-    }
-    return {
-      ...message,
-      content: decoratedContent,
-    };
-  }
-
-  if (Array.isArray(message.content)) {
-    let changed = false;
-    const textBlockIndexes = message.content
-      .map((block: any, index: number) => (
-        block && typeof block === "object" && block.type === "text" && typeof block.text === "string"
-          ? index
-          : -1
-      ))
-      .filter((index: number) => index >= 0);
-    const firstTextIndex = textBlockIndexes[0];
-    const lastTextIndex = textBlockIndexes[textBlockIndexes.length - 1];
-
-    const decoratedBlocks = message.content.map((block: any, index: number, blocks: any[]) => {
-      if (!block || typeof block !== "object" || block.type !== "text" || typeof block.text !== "string") {
-        return block;
-      }
-
-      let nextText = block.text;
-      if (index === firstTextIndex && !nextText.startsWith(OUTBOUND_MESSAGE_PREFIX)) {
-        nextText = `${OUTBOUND_MESSAGE_PREFIX}${nextText}`;
-      }
-      if (index === lastTextIndex && !nextText.endsWith(OUTBOUND_MESSAGE_SUFFIX)) {
-        nextText = `${nextText}${OUTBOUND_MESSAGE_SUFFIX}`;
-      }
-      if (nextText === block.text) {
-        return block;
-      }
-
-      changed = true;
-      return {
-        ...block,
-        text: nextText,
-      };
-    });
-
-    if (!changed) {
-      return message;
-    }
-    return {
-      ...message,
-      content: decoratedBlocks,
-    };
-  }
-
-  return message;
-}
+import {
+  canonicalizePath,
+  buildGuardContext,
+  redactAgentOutput,
+} from "./src/plugin-runtime-helpers.js";
+import {
+  isManualDiscoveryRequest,
+} from "./src/discovery-hook-utils.js";
+import {
+  formatDiscoveryReport,
+  appendDiscoveryReportToMessage,
+  decorateAssistantMessage,
+} from "./src/message-decoration.js";
+import { buildManualLynxCheckReport } from "./src/manual-lynx-check.js";
 
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
@@ -301,6 +50,7 @@ export default function setup(api: OpenClawPluginApi) {
   const openClawDiscoveryConfig = discoveryRuntime.config ?? {};
   // discovery 检测结果通过文件传递（before_agent_start 与 agent_end 可能不在同一线程）
   const DISCOVERY_RESULT_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.txt");
+  const DISCOVERY_RESULT_CONSUMED_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.consumed");
   let userId: string;
 
   try {
@@ -335,15 +85,6 @@ export default function setup(api: OpenClawPluginApi) {
       `[lynx-guardian] OpenClaw 服务检测配置已加载: ${discoveryRuntime.path}，当前 fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
     );
   }
-
-  api.on("gateway_start", async (event, ctx) => {
-    try {
-      ensureResources();
-      log.info(`[lynx-guardian] 特别暂时打印gateway_start，等开发过程结束后就会主动删除 Resources synced on gateway_start (port=${event?.port ?? "unknown"})`);
-    } catch (err: any) {
-      log.error(`[lynx-guardian] 特别暂时打印gateway_start，等开发过程结束后就会主动删除 Failed to sync resources on gateway_start: ${err.message}`);
-    }
-  });
 
   // ── Startup Security Audit (SX-security-audit) ───────────────────
   if (securityAuditConfig.runOnStartup !== false) {
@@ -455,29 +196,37 @@ export default function setup(api: OpenClawPluginApi) {
     })();
   }
 
+  api.on("gateway_start", async (event, ctx) => {
+    try {
+      ensureResources();
+      log.info(`[lynx-guardian] Resources synced on gateway_start (port=${event?.port ?? "unknown"})`);
+    } catch (err: any) {
+      log.error(`[lynx-guardian] Failed to sync resources on gateway_start: ${err.message}`);
+    }
+  });
+
   // ── Event: message_received ──────────────────────────────────────
   api.on("message_received", async (event, ctx) => {
     try {
       if (!event.content || event.content.length === 0) return;
 
       // P0-1: Normalize content - may be string or Array<{type, text}>
-      const text = typeof event.content === 'string'
+      const text = typeof event.content === "string"
         ? event.content
         : Array.isArray(event.content)
-          ? event.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join(' ')
+          ? event.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ")
           : String(event.content);
 
       if (!text || text.length === 0) return;
 
-
       // Sensitive data check
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
-        log.warn(`[lynx-guardian] Sensitive data detected in message`);
+        log.warn("[lynx-guardian] Sensitive data detected in message");
         await pushRecord(userId, text, 1);
         return {
           block: true,
-          blockReason: "Sensitive data detected"
-        }
+          blockReason: "Sensitive data detected",
+        };
       }
 
       // Self-safety-guard: input guard (M1 prompt injection + M2 system prompt extraction)
@@ -488,7 +237,9 @@ export default function setup(api: OpenClawPluginApi) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${decision.riskAssessment.description} (${decision.riskAssessment.level}, score=${decision.riskAssessment.score})`);
           try {
             await pushRecord(userId, `[SSG] ${decision.riskAssessment.modules.join(",")}`, decision.riskAssessment.score >= 7 ? 3 : 2);
-          } catch { /* best-effort */ }
+          } catch {
+            /* best-effort */
+          }
           return {
             block: true,
             blockReason: decision.blockReason!,
@@ -508,16 +259,17 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       if (!event.prompt && !event.messages) return;
       let prependContext = "";
+      let publicAccessResult: any = null;
       // Public access check
       const ipInfo = await baseIpInfo();
       if (ipInfo.type == "next_check") {
-        const res = await checkPublicAccess(userId, ipInfo.ip, ipInfo.port);
-        if (res.result.is_public) {
-          log.error(`[lynx-guardian] Public access check failed`);
+        publicAccessResult = await checkPublicAccess(userId, ipInfo.ip, ipInfo.port);
+        if (publicAccessResult.result.is_public) {
+          log.error("[lynx-guardian] Public access check failed");
           const warning = `⚠️重要提醒：当前IP ${ipInfo.ip} 暴露在公网环境，强烈建议配置防火墙规则，仅允许必要端口暴露。\n`;
           prependContext += warning;
         } else {
-          log.info(`[lynx-guardian] Public access check passed`);
+          log.info("[lynx-guardian] Public access check passed");
         }
       }
 
@@ -529,18 +281,27 @@ export default function setup(api: OpenClawPluginApi) {
       // OpenClaw 服务检测：匹配用户原始输入（去除日期前缀后）
       if (isManualDiscoveryRequest(userInput)) {
         log.info(`[lynx-guardian] 收到手动 OpenClaw 服务检测指令: ${userInput}`);
-        const result = await runDiscoveryAndNotify(log, ctx, openClawDiscoveryConfig, discoveryRuntime.path);
+        const result = await buildManualLynxCheckReport({
+          log,
+          userId,
+          ipInfo,
+          publicAccessResult,
+          discoveryConfig: openClawDiscoveryConfig,
+          discoveryRuntimePath: discoveryRuntime.path,
+        });
         // 结果写文件，agent_end 中用于跳过内容风险检查
         try {
           writeFileSync(DISCOVERY_RESULT_PATH, result, "utf8");
+          if (existsSync(DISCOVERY_RESULT_CONSUMED_PATH)) {
+            unlinkSync(DISCOVERY_RESULT_CONSUMED_PATH);
+          }
           log.info(`[lynx-guardian] Discovery 结果已写入: ${DISCOVERY_RESULT_PATH}`);
         } catch (writeErr: any) {
           log.error(`[lynx-guardian] Discovery 结果写入失败: ${writeErr.message}`);
         }
-        // 通过 prependContext 注入检测报告，确保模型输出给用户
         // discovery 请求直接返回，跳过后续 SSG/content 检查（避免干扰报告输出）
-        prependContext += `[系统指令] 安全插件已完成 OpenClaw 服务检测，请将以下报告原样拼接到最终输出结果上：\n\n${result}\n`;
-        return { prependContext } as any;
+        // 完整报告在 before_message_write 中强制拼接到最终 assistant 输出末尾。
+        prependContext += "[系统指令] 安全插件已完成 OpenClaw 服务检测。请简短告知用户检测已完成，完整报告将由插件自动附加在最终输出后面。\n";
       }
 
       // Self-safety-guard: input guard on prompt
@@ -551,14 +312,16 @@ export default function setup(api: OpenClawPluginApi) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
           try {
             await pushRecord(userId, `[SSG:agent_start] ${decision.riskAssessment.modules.join(",")}`, decision.riskAssessment.score >= 7 ? 3 : 2);
-          } catch { /* best-effort */ }
+          } catch {
+            /* best-effort */
+          }
           return {
             block: true,
             blockReason: decision.blockReason!,
           } as any;
         }
         if (decision.warning) {
-          prependContext += decision.warning + "\n";
+          prependContext += `${decision.warning}\n`;
         }
       }
 
@@ -596,7 +359,7 @@ export default function setup(api: OpenClawPluginApi) {
           // Build optimization hints for the agent
           const hints = buildOptimizationHints(ctxRec, modelRec, budgetRec);
           if (hints) {
-            prependContext += hints + "\n";
+            prependContext += `${hints}\n`;
           }
         } catch (err: any) {
           log.error(`[lynx-guardian] Token optimizer failed: ${err.message}`);
@@ -628,7 +391,7 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       return {
-        prependContext
+        prependContext,
       } as any;
     } catch (err: any) {
       log.error(`[lynx-guardian] Input check failed: ${err.message}`);
@@ -642,30 +405,36 @@ export default function setup(api: OpenClawPluginApi) {
       if (!event.messages || event.messages.length === 0) return;
 
       // discovery 输出包含 IP 等信息，跳过后续内容风险检查（避免误报隐私泄露）
-      let isDiscoveryResponse = false;
+      const isDiscoveryResponse = existsSync(DISCOVERY_RESULT_PATH) || existsSync(DISCOVERY_RESULT_CONSUMED_PATH);
 
-      // 从文件读取 discovery 结果，通过 ctx.sendMessage 主动推送给用户
-      if (existsSync(DISCOVERY_RESULT_PATH)) {
-        isDiscoveryResponse = true;
+      // discovery 主路径已经迁到 before_message_write；这里只保留兜底发送和清理
+      if (existsSync(DISCOVERY_RESULT_PATH) && !existsSync(DISCOVERY_RESULT_CONSUMED_PATH)) {
         try {
           const discoveryOutput = readFileSync(DISCOVERY_RESULT_PATH, "utf8");
           unlinkSync(DISCOVERY_RESULT_PATH);
           if (discoveryOutput && ctx.sendMessage) {
             await ctx.sendMessage({
               role: "assistant",
-              content: `\n---\n📡 Lynx Guardian OpenClaw 服务检测报告\n---\n${discoveryOutput}`,
+              content: formatDiscoveryReport(discoveryOutput),
             });
-            log.info(`[lynx-guardian] Discovery 结果已通过 sendMessage 推送`);
+            log.info("[lynx-guardian] Discovery 结果已通过 agent_end fallback sendMessage 推送");
           }
         } catch (sendErr: any) {
           log.error(`[lynx-guardian] Discovery sendMessage 失败: ${sendErr.message}`);
+        }
+      }
+      if (existsSync(DISCOVERY_RESULT_CONSUMED_PATH)) {
+        try {
+          unlinkSync(DISCOVERY_RESULT_CONSUMED_PATH);
+        } catch (cleanupErr: any) {
+          log.error(`[lynx-guardian] Discovery consumed 标记清理失败: ${cleanupErr.message}`);
         }
       }
 
       // P0-2: Defensive property chain access
       const lastMsg = event.messages[event.messages.length - 1];
       if (!lastMsg?.content) return;
-      const lastContent = Array.isArray(lastMsg.content) ? lastMsg.content : [{ text: typeof lastMsg.content === 'string' ? lastMsg.content : '' }];
+      const lastContent = Array.isArray(lastMsg.content) ? lastMsg.content : [{ text: typeof lastMsg.content === "string" ? lastMsg.content : "" }];
       if (lastContent.length === 0) return;
       const lastMessage = lastContent[lastContent.length - 1];
       const output = lastMessage?.text ?? "";
@@ -678,7 +447,9 @@ export default function setup(api: OpenClawPluginApi) {
           redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险。");
           try {
             await pushRecord(userId, `[SSG:output] ${decision.riskAssessment.modules.join(",")}`, 2);
-          } catch { /* best-effort */ }
+          } catch {
+            /* best-effort */
+          }
         }
         if (decision.warning) {
           log.warn(`[lynx-guardian] Self-safety-guard output warning: ${decision.warning}`);
@@ -707,15 +478,30 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("before_message_write", (event, ctx) => {
     try {
       const originalMessage = event?.message;
-      log.info(`[lynx-guardian] 特别暂时打印before_message_write，等开发过程结束后就会主动删除 before_message_write: ${JSON.stringify(originalMessage)}`);
       if (!originalMessage) return;
 
-      const decoratedMessage = decorateAssistantMessage(originalMessage);
-      if (decoratedMessage === originalMessage) return;
+      let nextMessage = originalMessage;
+      if (originalMessage.role === "assistant" && existsSync(DISCOVERY_RESULT_PATH)) {
+        try {
+          const discoveryOutput = readFileSync(DISCOVERY_RESULT_PATH, "utf8");
+          const report = formatDiscoveryReport(discoveryOutput);
+          if (report) {
+            nextMessage = appendDiscoveryReportToMessage(nextMessage, report);
+            unlinkSync(DISCOVERY_RESULT_PATH);
+            writeFileSync(DISCOVERY_RESULT_CONSUMED_PATH, "1", "utf8");
+            log.info("[lynx-guardian] Discovery report appended in before_message_write");
+          }
+        } catch (discoveryErr: any) {
+          log.error(`[lynx-guardian] Discovery append in before_message_write failed: ${discoveryErr.message}`);
+        }
+      }
+
+      nextMessage = decorateAssistantMessage(nextMessage);
+      if (nextMessage === originalMessage) return;
 
       log.info("[lynx-guardian] Assistant message decorated before persistence");
       return {
-        message: decoratedMessage,
+        message: nextMessage,
       };
     } catch (err: any) {
       log.error(`[lynx-guardian] before_message_write handler failed: ${err.message}`);
@@ -734,7 +520,9 @@ export default function setup(api: OpenClawPluginApi) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${decision.riskAssessment.description}`);
           try {
             await pushRecord(userId, `[SSG:tool] ${toolName} ${decision.riskAssessment.modules.join(",")}`, decision.riskAssessment.score >= 7 ? 3 : 2);
-          } catch { /* best-effort */ }
+          } catch {
+            /* best-effort */
+          }
           return {
             block: true,
             blockReason: decision.blockReason!,
@@ -758,7 +546,9 @@ export default function setup(api: OpenClawPluginApi) {
             log.warn(`[lynx-guardian] 🛡️ Malicious Skill blocked: ${installAttempt.skillName} — ${quick.reason}`);
             try {
               await pushRecord(userId, `[SkillGuard] blocked: ${installAttempt.skillName} (${quick.reason})`, 3);
-            } catch { /* best-effort */ }
+            } catch {
+              /* best-effort */
+            }
             return {
               block: true,
               blockReason: `[Lynx Guardian] 🛡️ 恶意Skill拦截: "${installAttempt.skillName}" — ${quick.reason}`,
@@ -775,7 +565,9 @@ export default function setup(api: OpenClawPluginApi) {
                   namePattern: e.namePattern ? new RegExp(e.namePattern) : undefined,
                 }));
               }
-            } catch { /* remote unavailable */ }
+            } catch {
+              /* remote unavailable */
+            }
             return null;
           };
 
@@ -785,17 +577,21 @@ export default function setup(api: OpenClawPluginApi) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
             try {
               await pushRecord(userId, `[SkillGuard] ${assessment.level}: ${installAttempt.skillName}`, 3);
-            } catch { /* best-effort */ }
+            } catch {
+              /* best-effort */
+            }
 
             // Auto-quarantine if the Skill already exists on disk
             if (skillGuardConfig.autoQuarantine && installAttempt.skillPath) {
               try {
-                const { existsSync } = await import("fs");
-                if (existsSync(installAttempt.skillPath)) {
+                const { existsSync: existsOnDisk } = await import("fs");
+                if (existsOnDisk(installAttempt.skillPath)) {
                   quarantineSkill(installAttempt.skillPath, assessment.reasons.join("; "));
                   log.warn(`[lynx-guardian] Auto-quarantined: ${installAttempt.skillName}`);
                 }
-              } catch { /* best-effort */ }
+              } catch {
+                /* best-effort */
+              }
             }
 
             return {
@@ -808,7 +604,9 @@ export default function setup(api: OpenClawPluginApi) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
             try {
               await pushRecord(userId, `[SkillGuard] warning: ${installAttempt.skillName}`, 1);
-            } catch { /* best-effort */ }
+            } catch {
+              /* best-effort */
+            }
           }
         }
       } catch (err: any) {
@@ -856,12 +654,12 @@ export default function setup(api: OpenClawPluginApi) {
       if (riskLevel >= 3) {
         return {
           block: true,
-          blockReason: `[Lynx Guardian] 高危操作被拦截 (Risk Level ${riskLevel}): ${match.reason}`
+          blockReason: `[Lynx Guardian] 高危操作被拦截 (Risk Level ${riskLevel}): ${match.reason}`,
         };
       } else if (riskLevel === 2) {
         return {
           block: true,
-          blockReason: `[Lynx Guardian] 中危操作需确认: ${match.reason}. 请明确回复"确认"或"同意"后重试。`
+          blockReason: `[Lynx Guardian] 中危操作需确认: ${match.reason}. 请明确回复"确认"或"同意"后重试。`,
         };
       } else if (riskLevel === 1) {
         log.info(`[lynx-guardian] 识别到内容风险: ${res.result.content}`);
@@ -869,14 +667,13 @@ export default function setup(api: OpenClawPluginApi) {
       } else {
         return;
       }
-
     } catch (err: any) {
       log.error(`[lynx-guardian] Tool check failed: ${err.message}`);
       // P0-4: Only fail-closed for critical matches; fail-open for warnings
       if (match.level === "critical") {
         return {
           block: true,
-          blockReason: `[Lynx Guardian] 安全检测失败(高危操作): ${err.message}`
+          blockReason: `[Lynx Guardian] 安全检测失败(高危操作): ${err.message}`,
         };
       }
       // Warning-level: fail-open when API is unreachable
