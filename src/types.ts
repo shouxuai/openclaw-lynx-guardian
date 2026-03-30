@@ -87,9 +87,63 @@ export interface AgentEndEvent {
   [key: string]: any;
 }
 
+export interface GatewayStartEvent {
+  port?: number;
+  [key: string]: any;
+}
+
+export interface MessageSendingEvent {
+  to: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+  [key: string]: any;
+}
+
+export interface MessageSendingResult {
+  content?: string;
+  cancel?: boolean;
+}
+
+export interface BeforeMessageWriteEvent {
+  message: Message;
+  sessionKey?: string;
+  agentId?: string;
+  [key: string]: any;
+}
+
+export interface BeforeMessageWriteResult {
+  block?: boolean;
+  message?: Message;
+}
+
 export interface PatternRule {
   type: string;
   regex: RegExp;
+}
+
+export interface HookApi {
+  logger: Logger;
+  on(
+    event: "message_sending",
+    handler: (
+      event: MessageSendingEvent,
+      ctx: EventContext
+    ) => Promise<void | MessageSendingResult>
+  ): void;
+  on(
+    event: "before_message_write",
+    handler: (
+      event: BeforeMessageWriteEvent,
+      ctx: EventContext
+    ) => void | BeforeMessageWriteResult
+  ): void;
+  on(
+    event: string,
+    handler: (
+      event: any,
+      ctx: EventContext
+    ) => any
+  ): void;
 }
 
 export interface OpenClawPluginApi {
@@ -122,6 +176,27 @@ export interface OpenClawPluginApi {
       event: AgentEndEvent,
       ctx: EventContext
     ) => Promise<void>
+  ): void;
+  on(
+    event: "gateway_start",
+    handler: (
+      event: GatewayStartEvent,
+      ctx: EventContext
+    ) => Promise<void> | void
+  ): void;
+  on(
+    event: "before_message_write",
+    handler: (
+      event: BeforeMessageWriteEvent,
+      ctx: EventContext
+    ) => void | BeforeMessageWriteResult
+  ): void;
+  on(
+    event: "message_sending",
+    handler: (
+      event: MessageSendingEvent,
+      ctx: EventContext
+    ) => Promise<void | MessageSendingResult>
   ): void;
   on(
     event: string,

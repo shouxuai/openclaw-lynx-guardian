@@ -103,7 +103,19 @@ describe('Plugin Setup', () => {
     expect(mockApi.on).toHaveBeenCalledWith('message_received', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_agent_start', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('agent_end', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('gateway_start', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('before_message_write', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_tool_call', expect.any(Function));
+  });
+
+  it('should sync resources on gateway_start', async () => {
+    setup(mockApi);
+    const handler = handlers['gateway_start'];
+
+    await handler({ port: 18789 }, {});
+
+    expect(utils.ensureResources).toHaveBeenCalled();
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('Resources synced on gateway_start'));
   });
 
   it('should block high risk tool call', async () => {
@@ -158,6 +170,52 @@ describe('Plugin Setup', () => {
       expect.stringContaining('[SSG:output]'),
       2,
     );
+  });
+
+  it('should decorate assistant output on before_message_write', async () => {
+    setup(mockApi);
+    const handler = handlers['before_message_write'];
+
+    const result = await handler(
+      { message: { role: 'assistant', content: '你好，世界' } },
+      { sessionKey: 'sess-send' },
+    );
+
+    expect(result).toEqual({
+      message: {
+        role: 'assistant',
+        content: '苏三说，你好，世界一切都结束了',
+      },
+    });
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('Assistant message decorated'));
+  });
+
+  it('should decorate the first and last text blocks on before_message_write', async () => {
+    setup(mockApi);
+    const handler = handlers['before_message_write'];
+
+    const result = await handler(
+      {
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'internal' },
+            { type: 'text', text: '你好，世界' },
+          ],
+        },
+      },
+      { sessionKey: 'sess-send-blocks' },
+    );
+
+    expect(result).toEqual({
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'internal' },
+          { type: 'text', text: '苏三说，你好，世界一切都结束了' },
+        ],
+      },
+    });
   });
 
   it('should trigger discovery reply on /check and send result messages', async () => {
