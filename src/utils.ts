@@ -139,6 +139,26 @@ function copyFolderRecursiveSync(source: string, target: string) {
   }
 }
 
+function syncNamedDirectories(sourceRoot: string, targetRoot: string) {
+  if (!existsSync(sourceRoot) || !statSync(sourceRoot).isDirectory()) {
+    return;
+  }
+
+  if (!existsSync(targetRoot)) {
+    mkdirSync(targetRoot, { recursive: true });
+  }
+
+  const entries = readdirSync(sourceRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const sourcePath = join(sourceRoot, entry.name);
+    const targetPath = join(targetRoot, entry.name);
+    copyFolderRecursiveSync(sourcePath, targetPath);
+  }
+}
+
 export function ensureResources() {
   const home = homedir();
   const openclawDir = join(home, ".openclaw");
@@ -168,28 +188,19 @@ export function ensureResources() {
     }
   }
 
-  const sourceHooksDir = join(projectRoot, "hooks", "lynx-guardian-sensitiveData");
-  const sourceSkillsDir = join(projectRoot, "skills", "lynx-guardian-lesson");
+  const sourceHooksRoot = join(projectRoot, "hooks");
+  const sourceSkillsRoot = join(projectRoot, "skills");
 
-  const targetHooksPath = join(hooksDir, "lynx-guardian-sensitiveData");
-  const targetSkillsPath = join(skillsDir, "lynx-guardian-lesson");
-
-  // Copy hooks if not exists
-  if (existsSync(sourceHooksDir) && !existsSync(targetHooksPath)) {
-    try {
-      copyFolderRecursiveSync(sourceHooksDir, targetHooksPath);
-    } catch (e) {
-      console.error(`[lynx-guardian] Failed to copy hooks: ${e}`);
-    }
+  try {
+    syncNamedDirectories(sourceHooksRoot, hooksDir);
+  } catch (e) {
+    console.error(`[lynx-guardian] Failed to sync hooks: ${e}`);
   }
 
-  // Copy skills (incremental: sync new/updated subdirectories)
-  if (existsSync(sourceSkillsDir)) {
-    try {
-      copyFolderRecursiveSync(sourceSkillsDir, targetSkillsPath);
-    } catch (e) {
-      console.error(`[lynx-guardian] Failed to copy skills: ${e}`);
-    }
+  try {
+    syncNamedDirectories(sourceSkillsRoot, skillsDir);
+  } catch (e) {
+    console.error(`[lynx-guardian] Failed to sync skills: ${e}`);
   }
 }
 
