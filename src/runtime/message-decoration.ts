@@ -32,6 +32,14 @@ export function formatDiscoveryReport(content: string): string {
   return `${DISCOVERY_REPORT_HEADER}${content}`;
 }
 
+export function appendDiscoveryReportToContent(content: string, report: string): string {
+  if (typeof content !== "string" || content.length === 0 || !report) {
+    return content;
+  }
+
+  return mergeDiscoveryReportText(content, report);
+}
+
 export function appendDiscoveryReportToMessage(message: any, report: string): any {
   if (!message || typeof message !== "object" || message.role !== "assistant" || !report) {
     return message;

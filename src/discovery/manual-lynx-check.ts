@@ -1,6 +1,6 @@
-import { checkPublicAccess } from "./api.js";
-import { runMaliciousScriptScan } from "./security-audit-runner.js";
-import { verifyAllInstalledSkills } from "./skill-guard.js";
+import { checkPublicAccess } from "../api.js";
+import { runMaliciousScriptScan } from "../runtime/security-audit-runner.js";
+import { verifyAllInstalledSkills } from "../skills/skill-guard.js";
 import { runDiscoveryAndNotify } from "./discovery-hook-utils.js";
 
 type SectionState = "PASS" | "WARN" | "FAIL";

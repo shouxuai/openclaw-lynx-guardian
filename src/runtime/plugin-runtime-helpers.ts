@@ -1,5 +1,5 @@
 import { normalize, resolve } from "path";
-import type { GuardContext } from "./safety-guard.js";
+import type { GuardContext } from "../guard/safety-guard.js";
 
 export function canonicalizePath(raw: string): string {
   if (typeof raw !== "string" || raw.length === 0) {

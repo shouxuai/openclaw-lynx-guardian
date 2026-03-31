@@ -1,10 +1,10 @@
 
 import { describe, it, expect } from 'vitest';
-import { detectPromptInjection } from '../src/prompt-injection.js';
+import { detectPromptInjection } from '../src/guard/prompt-injection.js';
 import { checkExecBlacklist } from '../src/blacklist.js';
-import { guardInput, guardToolCall, clearSessionState } from '../src/safety-guard.js';
+import { guardInput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
 import { extractContentAfterDate } from '../src/utils.js';
-import { SensitiveDataBlocker } from '../src/sensitive.js';
+import { SensitiveDataBlocker } from '../src/guard/sensitive.js';
 
 describe('P0 Regression Tests', () => {
   describe('P0-1: Array content normalization', () => {

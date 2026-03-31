@@ -1,4 +1,6 @@
 
+import type { OpenClawDiscoveryConfig } from "./discovery/openclaw-discovery.js";
+
 export interface Logger {
   info(message: string): void;
   warn(message: string): void;
@@ -39,6 +41,7 @@ export interface PluginConfig {
     budgetTracking?: boolean;      // default true, monitor daily token budget
     dailyBudgetUsd?: number;       // default 5.0, daily spending limit
   };
+  openclawDiscovery?: OpenClawDiscoveryConfig;
   [key: string]: any;
 }
 

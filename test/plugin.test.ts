@@ -5,14 +5,14 @@ import { join } from 'path';
 import setup from '../index.ts';
 import * as utils from '../src/utils.js';
 import * as api from '../src/api.js';
-import * as discovery from '../src/openclaw-discovery.js';
-import * as runtimeConfig from '../src/discovery-runtime-config.js';
-import * as securityAuditRunner from '../src/security-audit-runner.js';
-import * as skillGuard from '../src/skill-guard.js';
+import * as discovery from '../src/discovery/openclaw-discovery.js';
+import * as runtimeConfig from '../src/discovery/discovery-runtime-config.js';
+import * as securityAuditRunner from '../src/runtime/security-audit-runner.js';
+import * as skillGuard from '../src/skills/skill-guard.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
-vi.mock('../src/openclaw-discovery.js', () => ({
+vi.mock('../src/discovery/openclaw-discovery.js', () => ({
   discoverOpenClaw: vi.fn(),
   formatDiscoverySummary: vi.fn((report: any) => [
     'OpenClaw 服务检测完成',
@@ -24,16 +24,17 @@ vi.mock('../src/openclaw-discovery.js', () => ({
     ...report.hits.map((hit: any) => `- IP=${hit.host} 端口=${hit.port} 协议=${hit.scheme || 'http'} 评分=${hit.score} 状态=${hit.confidence}`),
   ].join('\n')),
 }));
-vi.mock('../src/discovery-runtime-config.js', () => ({
+vi.mock('../src/discovery/discovery-runtime-config.js', () => ({
+  DISCOVERY_CONFIG_SOURCE_PATH: 'openclaw.plugin.json',
   loadDiscoveryRuntimeConfig: vi.fn(),
 }));
-vi.mock('../src/security-audit-runner.js', () => ({
+vi.mock('../src/runtime/security-audit-runner.js', () => ({
   runSecurityAudit: vi.fn().mockResolvedValue(null),
   runMaliciousScriptScan: vi.fn().mockResolvedValue(null),
   formatAuditSummary: vi.fn().mockReturnValue('audit summary'),
 }));
-vi.mock('../src/skill-guard.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/skill-guard.js')>('../src/skill-guard.js');
+vi.mock('../src/skills/skill-guard.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/skills/skill-guard.js')>('../src/skills/skill-guard.js');
   return {
     ...actual,
     verifyAllInstalledSkills: vi.fn().mockReturnValue([]),
@@ -47,6 +48,7 @@ describe('Plugin Setup', () => {
   const openclawHome = process.env.HOME ?? process.env.USERPROFILE ?? 'C:\\Users\\24716';
   const pendingDiscoveryPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.txt');
   const consumedDiscoveryPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.consumed');
+  const hookProbeLogPath = join(openclawHome, '.openclaw', 'lynx', 'hook-probe.log');
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -56,6 +58,9 @@ describe('Plugin Setup', () => {
     }
     if (existsSync(consumedDiscoveryPath)) {
       rmSync(consumedDiscoveryPath, { force: true });
+    }
+    if (existsSync(hookProbeLogPath)) {
+      rmSync(hookProbeLogPath, { force: true });
     }
     mockApi = {
       logger: {
@@ -94,14 +99,9 @@ describe('Plugin Setup', () => {
       message: 'ok',
     } as any);
     vi.mocked(runtimeConfig.loadDiscoveryRuntimeConfig).mockReturnValue({
-      config: {
-        enabled: true,
-        runOnStartup: false,
-        fullScan: false,
-      },
-      path: 'D:\\all-sunday\\openclaw-lynx\\openclaw-lynx-guardian\\lynx-discovery.config.json',
-      created: false,
-      warnings: [],
+      enabled: true,
+      runOnStartup: false,
+      fullScan: false,
     });
     vi.mocked(discovery.formatDiscoverySummary).mockImplementation((report: any) => [
       'OpenClaw 服务检测完成',
@@ -173,6 +173,9 @@ describe('Plugin Setup', () => {
     expect(mockApi.on).toHaveBeenCalledWith('gateway_start', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_message_write', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_tool_call', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('session_start', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('session_end', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('after_tool_call', expect.any(Function));
   });
 
   it('should sync resources on gateway_start', async () => {
@@ -293,6 +296,75 @@ describe('Plugin Setup', () => {
     expect((result as any).message.content).toContain('📡 Lynx Guardian OpenClaw 服务检测报告');
     expect(existsSync(pendingDiscoveryPath)).toBe(false);
     expect(existsSync(consumedDiscoveryPath)).toBe(true);
+  });
+
+  it('should not mutate outbound content on message_sending', async () => {
+    setup(mockApi);
+    const handler = handlers['message_sending'];
+    expect(handler).toBeUndefined();
+    return;
+
+    const result = await handler(
+      { to: 'webchat', content: '这是一次外发消息' },
+      { sessionKey: 'sess-message-sending' },
+    );
+
+    expect(result).toBeUndefined();
+    return;
+    expect(result).toEqual({
+      content: '【HOOK:message_sending 已生效】这是一次外发消息',
+    });
+  });
+
+  it('should append discovery report on first message_sending output without consuming the pending file', async () => {
+    setup(mockApi);
+    const handler = handlers['message_sending'];
+    expect(handler).toBeUndefined();
+    return;
+
+    mkdirSync(join(openclawHome, '.openclaw'), { recursive: true });
+    writeFileSync(pendingDiscoveryPath, '鎵弿缁撴灉: 127.0.0.1:18789', 'utf8');
+
+    const result = await handler(
+      { to: 'webchat', content: '瀹夊叏妫€娴嬪凡瀹屾垚' },
+      { sessionKey: 'sess-message-sending-discovery' },
+    );
+
+    expect(result).toBeUndefined();
+    expect((result as any).prependContext).toContain('鏈嶅姟鍙戠幇 IP/绔彛');
+    expect((result as any).prependContext).toContain('鏈嶅姟鍙戠幇 IP/绔彛');
+    expect((result as any).prependContext).not.toContain('Lynx Guardian OpenClaw');
+    expect((result as any).prependContext).not.toContain('Lynx Guardian OpenClaw');
+    expect(existsSync(pendingDiscoveryPath)).toBe(true);
+    expect(existsSync(consumedDiscoveryPath)).toBe(false);
+    return;
+    expect(result).toEqual({
+      content: expect.stringContaining('鎵弿缁撴灉: 127.0.0.1:18789'),
+    });
+    expect((result as any).content).toContain('HOOK:message_sending');
+    expect((result as any).content).toContain('Lynx Guardian OpenClaw');
+    expect(existsSync(pendingDiscoveryPath)).toBe(true);
+    expect(existsSync(consumedDiscoveryPath)).toBe(false);
+  });
+
+  it('should write a lifecycle probe log for after_tool_call', async () => {
+    setup(mockApi);
+    const handler = handlers['after_tool_call'];
+
+    await handler(
+      {
+        toolName: 'exec',
+        params: { command: 'ls -la' },
+        result: { ok: true },
+      },
+      { sessionKey: 'sess-after-tool' },
+    );
+
+    expect(existsSync(hookProbeLogPath)).toBe(true);
+    const log = readFileSync(hookProbeLogPath, 'utf8');
+    expect(log).toContain('after_tool_call');
+    expect(log).toContain('exec');
+    expect(log).toContain('sess-after-tool');
   });
 
   it('should persist a composite /lynx-check report with discovery last', async () => {

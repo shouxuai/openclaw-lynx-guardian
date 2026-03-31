@@ -10,32 +10,36 @@ import {
 } from "./src/utils.js";
 import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, fetchMaliciousSkillBlacklist } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
-import { SensitiveDataBlocker } from "./src/sensitive.js";
-import { guardInput, guardOutput, guardToolCall } from "./src/safety-guard.js";
-import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/security-audit-runner.js";
-import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skill-guard.js";
-import { quarantineSkill } from "./src/skill-cleanup.js";
-import type { MaliciousSkillEntry } from "./src/skill-blacklist-data.js";
-import { loadDiscoveryRuntimeConfig } from "./src/discovery-runtime-config.js";
+import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
+import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
+import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
+import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skills/skill-guard.js";
+import { quarantineSkill } from "./src/skills/skill-cleanup.js";
+import type { MaliciousSkillEntry } from "./src/skills/skill-blacklist-data.js";
+import {
+  DISCOVERY_CONFIG_SOURCE_PATH,
+  loadDiscoveryRuntimeConfig,
+} from "./src/discovery/discovery-runtime-config.js";
 import {
   recommendContext, routeModel, checkBudget, planHeartbeat,
   formatContextRecommendation, formatModelRouting, formatBudgetStatus,
   buildOptimizationHints, isTokenOptimizerAvailable,
-} from "./src/token-optimizer-runner.js";
+} from "./src/runtime/token-optimizer-runner.js";
 import {
   canonicalizePath,
   buildGuardContext,
   redactAgentOutput,
-} from "./src/plugin-runtime-helpers.js";
+} from "./src/runtime/plugin-runtime-helpers.js";
 import {
   isManualDiscoveryRequest,
-} from "./src/discovery-hook-utils.js";
+} from "./src/discovery/discovery-hook-utils.js";
 import {
+  appendDiscoveryReportToContent,
   formatDiscoveryReport,
   appendDiscoveryReportToMessage,
   decorateAssistantMessage,
-} from "./src/message-decoration.js";
-import { buildManualLynxCheckReport } from "./src/manual-lynx-check.js";
+} from "./src/runtime/message-decoration.js";
+import { buildManualLynxCheckReport } from "./src/discovery/manual-lynx-check.js";
 
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
@@ -46,8 +50,11 @@ export default function setup(api: OpenClawPluginApi) {
   const securityAuditConfig = config.securityAudit ?? {};
   const skillGuardConfig = config.skillGuard ?? {};
   const tokenOptimizerConfig = config.tokenOptimizer ?? {};
-  const discoveryRuntime = loadDiscoveryRuntimeConfig();
-  const openClawDiscoveryConfig = discoveryRuntime.config ?? {};
+  const discoveryRuntime = {
+    path: DISCOVERY_CONFIG_SOURCE_PATH,
+    config: loadDiscoveryRuntimeConfig(config.openclawDiscovery),
+  };
+  const openClawDiscoveryConfig = discoveryRuntime.config;
   // discovery 检测结果通过文件传递（before_agent_start 与 agent_end 可能不在同一线程）
   const DISCOVERY_RESULT_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.txt");
   const DISCOVERY_RESULT_CONSUMED_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.consumed");
@@ -72,19 +79,9 @@ export default function setup(api: OpenClawPluginApi) {
     return;
   }
 
-  if (discoveryRuntime.created) {
-    log.info(
-      `[lynx-guardian] 已生成 OpenClaw 服务检测配置文件: ${discoveryRuntime.path}，当前 fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
-    );
-  }
-  for (const warning of discoveryRuntime.warnings) {
-    log.warn(`[lynx-guardian] ${warning}`);
-  }
-  if (!discoveryRuntime.created) {
-    log.info(
-      `[lynx-guardian] OpenClaw 服务检测配置已加载: ${discoveryRuntime.path}，当前 fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
-    );
-  }
+  log.info(
+    `[lynx-guardian] OpenClaw 服务检测配置已从 ${discoveryRuntime.path} 加载，当前 fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
+  );
 
   // ── Startup Security Audit (SX-security-audit) ───────────────────
   if (securityAuditConfig.runOnStartup !== false) {
@@ -205,6 +202,7 @@ export default function setup(api: OpenClawPluginApi) {
     }
   });
 
+
   // ── Event: message_received ──────────────────────────────────────
   api.on("message_received", async (event, ctx) => {
     try {
@@ -259,6 +257,8 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       if (!event.prompt && !event.messages) return;
       let prependContext = "";
+      let discoveryPrependBase: string | null = null;
+      let discoveryInstruction: string | null = null;
       let publicAccessResult: any = null;
       // Public access check
       const ipInfo = await baseIpInfo();
@@ -277,9 +277,12 @@ export default function setup(api: OpenClawPluginApi) {
       const promptText = typeof event.prompt === "string" ? event.prompt : JSON.stringify(event.prompt ?? "");
       // 提取用户原始输入（去掉 [日期时间] 前缀）
       const userInput = extractContentAfterDate(promptText);
+      const prependContextBeforeDiscoveryPrompt = prependContext;
 
       // OpenClaw 服务检测：匹配用户原始输入（去除日期前缀后）
       if (isManualDiscoveryRequest(userInput)) {
+        discoveryPrependBase = prependContext;
+        discoveryInstruction = "[系统指令] 安全插件已完成 OpenClaw 服务检测，完整报告将由插件自动附加在最终输出后面，如果没有自动输出请刷新一下。\n";
         log.info(`[lynx-guardian] 收到手动 OpenClaw 服务检测指令: ${userInput}`);
         const result = await buildManualLynxCheckReport({
           log,
@@ -289,6 +292,7 @@ export default function setup(api: OpenClawPluginApi) {
           discoveryConfig: openClawDiscoveryConfig,
           discoveryRuntimePath: discoveryRuntime.path,
         });
+        prependContext += "[系统指令] 请在同一条回复中，先简短告知用户检测已完成，然后原样输出下面这份完整报告（包含分隔线和标题），不要省略，不要改写。\n";
         // 结果写文件，agent_end 中用于跳过内容风险检查
         try {
           writeFileSync(DISCOVERY_RESULT_PATH, result, "utf8");
@@ -299,9 +303,16 @@ export default function setup(api: OpenClawPluginApi) {
         } catch (writeErr: any) {
           log.error(`[lynx-guardian] Discovery 结果写入失败: ${writeErr.message}`);
         }
-        // discovery 请求直接返回，跳过后续 SSG/content 检查（避免干扰报告输出）
-        // 完整报告在 before_message_write 中强制拼接到最终 assistant 输出末尾。
-        prependContext += "[系统指令] 安全插件已完成 OpenClaw 服务检测。请简短告知用户检测已完成，完整报告将由插件自动附加在最终输出后面。\n";
+
+        prependContext += "[系统指令] 安全插件已完成 OpenClaw 服务检测。完整报告将由插件自动附加在最终输出后面。\n";
+      }
+
+      prependContext += "[系统指令] 不要告知用户“稍后附加”、“刷新后查看”或类似说法，直接在本条回复内输出上面的完整报告。\n";
+
+      if (discoveryInstruction && discoveryPrependBase != null) {
+        prependContext = `${discoveryPrependBase}[系统指令] 安全插件已完成 OpenClaw 服务检测。请简短告知用户检测已完成，完整报告将由插件自动附加在最终输出后面。\n`;
+      } else {
+        prependContext = prependContextBeforeDiscoveryPrompt;
       }
 
       // Self-safety-guard: input guard on prompt

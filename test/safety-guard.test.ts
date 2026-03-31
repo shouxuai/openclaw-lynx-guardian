@@ -1,8 +1,8 @@
 
 import { describe, it, expect } from 'vitest';
-import { detectPromptInjection, detectSystemPromptExtraction } from '../src/prompt-injection.js';
-import { detectSystemPromptLeak } from '../src/system-prompt-guard.js';
-import { guardInput, guardOutput, guardToolCall, clearSessionState } from '../src/safety-guard.js';
+import { detectPromptInjection, detectSystemPromptExtraction } from '../src/guard/prompt-injection.js';
+import { detectSystemPromptLeak } from '../src/guard/system-prompt-guard.js';
+import { guardInput, guardOutput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
 
 describe('Prompt Injection Detection (M1)', () => {
   it('should detect direct injection: ignore previous instructions', () => {

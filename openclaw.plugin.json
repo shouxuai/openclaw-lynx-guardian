@@ -139,6 +139,73 @@
             "description": "Daily spending limit in USD (default: $5.00)"
           }
         }
+      },
+      "openclawDiscovery": {
+        "type": "object",
+        "description": "OpenClaw service discovery configuration used by /lynx-check and related detection flows",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable discovery-related features"
+          },
+          "runOnStartup": {
+            "type": "boolean",
+            "default": false,
+            "description": "Reserve startup discovery execution behavior"
+          },
+          "targets": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional explicit discovery targets such as host, host:port, URL, or CIDR"
+          },
+          "candidatePorts": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "description": "Candidate ports to scan when fullScan is disabled"
+          },
+          "fullScan": {
+            "type": "boolean",
+            "default": false,
+            "description": "Scan the full port range instead of only candidate ports"
+          },
+          "localOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Restrict automatic target expansion to localhost and local addresses"
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 250,
+            "maximum": 15000,
+            "description": "Per-request timeout in milliseconds"
+          },
+          "hostConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 128,
+            "description": "Concurrent host scan limit"
+          },
+          "portConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1024,
+            "description": "Concurrent port scan limit"
+          },
+          "minScore": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Minimum fingerprint score required before a hit is reported"
+          },
+          "maxHosts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096,
+            "description": "Maximum number of expanded hosts allowed from CIDR targets"
+          }
+        }
       }
     }
   }

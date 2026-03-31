@@ -5,12 +5,12 @@ import {
   formatBudgetStatus,
   buildOptimizationHints,
   isTokenOptimizerAvailable,
-} from "../src/token-optimizer-runner.js";
+} from "../src/runtime/token-optimizer-runner.js";
 import type {
   ContextRecommendation,
   ModelRouting,
   BudgetStatus,
-} from "../src/token-optimizer-runner.js";
+} from "../src/runtime/token-optimizer-runner.js";
 
 // ── Format Helper Tests ──────────────────────────────────────────────
 

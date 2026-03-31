@@ -1,6 +1,6 @@
-import { baseIpInfo, listLocalSubnetCidrs } from "./utils.js";
+import { baseIpInfo, listLocalSubnetCidrs } from "../utils.js";
 import { discoverOpenClaw, formatDiscoverySummary } from "./openclaw-discovery.js";
-import { normalizeStringList } from "./plugin-runtime-helpers.js";
+import { normalizeStringList } from "../runtime/plugin-runtime-helpers.js";
 
 function hasKeyword(text: string, keywords: string[]): boolean {
   return keywords.some((keyword) => text.includes(keyword));
