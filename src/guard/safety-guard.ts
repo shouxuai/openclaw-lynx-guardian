@@ -26,6 +26,11 @@ export interface GuardDecision {
   blockReason?: string;
   warning?: string;
   riskAssessment: RiskAssessment;
+  overrideHint?: {
+    allowed: boolean;
+    confirmationPhrase?: string;
+    reason?: string;
+  };
 }
 
 export interface GuardContext {

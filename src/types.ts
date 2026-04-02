@@ -20,6 +20,19 @@ export interface PluginConfig {
       trustedUserIds?: string[];
       trustedChannels?: string[];
     };
+    policy?: {
+      absoluteRejectScore?: number;
+      confirmationPhrase?: string;
+      allowOneTimeOverrideLevels?: Array<"L2" | "L3" | "L4">;
+      moduleOverrides?: {
+        M2?: {
+          protectedFileAccess?: { allowOneTimeOverride?: boolean };
+        };
+        M3?: {
+          allowOneTimeOverride?: boolean;
+        };
+      };
+    };
   };
   securityAudit?: {
     enabled?: boolean;

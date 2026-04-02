@@ -89,3 +89,4 @@ test-results/
 *.cpuprofile
 *.heapprofile
 /docs/superpowers
+/.worktrees/

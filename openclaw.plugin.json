@@ -49,6 +49,48 @@
                 "description": "Channel/source names that should be treated as verified owner channels"
               }
             }
+          },
+          "policy": {
+            "type": "object",
+            "description": "Risk policy configuration for one-time overrides",
+            "additionalProperties": false,
+            "properties": {
+              "absoluteRejectScore": {
+                "type": "integer",
+                "default": 10,
+                "description": "Score threshold for hard reject decisions"
+              },
+              "confirmationPhrase": {
+                "type": "string",
+                "default": "确认放行本次操作",
+                "description": "Exact phrase required to approve a one-time override"
+              },
+              "allowOneTimeOverrideLevels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["L2", "L3", "L4"]
+                },
+                "description": "Risk levels that can request a one-time override"
+              },
+              "moduleOverrides": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "M3": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "allowOneTimeOverride": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Allow one-time override for module M3"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       },
