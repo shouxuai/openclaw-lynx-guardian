@@ -1,4 +1,6 @@
 
+import type { OpenClawDiscoveryConfig } from "./discovery/openclaw-discovery.js";
+
 export interface Logger {
   info(message: string): void;
   warn(message: string): void;
@@ -17,6 +19,19 @@ export interface PluginConfig {
       enabled?: boolean;
       trustedUserIds?: string[];
       trustedChannels?: string[];
+    };
+    policy?: {
+      absoluteRejectScore?: number;
+      confirmationPhrase?: string;
+      allowOneTimeOverrideLevels?: Array<"L2" | "L3" | "L4">;
+      moduleOverrides?: {
+        M2?: {
+          protectedFileAccess?: { allowOneTimeOverride?: boolean };
+        };
+        M3?: {
+          allowOneTimeOverride?: boolean;
+        };
+      };
     };
   };
   securityAudit?: {
@@ -39,6 +54,7 @@ export interface PluginConfig {
     budgetTracking?: boolean;      // default true, monitor daily token budget
     dailyBudgetUsd?: number;       // default 5.0, daily spending limit
   };
+  openclawDiscovery?: OpenClawDiscoveryConfig;
   [key: string]: any;
 }
 

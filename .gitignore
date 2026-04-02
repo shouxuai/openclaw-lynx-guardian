@@ -88,3 +88,6 @@ test-results/
 # 性能分析文件
 *.cpuprofile
 *.heapprofile
+/docs
+/.
+/test

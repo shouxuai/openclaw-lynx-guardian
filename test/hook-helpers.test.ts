@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   appendDiscoveryReportToMessage,
   decorateAssistantMessage,
-} from "../src/message-decoration.js";
+} from "../src/runtime/message-decoration.js";
 import {
   isManualDiscoveryRequest,
-} from "../src/discovery-hook-utils.js";
+} from "../src/discovery/discovery-hook-utils.js";
 import {
   buildGuardContext,
   redactAgentOutput,
-} from "../src/plugin-runtime-helpers.js";
+} from "../src/runtime/plugin-runtime-helpers.js";
 
 describe("hook helper modules", () => {
   it("decorates the first and last assistant text blocks", () => {

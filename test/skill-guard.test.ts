@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { computeFileHash, computeSkillHash, verifySkillIntegrity } from "../src/skill-hash.js";
+import { computeFileHash, computeSkillHash, verifySkillIntegrity } from "../src/skills/skill-hash.js";
 import {
   detectSkillInstall,
   checkMaliciousSkillBlacklist,
@@ -10,9 +10,9 @@ import {
   scanSkillContent,
   quickBlacklistCheck,
   verifyAllInstalledSkills,
-} from "../src/skill-guard.js";
-import { MALICIOUS_SKILL_BLACKLIST, MALICIOUS_SKILL_CONTENT_PATTERNS } from "../src/skill-blacklist-data.js";
-import { quarantineSkill, listQuarantined, restoreFromQuarantine } from "../src/skill-cleanup.js";
+} from "../src/skills/skill-guard.js";
+import { MALICIOUS_SKILL_BLACKLIST, MALICIOUS_SKILL_CONTENT_PATTERNS } from "../src/skills/skill-blacklist-data.js";
+import { quarantineSkill, listQuarantined, restoreFromQuarantine } from "../src/skills/skill-cleanup.js";
 
 // ── Test Fixtures ────────────────────────────────────────────────────
 

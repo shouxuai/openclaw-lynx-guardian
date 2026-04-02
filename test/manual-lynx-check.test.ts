@@ -1,14 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { buildManualLynxCheckReport } from "../src/manual-lynx-check.js";
+import { buildManualLynxCheckReport } from "../src/discovery/manual-lynx-check.js";
 import * as api from "../src/api.js";
-import * as securityAuditRunner from "../src/security-audit-runner.js";
-import * as skillGuard from "../src/skill-guard.js";
-import * as discoveryUtils from "../src/discovery-hook-utils.js";
+import * as securityAuditRunner from "../src/runtime/security-audit-runner.js";
+import * as skillGuard from "../src/skills/skill-guard.js";
+import * as discoveryUtils from "../src/discovery/discovery-hook-utils.js";
 
 vi.mock("../src/api.js");
-vi.mock("../src/security-audit-runner.js");
-vi.mock("../src/skill-guard.js");
-vi.mock("../src/discovery-hook-utils.js");
+vi.mock("../src/runtime/security-audit-runner.js");
+vi.mock("../src/skills/skill-guard.js");
+vi.mock("../src/discovery/discovery-hook-utils.js");
 
 describe("buildManualLynxCheckReport", () => {
   beforeEach(() => {
@@ -58,7 +58,7 @@ describe("buildManualLynxCheckReport", () => {
       userId: "TEST_ID",
       ipInfo: { ip: "127.0.0.1", port: 18789, type: "next_check" },
       discoveryConfig: { fullScan: false },
-      discoveryRuntimePath: "D:\\mock\\lynx-discovery.config.json",
+      discoveryRuntimePath: "openclaw.plugin.json",
     });
 
     expect(report).toContain("# 📋 Lynx Guardian /lynx-check 综合检测报告");
