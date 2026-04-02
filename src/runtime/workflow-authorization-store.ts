@@ -31,6 +31,12 @@ export interface WorkflowAuthorization {
   auditLog: WorkflowAuditEntry[];
   /** Prevents the same auth from being reported twice when stored under multiple keys. */
   reported: boolean;
+  /**
+   * When true, ALL blocked modules are covered — no per-module check is performed.
+   * Used for time-window grants where the user wants to open the entire workflow
+   * for a fixed duration (e.g. 3–5 minutes) rather than only the originally-triggered modules.
+   */
+  scopeAll?: boolean;
 }
 
 const workflowAuths = new Map<string, WorkflowAuthorization>();
@@ -45,21 +51,27 @@ function pruneExpired(): void {
 /**
  * Grant workflow-level authorization for the given module categories.
  * Stored under every key in `keys` so both channelId and sessionKey lookups succeed.
+ *
+ * @param scopeAll When true, ALL blocked modules are covered for the TTL window — no
+ *   per-module check is performed. Useful when the user wants to open the whole workflow
+ *   for a fixed duration (e.g. 3–5 minutes) rather than only the originally-triggered modules.
  */
 export function grantWorkflowAuth(
   keys: string[],
   allowedModules: string[],
   ttlMs: number = WORKFLOW_AUTH_MAX_TTL_MS,
+  scopeAll: boolean = false,
 ): void {
   pruneExpired();
   const now = Date.now();
   // Share one object across all keys so reporting and audit are unified.
   const auth: WorkflowAuthorization = {
     grantedAt: now,
-    expiresAt: now + ttlMs,
+    expiresAt: now + Math.min(ttlMs, WORKFLOW_AUTH_MAX_TTL_MS),
     allowedModules: [...new Set(allowedModules)],
     auditLog: [],
     reported: false,
+    scopeAll,
   };
   for (const key of keys) {
     workflowAuths.set(key, auth);
@@ -67,8 +79,9 @@ export function grantWorkflowAuth(
 }
 
 /**
- * Returns the active authorization if ALL triggered modules are covered,
- * undefined otherwise.
+ * Returns the active authorization if the triggered modules are covered.
+ * - When `auth.scopeAll` is true: any triggered modules are accepted (time-window mode).
+ * - Otherwise: ALL triggered modules must be in `allowedModules`.
  */
 export function getWorkflowAuth(
   keys: string[],
@@ -78,7 +91,7 @@ export function getWorkflowAuth(
   for (const key of keys) {
     const auth = workflowAuths.get(key);
     if (!auth) continue;
-    if (triggeredModules.every(mod => auth.allowedModules.includes(mod))) {
+    if (auth.scopeAll || triggeredModules.every(mod => auth.allowedModules.includes(mod))) {
       return auth;
     }
   }

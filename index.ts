@@ -91,6 +91,16 @@ function normalizePolicyConfig(policy: any = {}) {
       },
     },
     overrideTtlMs: Math.max(30, Number(policy.overrideTtlSeconds ?? 90)) * 1000,
+    /**
+     * Duration (ms) for the time-window workflow authorization.
+     * Once the user confirms, ALL blocked operations within this window are automatically
+     * allowed through — regardless of which modules they trigger. Defaults to 3 minutes.
+     * Configurable via policy.workflowAuthWindowSeconds (30 – 900 seconds).
+     */
+    workflowAuthWindowMs: Math.min(
+      900_000,
+      Math.max(30_000, Number(policy.workflowAuthWindowSeconds ?? 180)) * 1000,
+    ),
   };
 }
 
@@ -247,10 +257,11 @@ function buildParamSummary(toolName: string, params: Record<string, any>): strin
 function formatWorkflowAuthSummary(auth: import("./src/runtime/workflow-authorization-store.js").WorkflowAuthorization): string {
   const durationSec = Math.round((Date.now() - auth.grantedAt) / 1000);
   const moduleNames = auth.allowedModules.map(moduleDisplayName).join("、");
+  const scopeDesc = auth.scopeAll ? "全模块（时间窗口）" : moduleNames;
   const lines: string[] = [
     `🔓 **[Lynx Guardian] 工作流授权已回收**`,
     ``,
-    `授权范围：${moduleNames}`,
+    `授权范围：${scopeDesc}`,
     `工作流时长：${durationSec}s`,
     `放行操作记录（共 ${auth.auditLog.length} 次）：`,
   ];
@@ -516,13 +527,16 @@ export default function setup(api: OpenClawPluginApi) {
           };
         }
 
-        // Grant workflow-level authorization — covers all operations of the same
-        // module categories until agent_end fires and auto-revokes.
+        // Grant workflow-level authorization — time-window (scopeAll) mode:
+        // covers ALL blocked operations within the configured window regardless of
+        // which modules they trigger, until agent_end fires (or the window expires).
         const allKeys = [...new Set([...resolveOverrideKeys(ctx), ...pending.sourceKeys])];
-        grantWorkflowAuth(allKeys, pending.matchedModules, riskPolicyConfig.overrideTtlMs * 10);
+        const windowMs = riskPolicyConfig.workflowAuthWindowMs;
+        grantWorkflowAuth(allKeys, pending.matchedModules, windowMs, /* scopeAll */ true);
+        const windowSec = Math.round(windowMs / 1000);
         return {
           block: true,
-          blockReason: "[Lynx Guardian] 已确认，本次工作流中对相关操作的访问权限已开放，工作流结束后将自动收回并汇报操作记录。",
+          blockReason: `[Lynx Guardian] 已确认，工作流授权已开放（时间窗口：${windowSec}s）。此窗口内的相关操作将自动放行，工作流结束后将自动收回并汇报操作记录。`,
         };
       }
 
