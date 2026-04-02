@@ -20,6 +20,7 @@ import {
   savePendingOverride,
   getPendingOverride,
   consumePendingOverride,
+  consumeMostRecentPendingOverride,
 } from "./src/runtime/pending-override-store.js";
 import type { PendingOverride } from "./src/runtime/pending-override-store.js";
 import {
@@ -518,7 +519,18 @@ export default function setup(api: OpenClawPluginApi) {
       // is registered under every key the tool handler will later look up.
       const confirmLookupKey = resolveOverrideKey(ctx);
       if (confirmLookupKey && isConfirmationPhrase(text, riskPolicyConfig.confirmationPhrase)) {
-        const pending = consumePendingOverride(confirmLookupKey);
+        // Primary lookup: by the key available in this handler (usually channelId).
+        let pending = consumePendingOverride(confirmLookupKey);
+
+        // P0 Fallback: before_tool_call ctx typically only carries sessionKey while
+        // message_received ctx only carries channelId — the two key sets never overlap.
+        // When the direct lookup fails, scan all stored pending overrides and consume
+        // the most recently created non-expired one.
+        if (!pending) {
+          log.info("[lynx-guardian] Primary pending lookup miss — trying fallback scan");
+          pending = consumeMostRecentPendingOverride();
+        }
+
         log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用 message_received pending: ${JSON.stringify(pending)}`);
         if (!pending) {
           return {
@@ -1005,6 +1017,9 @@ export default function setup(api: OpenClawPluginApi) {
             /* best-effort */
           }
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
+            // Check whether a pending override already exists BEFORE saving, so we
+            // can detect the "same-run multiple blocks" case (P2).
+            const alreadyPending = resolveOverrideKeys(ctx).some(k => getPendingOverride(k));
             savePendingOverrideFull(ctx, {
               operationFingerprint: toolFingerprint,
               createdAt: Date.now(),
@@ -1019,6 +1034,17 @@ export default function setup(api: OpenClawPluginApi) {
               matchedModules: decision.riskAssessment.modules,
               sourceKeys: resolveOverrideKeys(ctx),
             });
+            if (alreadyPending) {
+              // Another tool in this same agent run was already blocked and is awaiting
+              // confirmation. The new block has been merged into the existing pending —
+              // don't emit a second confirmation prompt; silently block and let the user
+              // confirm once for the whole batch.
+              log.info(`[lynx-guardian] P2: additional block merged into existing pending (${toolName})`);
+              return {
+                block: true,
+                blockReason: `[Lynx Guardian] 🛡️ 已有待确认操作，本次操作（${toolName}）将在确认后一并放行。`,
+              };
+            }
             return {
               block: true,
               blockReason: buildOverridePrompt(

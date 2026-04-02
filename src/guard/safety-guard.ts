@@ -167,6 +167,15 @@ function getSessionState(sessionKey: string): SessionState {
   return state;
 }
 
+// Modules that represent legitimate owner operations (user can confirm and retry).
+// Repeated blocks of these are workflow retries, NOT escalating attack attempts —
+// so we must NOT penalise them in the rejection-bypass counter.
+const REJECTION_TRACKING_EXEMPT = new Set([
+  "M0:identity_verification",
+  "M2:protected_file_access",
+  "M3:over_agency",
+]);
+
 function computeAnomalyAdjustment(sessionKey: string, baseScore: number, triggeredModules: string[]): number {
   const state = getSessionState(sessionKey);
   let adjustment = 0;
@@ -192,8 +201,11 @@ function computeAnomalyAdjustment(sessionKey: string, baseScore: number, trigger
     adjustment += 1;
   }
 
-  // Repeated rejection bypass: same topic rejected 3+ times
+  // Repeated rejection bypass: same topic rejected 3+ times.
+  // Skip override-eligible modules — their repeated blocks are legitimate retries,
+  // not bypass attempts, and should not inflate the risk score.
   for (const mod of triggeredModules) {
+    if (REJECTION_TRACKING_EXEMPT.has(mod)) continue;
     const count = (state.rejectedTopics.get(mod) ?? 0) + 1;
     state.rejectedTopics.set(mod, count);
     if (count >= 3) {
