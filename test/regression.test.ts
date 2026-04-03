@@ -1,5 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { detectPromptInjection } from '../src/guard/prompt-injection.js';
 import { checkExecBlacklist } from '../src/blacklist.js';
 import { guardInput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
@@ -165,6 +167,24 @@ describe('P1 Regression Tests', () => {
       expect(checkExecBlacklist('npx vitest run')).toBeNull();
       expect(checkExecBlacklist('yarn test')).toBeNull();
       expect(checkExecBlacklist('pnpm dev')).toBeNull();
+    });
+  });
+
+  describe('Daily lynx-check skill packaging', () => {
+    it('should ship a cron-based daily /lynx-check skill', () => {
+      const skillPath = join(
+        process.cwd(),
+        'skills',
+        'lynx-guardian-daily-lynx-check',
+        'SKILL.md',
+      );
+
+      expect(existsSync(skillPath)).toBe(true);
+
+      const skill = readFileSync(skillPath, 'utf8');
+      expect(skill).toContain('/lynx-check');
+      expect(skill.toLowerCase()).toContain('cron');
+      expect(skill).toContain('daily');
     });
   });
 });

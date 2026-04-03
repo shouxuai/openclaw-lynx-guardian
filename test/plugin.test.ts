@@ -52,6 +52,7 @@ describe('Plugin Setup', () => {
   const consumedDiscoveryPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.consumed');
   const pendingDiscoveryRequestPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.request.json');
   const hookProbeLogPath = join(openclawHome, '.openclaw', 'lynx', 'hook-probe.log');
+  const scheduledCronStorePath = join(process.cwd(), 'test-temp', 'plugin-scheduled-lynx-check', 'jobs.json');
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -68,6 +69,9 @@ describe('Plugin Setup', () => {
     }
     if (existsSync(hookProbeLogPath)) {
       rmSync(hookProbeLogPath, { force: true });
+    }
+    if (existsSync(scheduledCronStorePath)) {
+      rmSync(scheduledCronStorePath, { force: true });
     }
     mockApi = {
       logger: {
@@ -172,6 +176,38 @@ describe('Plugin Setup', () => {
     expect(api.registerUser).toHaveBeenCalledWith('TEST_ID');
   });
 
+  it('should print Chinese API url debug log only in development', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('LYNX_API_URL', 'http://127.0.0.1:9051');
+
+    setup(mockApi);
+
+    expect(mockApi.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('仅用于开发期'),
+    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('LYNX_API_URL'),
+    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('http://127.0.0.1:9051'),
+    );
+
+    vi.unstubAllEnvs();
+  });
+
+  it('should not print API url debug log in production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('LYNX_API_URL', 'http://127.0.0.1:9051');
+
+    setup(mockApi);
+
+    expect(mockApi.logger.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('仅用于开发期'),
+    );
+
+    vi.unstubAllEnvs();
+  });
+
   it('should attach all event handlers', () => {
     setup(mockApi);
     expect(mockApi.on).toHaveBeenCalledWith('message_received', expect.any(Function));
@@ -205,6 +241,30 @@ describe('Plugin Setup', () => {
 
     expect(utils.ensureResources).toHaveBeenCalled();
     expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('Resources synced on gateway_start'));
+  });
+
+  it('should reconcile the managed scheduled /lynx-check job on gateway_start', async () => {
+    mockApi.config = {
+      scheduledLynxCheck: {
+        enabled: true,
+        cron: '37 8 * * *',
+        timezone: 'Asia/Shanghai',
+        jobName: 'Test Lynx Check',
+        announce: true,
+        storePath: scheduledCronStorePath,
+      },
+    };
+
+    setup(mockApi);
+    const handler = handlers['gateway_start'];
+
+    await handler({ port: 18789 }, {});
+
+    expect(existsSync(scheduledCronStorePath)).toBe(true);
+    const store = JSON.parse(readFileSync(scheduledCronStorePath, 'utf8'));
+    expect(store.jobs).toHaveLength(1);
+    expect(store.jobs[0].payload.message).toBe('/lynx-check');
+    expect(store.jobs[0].schedule.expr).toBe('37 8 * * *');
   });
 
   it('should block high risk tool call', async () => {

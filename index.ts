@@ -41,6 +41,8 @@ import {
   formatContextRecommendation, formatModelRouting, formatBudgetStatus,
   buildOptimizationHints, isTokenOptimizerAvailable,
 } from "./src/runtime/token-optimizer-runner.js";
+import { reconcileScheduledLynxCheck } from "./src/runtime/scheduled-lynx-check.js";
+import { CONFIG } from "./src/config.js";
 import {
   canonicalizePath,
   buildGuardContext,
@@ -344,6 +346,7 @@ export default function setup(api: OpenClawPluginApi) {
   const securityAuditConfig = config.securityAudit ?? {};
   const skillGuardConfig = config.skillGuard ?? {};
   const tokenOptimizerConfig = config.tokenOptimizer ?? {};
+  const scheduledLynxCheckConfig = config.scheduledLynxCheck ?? {};
   const discoveryRuntime = {
     path: DISCOVERY_CONFIG_SOURCE_PATH,
     config: loadDiscoveryRuntimeConfig(config.openclawDiscovery),
@@ -379,6 +382,11 @@ export default function setup(api: OpenClawPluginApi) {
   );
 
   // ── Startup Security Audit (SX-security-audit) ───────────────────
+  void reconcileScheduledLynxCheck({
+    config: scheduledLynxCheckConfig,
+    logger: log,
+  });
+
   if (securityAuditConfig.runOnStartup !== false) {
     (async () => {
       try {
@@ -492,6 +500,10 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       ensureResources();
       log.info(`[lynx-guardian] Resources synced on gateway_start (port=${event?.port ?? "unknown"})`);
+      await reconcileScheduledLynxCheck({
+        config: scheduledLynxCheckConfig,
+        logger: log,
+      });
     } catch (err: any) {
       log.error(`[lynx-guardian] Failed to sync resources on gateway_start: ${err.message}`);
     }
