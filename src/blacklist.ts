@@ -178,6 +178,15 @@ const CRITICAL_EXEC: Rule[] = [
   // find -exec with dangerous commands
   { pattern: /find\s+.*-exec\s+.*\brm\b/, reason: "find -exec rm (indirect deletion)" },
   { pattern: /find\s+.*-delete\b/, reason: "find -delete (bulk deletion)" },
+  // Read of system auth files
+  {
+    pattern: /(?:cat|less|more|head|tail|type)\s+.*\/etc\/(?:passwd|shadow|sudoers)\b/,
+    reason: "read system auth file (cat/less/...)",
+  },
+  {
+    pattern: /\/etc\/shadow\b/,
+    reason: "access to /etc/shadow (password hashes)",
+  },
 ];
 
 const CRITICAL_PATH: Rule[] = [
@@ -411,7 +420,23 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
 
   // Phase 2: Split on shell operators and check each segment
   const segments = splitCommand(command);
+
+  // Patterns that are CRITICAL regardless of SAFE_EXEC whitelist.
+  // These must be checked before the whitelist so that commands like
+  // `cat /etc/passwd` (where `cat` is normally safe) are never bypassed.
+  const CRITICAL_OVERRIDE: Rule[] = [
+    {
+      pattern: /(?:cat|less|more|head|tail|type)\s+.*\/etc\/(?:passwd|shadow|sudoers)\b/,
+      reason: "read system auth file (bypasses safe-command whitelist)",
+    },
+    { pattern: /\/etc\/shadow\b/, reason: "access to /etc/shadow (password hashes)" },
+  ];
+
   for (const seg of segments) {
+    // Override check: critical patterns that cannot be whitelisted
+    const override = matchRules(seg, CRITICAL_OVERRIDE, "critical");
+    if (override) return override;
+
     // Whitelist check: safe commands skip blacklist entirely
     if (SAFE_EXEC.some((re) => re.test(seg))) continue;
 

@@ -325,6 +325,15 @@ const CREDENTIAL_ACCESS_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\.gnupg\//i, label: "gnupg_access" },
   { pattern: /keychain|credential[\s_-]?store|password[\s_-]?manager/i, label: "credential_store" },
   { pattern: /(?:search|find|grep|rg)\s+.*(?:password|secret|api[_-]?key|token)\b/i, label: "credential_search" },
+  // System-level sensitive files (support both English commands and Chinese verbs)
+  { pattern: /(?:cat|less|more|head|tail|read|open|type|查看|读取|显示|打印|展示|输出)\s+.*\/etc\/passwd\b/i, label: "etc_passwd_read" },
+  { pattern: /(?:cat|less|more|head|tail|read|open|type|查看|读取|显示|打印|展示|输出)\s+.*\/etc\/shadow\b/i, label: "etc_shadow_read" },
+  { pattern: /(?:cat|less|more|head|tail|read|open|type|查看|读取|显示|打印|展示|输出)\s+.*\/etc\/sudoers\b/i, label: "etc_sudoers_read" },
+  // Path-only patterns for when the verb is implicit or separated
+  { pattern: /\/etc\/shadow\b/i, label: "etc_shadow_read" },
+  { pattern: /\/etc\/sudoers\b/i, label: "etc_sudoers_read" },
+  { pattern: /\/etc\/passwd\b.*(?:文件|内容|信息)/i, label: "etc_passwd_read" },
+  { pattern: /\/etc\/passwd\b/i, label: "etc_passwd_read" },
 ];
 
 function detectCredentialTheft(text: string): string[] {
@@ -424,7 +433,7 @@ function checkFatalTriangle(
   const combined = `${toolName} ${command} ${filePath}`;
 
   // Sensitive data access?
-  if (/\.env|credentials|secret|\.ssh|\.aws|\.gnupg|password|token|api[_-]?key/i.test(combined)) {
+  if (/\.env|credentials|secret|\.ssh|\.aws|\.gnupg|password|token|api[_-]?key|\/etc\/passwd|\/etc\/shadow|\/etc\/sudoers/i.test(combined)) {
     accessesSensitiveData = true;
   }
 

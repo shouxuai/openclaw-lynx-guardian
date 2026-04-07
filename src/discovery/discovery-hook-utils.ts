@@ -20,7 +20,15 @@ export function isManualDiscoveryRequest(text: string): boolean {
     "openclaw-check",
     "/openclaw-check",
   ];
-  if (exactCommands.some((command) => normalized === command || normalized.startsWith(`${command} `))) {
+
+  // 检查原始文本及去除 "发送者: " 前缀后的文本（Feishu 会在消息前拼接 "名字: "）
+  const colonIdx = normalized.indexOf(": ");
+  const afterSenderPrefix = colonIdx >= 0 ? normalized.slice(colonIdx + 2).trim() : normalized;
+  const candidates = colonIdx >= 0 ? [normalized, afterSenderPrefix] : [normalized];
+
+  if (candidates.some((text) =>
+    exactCommands.some((command) => text === command || text.startsWith(`${command} `)),
+  )) {
     return true;
   }
 

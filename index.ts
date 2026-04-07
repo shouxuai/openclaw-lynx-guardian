@@ -697,7 +697,11 @@ export default function setup(api: OpenClawPluginApi) {
       prependContext += "[系统指令] 不要告知用户\"稍后附加\"、\"刷新后查看\"或类似说法，直接在本条回复内输出上面的完整报告。\n";
 
       if (discoveryInstruction && discoveryPrependBase != null) {
-        prependContext = `${discoveryPrependBase}[系统指令] 安全插件已完成 OpenClaw 服务检测。请简短告知用户检测已完成，完整报告将由插件自动附加在最终输出后面。\n`;
+        const isWebchat = ctx.channelId === "webchat" || ctx.messageProvider === "webchat";
+        const appendNote = isWebchat
+          ? "完整报告已写入当前消息，请刷新页面查看。"
+          : "完整报告将由插件自动附加在本条回复末尾。";
+        prependContext = `${discoveryPrependBase}[系统指令] 安全插件已完成 OpenClaw 服务检测。请简短告知用户检测已完成，${appendNote}\n`;
       } else {
         prependContext = prependContextBeforeDiscoveryPrompt;
       }
@@ -870,10 +874,9 @@ export default function setup(api: OpenClawPluginApi) {
       // discovery 输出包含 IP 等信息，跳过后续内容风险检查（避免误报隐私泄露）
       const isDiscoveryResponse = existsSync(DISCOVERY_RESULT_PATH) || existsSync(DISCOVERY_RESULT_CONSUMED_PATH);
 
-      // discovery 主路径已经迁到 before_message_write；这里只保留兜底发送和清理
+      // discovery 结果通过 agent_end sendMessage 推送（即时显示，无需刷新）
       if (
         existsSync(DISCOVERY_RESULT_PATH)
-        && !existsSync(DISCOVERY_RESULT_CONSUMED_PATH)
         && shouldAttachPendingDiscoveryReport(DISCOVERY_REQUEST_PATH, ctx.sessionKey)
       ) {
         try {
@@ -885,7 +888,7 @@ export default function setup(api: OpenClawPluginApi) {
               role: "assistant",
               content: formatDiscoveryReport(discoveryOutput),
             });
-            log.info("[lynx-guardian] Discovery 结果已通过 agent_end fallback sendMessage 推送");
+            log.info("[lynx-guardian] Discovery 结果已通过 agent_end sendMessage 推送");
           }
         } catch (sendErr: any) {
           log.error(`[lynx-guardian] Discovery sendMessage 失败: ${sendErr.message}`);
@@ -944,6 +947,7 @@ export default function setup(api: OpenClawPluginApi) {
     }
   });
 
+  // ── Event: before_message_write ──────────────────────────────────
   // ── Event: before_message_write ──────────────────────────────────
   api.on("before_message_write", (event, ctx) => {
     try {
@@ -1046,6 +1050,7 @@ export default function setup(api: OpenClawPluginApi) {
               matchedModules: decision.riskAssessment.modules,
               sourceKeys: resolveOverrideKeys(ctx),
             });
+
             if (alreadyPending) {
               // Another tool in this same agent run was already blocked and is awaiting
               // confirmation. The new block has been merged into the existing pending —
