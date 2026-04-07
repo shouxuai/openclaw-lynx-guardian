@@ -70,3 +70,35 @@ export function consumeApprovedOverrideFull(ctx: EventContext, fingerprint: stri
   }
   return false;
 }
+
+export function inferBlacklistModules(toolName: string, reason: string): string[] {
+  const normalizedReason = reason.toLowerCase();
+
+  if (toolName === "write" || toolName === "edit") {
+    return ["M2:protected_file_access"];
+  }
+
+  const fileAccessKeywords = [
+    "file",
+    "directory",
+    "deletion",
+    "destructive",
+    "filesystem",
+    "auth file",
+    "shadow",
+    "passwd",
+    "sudoers",
+    "system config",
+    "boot partition",
+    "boot",
+    "rm -rf",
+    "bulk deletion",
+    "remove-item",
+  ];
+
+  if (fileAccessKeywords.some((keyword) => normalizedReason.includes(keyword))) {
+    return ["M2:protected_file_access"];
+  }
+
+  return ["M3:over_agency"];
+}

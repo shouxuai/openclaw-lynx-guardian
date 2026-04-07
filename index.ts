@@ -47,6 +47,7 @@ import {
 import {
   buildOperationFingerprint,
   consumeApprovedOverrideFull,
+  inferBlacklistModules,
   resolveOverrideKey,
   resolveOverrideKeys,
   savePendingOverrideFull,
@@ -60,6 +61,7 @@ import {
 } from "./src/runtime/policy-runtime.js";
 import {
   isManualDiscoveryRequest,
+  runDiscoveryAndNotify,
 } from "./src/discovery/discovery-hook-utils.js";
 import {
   clearPendingDiscoveryRequest,
@@ -82,6 +84,9 @@ function isConfirmationPhrase(text: string, phrase: string): boolean {
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
   log.info("[lynx-guardian] Plugin loading...");
+  if (process.env.NODE_ENV === "development" && process.env.LYNX_API_URL) {
+    log.info(`[lynx-guardian] 仅用于开发期: LYNX_API_URL=${process.env.LYNX_API_URL}`);
+  }
   const sensitiveDataBlocker = new SensitiveDataBlocker();
   const config = api.config ?? {};
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
@@ -98,7 +103,21 @@ export default function setup(api: OpenClawPluginApi) {
   const DISCOVERY_RESULT_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.txt");
   const DISCOVERY_RESULT_CONSUMED_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.consumed");
   const DISCOVERY_REQUEST_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.request.json");
+  const HOOK_PROBE_LOG_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", "lynx", "hook-probe.log");
   let userId: string;
+
+  function appendLifecycleProbe(hookName: string, payload: unknown, ctx: unknown): void {
+    try {
+      ensureParentDirectory(HOOK_PROBE_LOG_PATH);
+      writeFileSync(
+        HOOK_PROBE_LOG_PATH,
+        `${JSON.stringify({ hookName, payload, ctx, timestamp: new Date().toISOString() })}\n`,
+        { encoding: "utf8", flag: "a" },
+      );
+    } catch (err: any) {
+      log.error(`[lynx-guardian] Failed to append lifecycle probe: ${err.message}`);
+    }
+  }
 
   try {
     userId = ensureUserRegistered();
@@ -235,7 +254,7 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("gateway_start", async (event, ctx) => {
     try {
       ensureResources();
-      log.info(`[lynx-guardian] Resources synced on gateway_start (port=${event?.port ?? "unknown"})`);
+      log.info(`[lynx-guardian]我看看看看看 Resources synced on gateway_start (port=${event?.port ?? "unknown"})`);
       await reconcileScheduledLynxCheck({
         config: scheduledLynxCheckConfig,
         logger: log,
@@ -283,6 +302,32 @@ export default function setup(api: OpenClawPluginApi) {
         return {
           block: true,
           blockReason: `[Lynx Guardian] 已确认，工作流授权已开放（时间窗口${windowSec}s）。此窗口内的相关操作将自动放行，工作流结束后将自动收回并汇报操作记录。`,
+        };
+      }
+
+      if (isManualDiscoveryRequest(text)) {
+        log.info(`[lynx-guardian] 收到手动 OpenClaw 服务检测指令: ${text}`);
+        if (ctx.sendMessage) {
+          await ctx.sendMessage({
+            role: "assistant",
+            content: "OpenClaw 服务检测已启动，请稍候。",
+          });
+        }
+        const discoverySummary = await runDiscoveryAndNotify(
+          log,
+          ctx,
+          openClawDiscoveryConfig,
+          discoveryRuntime.path,
+        );
+        if (ctx.sendMessage) {
+          await ctx.sendMessage({
+            role: "assistant",
+            content: discoverySummary,
+          });
+        }
+        return {
+          block: true,
+          blockReason: discoverySummary,
         };
       }
 
@@ -859,6 +904,21 @@ export default function setup(api: OpenClawPluginApi) {
     log.warn(`[lynx-guardian] Blacklist hit: ${toolName} | ${match.reason}`);
 
     const detail = toolName === "exec" ? (params?.command ?? "") : (params?.file_path ?? params?.path ?? "");
+    const blacklistModules = inferBlacklistModules(toolName, match.reason);
+    const ctxKeys = resolveOverrideKeys(ctx);
+    const blacklistWorkflowAuth = getWorkflowAuth(ctxKeys, blacklistModules);
+    if (blacklistWorkflowAuth) {
+      recordWorkflowOperation(ctxKeys, {
+        timestamp: Date.now(),
+        toolName,
+        paramSummary: buildParamSummary(toolName, params ?? {}),
+        triggeredModules: blacklistModules,
+        riskScore: match.level === "critical" ? 9 : 6,
+        riskLevel: match.level === "critical" ? "L4" : "L2",
+      });
+      log.info(`[lynx-guardian] Workflow auth reused for blacklist hit: ${toolName} (${match.reason})`);
+      return;
+    }
     const contentToReport = toolName === "exec" ? `执行 ${detail} 命令` : `${toolName} ${detail}`;
 
     try {
@@ -875,15 +935,25 @@ export default function setup(api: OpenClawPluginApi) {
 
       const res = await checkTool(userId, content);
       log.info(`[lynx-guardian]特别打印仅在开发阶段进行使�?Tool check result: ${JSON.stringify(res)}`);
-      const riskLevel = res.result.risk_level;
+      // Blacklist hits always require confirmation via the plugin's pending-override
+      // mechanism, even when tool_check returns safe (risk_level=0).
+      // "tool_check safe" means the user asked for the operation — that is necessary
+      // but not sufficient. The plugin's confirmation phrase is the actual gate.
+      // Floor to the blacklist's own severity so we never silently allow a blacklist hit.
+      const rawRiskLevel = res.result.risk_level;
+      const blacklistFloor = match.level === "critical" ? 3 : 2;
+      const riskLevel = !approvedToolOverride ? Math.max(rawRiskLevel, blacklistFloor) : rawRiskLevel;
 
-      log.info(`[lynx-guardian] Tool check result: risk=${riskLevel}`);
+      log.info(`[lynx-guardian] Tool check result: risk=${rawRiskLevel} (effective=${riskLevel}, blacklistFloor=${blacklistFloor})`);
 
       if (riskLevel >= 2 && !approvedToolOverride) {
-        const apiAssessment = buildApiRiskAssessment(
-          riskLevel,
-          `API tool risk: ${match.reason}${res.result.content ? ` (${res.result.content})` : ""}`,
-        );
+        const apiAssessment = {
+          ...buildApiRiskAssessment(
+            riskLevel,
+            `API tool risk: ${match.reason}${res.result.content ? ` (${res.result.content})` : ""}`,
+          ),
+          modules: blacklistModules,
+        };
         const policyResult = resolveRiskPolicy(apiAssessment, riskPolicyConfig);
         if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
           savePendingOverrideFull(ctx, {
@@ -897,8 +967,8 @@ export default function setup(api: OpenClawPluginApi) {
             },
             riskScore: apiAssessment.score,
             riskLevel: apiAssessment.level,
-            matchedModules: apiAssessment.modules,
-            sourceKeys: resolveOverrideKeys(ctx),
+            matchedModules: blacklistModules,
+            sourceKeys: ctxKeys,
           });
           return {
             block: true,
@@ -940,5 +1010,17 @@ export default function setup(api: OpenClawPluginApi) {
       log.warn(`[lynx-guardian] API unreachable, allowing warning-level operation: ${match.reason}`);
       return;
     }
+  });
+
+  api.on("after_tool_call", async (event, ctx) => {
+    appendLifecycleProbe("after_tool_call", event, ctx);
+  });
+
+  api.on("session_start", async (event, ctx) => {
+    appendLifecycleProbe("session_start", event, ctx);
+  });
+
+  api.on("session_end", async (event, ctx) => {
+    appendLifecycleProbe("session_end", event, ctx);
   });
 }
