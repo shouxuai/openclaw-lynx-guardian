@@ -52,6 +52,7 @@ describe('Plugin Setup', () => {
   const consumedDiscoveryPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.consumed');
   const pendingDiscoveryRequestPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.request.json');
   const hookProbeLogPath = join(openclawHome, '.openclaw', 'lynx', 'hook-probe.log');
+  const scheduledCronStorePath = join(process.cwd(), 'test-temp', 'plugin-scheduled-lynx-check', 'jobs.json');
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -68,6 +69,9 @@ describe('Plugin Setup', () => {
     }
     if (existsSync(hookProbeLogPath)) {
       rmSync(hookProbeLogPath, { force: true });
+    }
+    if (existsSync(scheduledCronStorePath)) {
+      rmSync(scheduledCronStorePath, { force: true });
     }
     mockApi = {
       logger: {
@@ -172,6 +176,38 @@ describe('Plugin Setup', () => {
     expect(api.registerUser).toHaveBeenCalledWith('TEST_ID');
   });
 
+  it('should print Chinese API url debug log only in development', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('LYNX_API_URL', 'http://127.0.0.1:9051');
+
+    setup(mockApi);
+
+    expect(mockApi.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('仅用于开发期'),
+    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('LYNX_API_URL'),
+    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('http://127.0.0.1:9051'),
+    );
+
+    vi.unstubAllEnvs();
+  });
+
+  it('should not print API url debug log in production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('LYNX_API_URL', 'http://127.0.0.1:9051');
+
+    setup(mockApi);
+
+    expect(mockApi.logger.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('仅用于开发期'),
+    );
+
+    vi.unstubAllEnvs();
+  });
+
   it('should attach all event handlers', () => {
     setup(mockApi);
     expect(mockApi.on).toHaveBeenCalledWith('message_received', expect.any(Function));
@@ -192,7 +228,7 @@ describe('Plugin Setup', () => {
 
     expect(policySchema).toBeDefined();
     expect(policySchema.properties.absoluteRejectScore.default).toBe(10);
-    expect(policySchema.properties.confirmationPhrase.default).toBe('纭鏀捐鏈鎿嶄綔');
+    expect(policySchema.properties.confirmationPhrase.default).toBe('确认放行本次操作');
     expect(policySchema.properties.allowOneTimeOverrideLevels.items.enum).toEqual(['L2', 'L3', 'L4']);
     expect(policySchema.properties.moduleOverrides.properties.M3.properties.allowOneTimeOverride.default).toBe(true);
   });
@@ -205,6 +241,30 @@ describe('Plugin Setup', () => {
 
     expect(utils.ensureResources).toHaveBeenCalled();
     expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('Resources synced on gateway_start'));
+  });
+
+  it('should reconcile the managed scheduled /lynx-check job on gateway_start', async () => {
+    mockApi.config = {
+      scheduledLynxCheck: {
+        enabled: true,
+        cron: '37 8 * * *',
+        timezone: 'Asia/Shanghai',
+        jobName: 'Test Lynx Check',
+        announce: true,
+        storePath: scheduledCronStorePath,
+      },
+    };
+
+    setup(mockApi);
+    const handler = handlers['gateway_start'];
+
+    await handler({ port: 18789 }, {});
+
+    expect(existsSync(scheduledCronStorePath)).toBe(true);
+    const store = JSON.parse(readFileSync(scheduledCronStorePath, 'utf8'));
+    expect(store.jobs).toHaveLength(1);
+    expect(store.jobs[0].payload.message).toBe('/lynx-check');
+    expect(store.jobs[0].schedule.expr).toBe('37 8 * * *');
   });
 
   it('should block high risk tool call', async () => {
@@ -301,12 +361,17 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should allow one-time override to cover backend tool risk for one retry', async () => {
+  it('should allow blacklist-backed delete confirmation to open the workflow window', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         policy: {
           confirmationPhrase: '纭鏀捐鏈鎿嶄綔',
-          allowOneTimeOverrideLevels: ['L4'],
+          allowOneTimeOverrideLevels: ['L2', 'L3', 'L4'],
+          moduleOverrides: {
+            M3: {
+              allowOneTimeOverride: true,
+            },
+          },
         },
       },
     };
@@ -324,44 +389,46 @@ describe('Plugin Setup', () => {
       },
     });
     const blacklistSpy = vi.spyOn(blacklist, 'checkExecBlacklist').mockReturnValue({
-      level: 'critical',
-      reason: 'dangerous delete',
+      level: 'warning',
+      reason: 'VB FileSystem API (potentially destructive)',
     } as any);
 
     vi.mocked(utils.readRecentContext).mockReturnValue('User context');
     vi.mocked(api.checkTool).mockResolvedValue({
       code: 200,
-      result: { is_safe: false, risk_level: 3, content: 'explicit confirmation missing' },
-      message: 'blocked',
+      result: { is_safe: true, risk_level: 0, content: 'user requested deletion' },
+      message: 'ok',
     } as any);
 
-    const event = { toolName: 'exec', params: { command: 'rm -rf /tmp/lynx-test' } };
+    const event = {
+      toolName: 'exec',
+      params: {
+        command: '[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory("C:\\temp", "OnlyErrorDialogs", "SendToRecycleBin")',
+      },
+    };
 
     const first = await toolHandler(event, { sessionKey: 'sess-api-tool-override' });
     expect(first).toEqual({
       block: true,
-      blockReason: expect.stringContaining('Risk Level 3'),
+      blockReason: expect.stringContaining('纭鏀捐鏈鎿嶄綔'),
     });
 
-    // API risk with empty modules is hard-blocked — no override path
-    // confirm message would return no-pending-override error
-
-
-
-
-
-
-
+    const confirm = await messageHandler(
+      { content: '纭鏀捐鏈鎿嶄綔' },
+      { sessionKey: 'sess-api-tool-override' },
+    );
+    expect(confirm).toEqual({
+      block: true,
+      blockReason: expect.stringContaining('工作流'),
+    });
 
     const second = await toolHandler(event, { sessionKey: 'sess-api-tool-override' });
-    expect(second).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('Risk Level 3'),
-    });
+    expect(second).toBeUndefined();
 
+    const third = await toolHandler(event, { sessionKey: 'sess-api-tool-override' });
+    expect(third).toBeUndefined();
 
-
-    expect(api.checkTool).toHaveBeenCalledTimes(2);
+    expect(api.checkTool).toHaveBeenCalledTimes(1);
     guardSpy.mockRestore();
     blacklistSpy.mockRestore();
   });
@@ -377,7 +444,7 @@ describe('Plugin Setup', () => {
 
     await handler(event, {});
 
-    expect(event.messages[0].content[0].text).toContain('杈撳嚭宸茶瀹夊叏闃叉姢鏇挎崲');
+    expect(event.messages[0].content[0].text).toContain('输出已被安全防护替换');
     expect(api.pushRecord).toHaveBeenCalledWith(
       'TEST_ID',
       expect.stringContaining('[SSG:output]'),
@@ -552,17 +619,16 @@ describe('Plugin Setup', () => {
     expect(mockApi.logger.error).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({
-        prependContext: expect.stringContaining('瀹屾暣鎶ュ憡灏嗙敱鎻掍欢鑷姩闄勫姞'),
+        prependContext: expect.stringContaining('完整报告将由插件自动附加'),
       }),
     );
     expect(existsSync(pendingDiscoveryPath)).toBe(true);
 
     const report = readFileSync(pendingDiscoveryPath, 'utf8');
-    expect(report).toContain('public');
-    expect(report).toContain('鎭舵剰鑴氭湰鎵弿');
+    expect(report).toContain('公网暴露检测');
     expect(report).toContain('Skill');
-    expect(report).toContain('鏈嶅姟鍙戠幇 IP/绔彛');
-    expect(report.lastIndexOf('鏈嶅姟鍙戠幇 IP/绔彛')).toBeGreaterThan(report.lastIndexOf('Skill'));
+    expect(report).toContain('OpenClaw');
+    expect(report.lastIndexOf('OpenClaw')).toBeGreaterThan(report.lastIndexOf('Skill'));
   });
 
   it('should trigger discovery reply on /check and send result messages', async () => {
@@ -621,7 +687,7 @@ describe('Plugin Setup', () => {
 
     expect(discovery.discoverOpenClaw).toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('鏀跺埌鎵嬪姩 OpenClaw 鏈嶅姟妫€娴嬫寚浠? check'));
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('收到手动 OpenClaw 服务检测指令'));
   });
 
   it('should trigger discovery reply on chinese detection prompt', async () => {

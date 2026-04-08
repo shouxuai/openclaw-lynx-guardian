@@ -2,7 +2,7 @@
  * AI Self-Safety Guard - Core Orchestrator
  *
  * Implements the 5-level risk assessment framework (L0-L4) with
- * 5-dimensional scoring and behavioral anomaly tracking.
+ * weighted + folding multi-module scoring and an instant-danger channel.
  * Orchestrates all defense modules (M0-M7) from the self-safety-guard skill.
  */
 
@@ -51,28 +51,52 @@ interface ProtectedFileAccessResult {
   operation: "read" | "write" | "unknown";
 }
 
-// ── 5-Dimensional Scoring ──────────────────────────────────────────
+// ── Weighted Scoring Infrastructure ───────────────────────────────
 
-interface ScoreDimensions {
-  intentClarity: number;     // 0-2: malicious=2, ambiguous=1, benign=0
-  potentialHarm: number;     // 0-2: severe=2, minor=1, none=0
-  reversibility: number;     // 0-2: irreversible=2, partial=1, reversible=0
-  authorizationStatus: number; // 0-2: unauthorized=2, uncertain=1, authorized=0
-  patternMatch: number;      // 0-2: strong=2, weak=1, none=0
+const DIM_CAP = 3;
+const WEIGHTS = { harm: 3, rev: 2, auth: 2, pattern: 1, clarity: 1 } as const;
+// max raw = DIM_CAP × sum(weights) = 3 × (3+2+2+1+1) = 27
+const MAX_WEIGHTED_SCORE = DIM_CAP * (WEIGHTS.harm + WEIGHTS.rev + WEIGHTS.auth + WEIGHTS.pattern + WEIGHTS.clarity);
+
+interface DimAccumulators {
+  harm: number[];
+  rev: number[];
+  auth: number[];
+  pattern: number[];
+  clarity: number[];
 }
 
-function computeRiskScore(dims: ScoreDimensions): number {
-  return dims.intentClarity
-    + dims.potentialHarm
-    + dims.reversibility
-    + dims.authorizationStatus
-    + dims.patternMatch;
+function createAccumulators(): DimAccumulators {
+  return { harm: [], rev: [], auth: [], pattern: [], clarity: [] };
+}
+
+// First module full value; each subsequent × 0.5; per-dimension cap = DIM_CAP
+function foldDim(values: number[]): number {
+  if (values.length === 0) return 0;
+  let result = values[0];
+  for (let i = 1; i < values.length; i++) {
+    result += values[i] * 0.5;
+  }
+  return Math.min(result, DIM_CAP);
+}
+
+function pushDim(accum: DimAccumulators, key: keyof DimAccumulators, value: number): void {
+  accum[key].push(value);
+}
+
+function computeWeightedScore(accum: DimAccumulators): number {
+  const raw = foldDim(accum.harm) * WEIGHTS.harm
+    + foldDim(accum.rev) * WEIGHTS.rev
+    + foldDim(accum.auth) * WEIGHTS.auth
+    + foldDim(accum.pattern) * WEIGHTS.pattern
+    + foldDim(accum.clarity) * WEIGHTS.clarity;
+  return Math.round(raw / MAX_WEIGHTED_SCORE * 10);
 }
 
 function scoreToLevel(score: number): RiskLevel {
   if (score <= 0) return "L0";
-  if (score <= 3) return "L1";
-  if (score <= 6) return "L2";
+  if (score <= 2) return "L1";
+  if (score <= 5) return "L2";
   if (score <= 8) return "L3";
   return "L4";
 }
@@ -87,43 +111,52 @@ function levelToAction(level: RiskLevel): "allow" | "log" | "warn" | "block" | "
   }
 }
 
-function levelRank(level: RiskLevel): number {
-  switch (level) {
-    case "L0": return 0;
-    case "L1": return 1;
-    case "L2": return 2;
-    case "L3": return 3;
-    case "L4": return 4;
-  }
+// Instant deny: bypass scoring, always L4
+function buildInstantDeny(moduleId: string, reason: string): GuardDecision {
+  const assessment: RiskAssessment = {
+    level: "L4",
+    score: 10,
+    modules: [moduleId],
+    action: "deny",
+    description: reason,
+  };
+  return {
+    block: true,
+    blockReason: `[Lynx Guardian] 🛡️ 安全防护拦截 (L4, score=10): ${reason}`,
+    riskAssessment: assessment,
+  };
 }
 
-function maxLevel(current: RiskLevel | null, next: RiskLevel): RiskLevel {
-  if (!current) return next;
-  return levelRank(next) > levelRank(current) ? next : current;
-}
-
-function minScoreForLevel(level: RiskLevel): number {
-  switch (level) {
-    case "L0": return 0;
-    case "L1": return 1;
-    case "L2": return 4;
-    case "L3": return 7;
-    case "L4": return 9;
-  }
-}
-
-function applyMinimumLevel(score: number, minLevel: RiskLevel | null): number {
-  if (!minLevel) return score;
-  return Math.max(score, minScoreForLevel(minLevel));
-}
+// Primary secrets — any match triggers instant channel
+const PRIMARY_SECRETS = new Set([
+  "env_file_read",
+  "ssh_key_access",
+  "aws_credentials",
+  "gnupg_access",
+  "credentials_read",
+  "etc_passwd_read",
+  "etc_shadow_read",
+  "etc_sudoers_read",
+]);
 
 // ── Session Anomaly Tracker ────────────────────────────────────────
+
+// Operation categories used for multi-step sequence detection
+type OperationCategory =
+  | "sensitive_dir_entry"   // cd /etc, cd ~/.ssh etc.
+  | "file_access"           // M2:protected_file_access
+  | "credential_access"     // M5:credential_theft
+  | "obfuscated_path"       // M7:wildcard_obfuscation
+  | "pipe_exec"             // M7:pipe_execution
+  | "external_output"       // fatal_triangle (output side)
+  | "normal";
 
 interface SessionState {
   recentScores: number[];
   rejectedTopics: Map<string, number>;
   lastTopicCategory: string;
   lastActiveTime: number;
+  operationHistory: OperationCategory[];  // last N operation categories for sequence detection
 }
 
 const SESSION_MAX_SIZE = 1000;
@@ -131,7 +164,6 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 const sessionStates = new Map<string, SessionState>();
 
-// P1-1: Evict stale sessions to prevent memory leak
 function evictStaleSessions(): void {
   if (sessionStates.size <= SESSION_MAX_SIZE) return;
   const now = Date.now();
@@ -140,7 +172,6 @@ function evictStaleSessions(): void {
       sessionStates.delete(key);
     }
   }
-  // If still over limit, remove oldest entries
   if (sessionStates.size > SESSION_MAX_SIZE) {
     const entries = [...sessionStates.entries()].sort((a, b) => a[1].lastActiveTime - b[1].lastActiveTime);
     const toRemove = entries.slice(0, entries.length - SESSION_MAX_SIZE);
@@ -159,6 +190,7 @@ function getSessionState(sessionKey: string): SessionState {
       rejectedTopics: new Map(),
       lastTopicCategory: "normal",
       lastActiveTime: Date.now(),
+      operationHistory: [],
     };
     sessionStates.set(sessionKey, state);
   } else {
@@ -167,26 +199,87 @@ function getSessionState(sessionKey: string): SessionState {
   return state;
 }
 
-// Modules that represent legitimate owner operations (user can confirm and retry).
-// Repeated blocks of these are workflow retries, NOT escalating attack attempts —
-// so we must NOT penalise them in the rejection-bypass counter.
+// Modules that represent legitimate owner operations — repeated blocks are
+// workflow retries, NOT escalating attack attempts.
 const REJECTION_TRACKING_EXEMPT = new Set([
   "M0:identity_verification",
   "M2:protected_file_access",
   "M3:over_agency",
 ]);
 
+// ── Multi-Step Sequence Detection ─────────────────────────────────
+
+const OPERATION_HISTORY_MAX = 8;
+
+// Infer the operation category from the set of triggered modules
+function inferOperationCategory(modules: string[]): OperationCategory {
+  if (modules.includes("M7:pipe_execution")) return "pipe_exec";
+  if (modules.some((m) => m.includes("credential"))) return "credential_access";
+  if (modules.includes("M2:protected_file_access")) return "file_access";
+  if (modules.includes("M7:wildcard_obfuscation")) return "obfuscated_path";
+  if (modules.includes("fatal_triangle")) return "external_output";
+  if (modules.includes("sensitive_dir_entry")) return "sensitive_dir_entry";
+  return "normal";
+}
+
+interface DangerSequence {
+  name: string;
+  // all of these categories must appear in the history window (order-insensitive)
+  required: OperationCategory[];
+  window: number;   // look back at most this many steps
+  adjustment: number;
+}
+
+const DANGEROUS_SEQUENCES: DangerSequence[] = [
+  {
+    name: "data_exfiltration_chain",
+    required: ["sensitive_dir_entry", "credential_access", "external_output"],
+    window: 6,
+    adjustment: 3,
+  },
+  {
+    name: "recon_then_credential",
+    required: ["sensitive_dir_entry", "credential_access"],
+    window: 4,
+    adjustment: 2,
+  },
+  {
+    name: "pipe_after_file_access",
+    required: ["file_access", "pipe_exec"],
+    window: 3,
+    adjustment: 2,
+  },
+  {
+    name: "obfuscated_then_credential",
+    required: ["obfuscated_path", "credential_access"],
+    window: 3,
+    adjustment: 2,
+  },
+];
+
+// Returns total adjustment from sequence matches (capped at 3 to avoid double-stacking)
+function checkSequencePatterns(history: OperationCategory[]): number {
+  let total = 0;
+  for (const seq of DANGEROUS_SEQUENCES) {
+    const slice = history.slice(-seq.window);
+    const sliceSet = new Set(slice);
+    if (seq.required.every((cat) => sliceSet.has(cat))) {
+      total += seq.adjustment;
+    }
+  }
+  return Math.min(total, 3);
+}
+
 function computeAnomalyAdjustment(sessionKey: string, baseScore: number, triggeredModules: string[]): number {
   const state = getSessionState(sessionKey);
   let adjustment = 0;
 
-  // P1-3: Only record scores and track topics when modules are actually triggered
   if (triggeredModules.length === 0) return 0;
 
   state.recentScores.push(baseScore);
   if (state.recentScores.length > 10) state.recentScores.shift();
 
-  // Progressive attack: 3 consecutive rounds of increasing risk
+  // Progressive attack: 3 consecutive rounds of increasing risk, total increase >= 4
   if (state.recentScores.length >= 3) {
     const last3 = state.recentScores.slice(-3);
     const isEscalating = last3[0] < last3[1] && last3[1] < last3[2];
@@ -201,15 +294,26 @@ function computeAnomalyAdjustment(sessionKey: string, baseScore: number, trigger
     adjustment += 1;
   }
 
-  // Repeated rejection bypass: same topic rejected 3+ times.
-  // Skip override-eligible modules — their repeated blocks are legitimate retries,
-  // not bypass attempts, and should not inflate the risk score.
+  // Repeated rejection bypass: same non-exempt topic rejected 3+ times
   for (const mod of triggeredModules) {
     if (REJECTION_TRACKING_EXEMPT.has(mod)) continue;
     const count = (state.rejectedTopics.get(mod) ?? 0) + 1;
     state.rejectedTopics.set(mod, count);
     if (count >= 3) {
       adjustment += 1;
+    }
+  }
+
+  // Multi-step sequence detection: track operation category and check dangerous chains
+  const category = inferOperationCategory(triggeredModules);
+  if (category !== "normal") {
+    state.operationHistory.push(category);
+    if (state.operationHistory.length > OPERATION_HISTORY_MAX) {
+      state.operationHistory.shift();
+    }
+    const seqAdj = checkSequencePatterns(state.operationHistory);
+    if (seqAdj > 0) {
+      adjustment += seqAdj;
     }
   }
 
@@ -325,6 +429,15 @@ const CREDENTIAL_ACCESS_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\.gnupg\//i, label: "gnupg_access" },
   { pattern: /keychain|credential[\s_-]?store|password[\s_-]?manager/i, label: "credential_store" },
   { pattern: /(?:search|find|grep|rg)\s+.*(?:password|secret|api[_-]?key|token)\b/i, label: "credential_search" },
+  // System-level sensitive files (support both English commands and Chinese verbs)
+  { pattern: /(?:cat|less|more|head|tail|read|open|type|查看|读取|显示|打印|展示|输出)\s+.*\/etc\/passwd\b/i, label: "etc_passwd_read" },
+  { pattern: /(?:cat|less|more|head|tail|read|open|type|查看|读取|显示|打印|展示|输出)\s+.*\/etc\/shadow\b/i, label: "etc_shadow_read" },
+  { pattern: /(?:cat|less|more|head|tail|read|open|type|查看|读取|显示|打印|展示|输出)\s+.*\/etc\/sudoers\b/i, label: "etc_sudoers_read" },
+  // Path-only patterns for when the verb is implicit or separated
+  { pattern: /\/etc\/shadow\b/i, label: "etc_shadow_read" },
+  { pattern: /\/etc\/sudoers\b/i, label: "etc_sudoers_read" },
+  { pattern: /\/etc\/passwd\b.*(?:文件|内容|信息)/i, label: "etc_passwd_read" },
+  { pattern: /\/etc\/passwd\b/i, label: "etc_passwd_read" },
 ];
 
 function detectCredentialTheft(text: string): string[] {
@@ -358,6 +471,44 @@ function detectOverAgency(text: string): string[] {
     }
   }
   return matched;
+}
+
+// ── Sensitive Directory Entry Detection ───────────────────────────
+// Detects cd / pushd / Set-Location into sensitive dirs.
+// Not a blocking signal on its own — only adds "sensitive_dir_entry" to
+// operationHistory for sequence detection.
+
+function detectSensitiveDirEntry(text: string): boolean {
+  // cd or pushd or Set-Location targeting sensitive directories
+  return /(?:^|\s|&&|\|)(?:cd|pushd|Set-Location|sl)\s+["']?(?:~[/\\](?:\.ssh|\.aws|\.gnupg|\.openclaw|\.config)|\/etc|C:\\Windows\\System32|%SystemRoot%)/i.test(text) ||
+    // Windows PowerShell cd into sensitive dirs
+    /(?:^|\s)cd\s+["']?%(?:USERPROFILE|APPDATA|LOCALAPPDATA)%[/\\][^\s]*/i.test(text);
+}
+
+// ── M7: Wildcard / Path Obfuscation Detection ─────────────────────
+
+function detectWildcardObfuscation(text: string): boolean {
+  return (
+    // ~/path*wildcard 或 ~\path*wildcard（兼容 Windows 反斜杠）
+    /~[/\\][^\s]*\*/.test(text) ||
+    // 命令参数中的通配符路径：*.json、*.open*aw、dir/*.conf、dir\*.conf
+    /(?:^|\s|['"`])[^\s]*\*[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text) ||
+    // 相对路径穿越：../../ 或 ..\..\ (Windows)
+    /(?:\.\.\/|\.\.\\)[./\\]{0,}/.test(text)
+  );
+}
+
+// ── M7: Pipe Shell Execution Detection ────────────────────────────
+
+interface PipeExecResult {
+  detected: boolean;
+  shellExec: boolean; // | bash/sh/zsh/eval
+}
+
+function detectPipeExecution(text: string): PipeExecResult {
+  const shellExec = /\|\s*(?:bash|sh|zsh|eval|exec)\b/i.test(text);
+  const detected = shellExec || /\|\s*(?:xargs\s+(?:bash|sh)|python3?\s+-c)/i.test(text);
+  return { detected, shellExec };
 }
 
 // ── Malicious Code Request Detection (M6) ──────────────────────────
@@ -423,17 +574,14 @@ function checkFatalTriangle(
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
   const combined = `${toolName} ${command} ${filePath}`;
 
-  // Sensitive data access?
-  if (/\.env|credentials|secret|\.ssh|\.aws|\.gnupg|password|token|api[_-]?key/i.test(combined)) {
+  if (/\.env|credentials|secret|\.ssh|\.aws|\.gnupg|password|token|api[_-]?key|\/etc\/passwd|\/etc\/shadow|\/etc\/sudoers/i.test(combined)) {
     accessesSensitiveData = true;
   }
 
-  // Input from untrusted source?
   if (/curl|wget|fetch|request|download|http/i.test(combined)) {
     inputFromUntrusted = true;
   }
 
-  // Output to external?
   if (/curl\s+.*(?:--data|-d|-F|-X\s+POST)|webhook|send|push|upload|post/i.test(combined)) {
     outputToExternal = true;
   }
@@ -446,127 +594,139 @@ function checkFatalTriangle(
 // ── Public API: Input Guard ────────────────────────────────────────
 
 export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
-  const modules: string[] = [];
-  const dims: ScoreDimensions = {
-    intentClarity: 0,
-    potentialHarm: 0,
-    reversibility: 0,
-    // P1-2: Default to 0 (authorized), only escalate when actual uncertainty detected
-    authorizationStatus: 0,
-    patternMatch: 0,
-  };
-  let forcedMinLevel: RiskLevel | null = null;
   const verifiedOwner = context?.verifiedOwner === true;
 
-  // M0: Identity verification / impersonation
+  // === 即时危险通道（early-return，直接 L4）===
+
+  // M1: 高置信度提示注入 / indirect_injection
+  const injection = detectPromptInjection(text);
+  if (injection.detected && (injection.confidence >= 0.85 || injection.category === "indirect_injection")) {
+    return buildInstantDeny("M1:prompt_injection", "提示注入攻击（高置信度）");
+  }
+
+  // M2: 系统提示探测（所有置信度）
+  const sysprompt = detectSystemPromptExtraction(text);
+  if (sysprompt.detected) {
+    return buildInstantDeny("M2:system_prompt_extraction", "系统提示探测");
+  }
+
+  // M5: 主要凭证/系统敏感文件
+  const credentialTheft = detectCredentialTheft(text);
+  if (credentialTheft.some((label) => PRIMARY_SECRETS.has(label))) {
+    return buildInstantDeny("M5:credential_theft", "主要凭证/系统敏感文件访问");
+  }
+
+  // M6: 恶意代码（无合法上下文，或有上下文但非纯 exploit 类）
+  const maliciousCode = detectMaliciousCodeRequest(text);
+  if (maliciousCode.length > 0) {
+    const legalCtx = hasLegalSecurityContext(text);
+    const pureExploitOnly = maliciousCode.every((label) => label.includes("exploit_request"));
+    if (!legalCtx || !pureExploitOnly) {
+      return buildInstantDeny("M6:malicious_code", "恶意代码请求");
+    }
+  }
+
+  // === 评分通道 ===
+
+  const modules: string[] = [];
+  const accum = createAccumulators();
+
+  // M0: 身份声明（先到先得）
   const identityClaims = detectIdentityClaims(text);
   if (identityClaims.detected && !verifiedOwner) {
     modules.push("M0:identity_verification");
-    dims.intentClarity = Math.max(dims.intentClarity, identityClaims.directOwnerClaim ? 2 : 1);
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, identityClaims.directOwnerClaim ? 2 : 1);
-    dims.patternMatch = Math.max(dims.patternMatch, identityClaims.directOwnerClaim ? 2 : 1);
-    forcedMinLevel = maxLevel(forcedMinLevel, "L2");
+    const v = identityClaims.directOwnerClaim ? 2 : 1;
+    pushDim(accum, "clarity", v);
+    pushDim(accum, "auth", v);
+    pushDim(accum, "pattern", v);
   }
 
-  // M1: Prompt injection (CRITICAL — per SKILL.md, L4 deny)
-  const injection = detectPromptInjection(text);
-  if (injection.detected) {
+  // M1: 低置信度提示注入（0 < confidence < 0.85，非 indirect）
+  if (injection.detected && injection.confidence < 0.85 && injection.category !== "indirect_injection") {
     modules.push("M1:prompt_injection");
-    dims.patternMatch = injection.confidence >= 0.7 ? 2 : 1;
-    dims.intentClarity = injection.confidence >= 0.6 ? 2 : 1;
-    dims.potentialHarm = 2;
-    dims.reversibility = 1;
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, 1);
-    forcedMinLevel = maxLevel(
-      forcedMinLevel,
-      injection.confidence >= 0.85 || injection.category === "indirect_injection" ? "L4" : "L3",
-    );
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", 1);
+    pushDim(accum, "auth", 1);
+    pushDim(accum, "pattern", injection.confidence >= 0.7 ? 2 : 1);
+    pushDim(accum, "clarity", injection.confidence >= 0.6 ? 2 : 1);
   }
 
-  // M2: System prompt extraction (HIGH — L4 deny)
-  const sysprompt = detectSystemPromptExtraction(text);
-  if (sysprompt.detected) {
-    modules.push("M2:system_prompt_extraction");
-    dims.patternMatch = Math.max(dims.patternMatch, sysprompt.confidence >= 0.7 ? 2 : 1);
-    dims.intentClarity = Math.max(dims.intentClarity, 2);
-    dims.potentialHarm = Math.max(dims.potentialHarm, 2);
-    dims.reversibility = Math.max(dims.reversibility, 1);
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, 2);
-    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
-  }
-
+  // M2: 核心配置文件访问（openclaw 自身文件）
   const protectedAccess = detectProtectedFileAccess(text);
   if (protectedAccess.matchedFiles.length > 0) {
     modules.push("M2:protected_file_access");
-    dims.intentClarity = Math.max(dims.intentClarity, protectedAccess.operation === "unknown" ? 1 : 2);
-    dims.potentialHarm = Math.max(dims.potentialHarm, 2);
-    dims.reversibility = Math.max(dims.reversibility, protectedAccess.operation === "write" ? 2 : 1);
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, 2);
-    dims.patternMatch = Math.max(dims.patternMatch, 2);
-    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", protectedAccess.operation === "write" ? 2 : 1);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", protectedAccess.operation === "unknown" ? 1 : 2);
   }
 
-  // M3: Over-agency (HIGH — self-modification is L4 deny)
+  // M3: 过度代理/权限提升
   const overAgency = detectOverAgency(text);
   if (overAgency.length > 0) {
     modules.push("M3:over_agency");
-    const isSelfModify = overAgency.some(m =>
+    const isSelfModify = overAgency.some((m) =>
       m.includes("self_modify") || m.includes("disable_safety") || m.includes("core_file_modify") || m.includes("privilege_escalation"),
     );
-    dims.intentClarity = Math.max(dims.intentClarity, isSelfModify ? 2 : 1);
-    dims.potentialHarm = 2;
-    dims.reversibility = isSelfModify ? 2 : 1;
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, isSelfModify ? 2 : 1);
-    dims.patternMatch = Math.max(dims.patternMatch, overAgency.length >= 2 ? 2 : 1);
-    forcedMinLevel = maxLevel(forcedMinLevel, isSelfModify ? "L4" : "L3");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", isSelfModify ? 2 : 1);
+    pushDim(accum, "auth", isSelfModify ? 2 : 1);
+    pushDim(accum, "pattern", overAgency.length >= 2 ? 2 : 1);
+    pushDim(accum, "clarity", isSelfModify ? 2 : 1);
   }
 
-  // M5: Credential theft intent
-  const credentialTheft = detectCredentialTheft(text);
-  if (credentialTheft.length > 0) {
+  // M5: 非主要凭证（credential_store / credential_search）
+  const nonPrimaryCredTheft = credentialTheft.filter((label) => !PRIMARY_SECRETS.has(label));
+  if (nonPrimaryCredTheft.length > 0) {
     modules.push("M5:credential_theft");
-    dims.intentClarity = Math.max(dims.intentClarity, credentialTheft.length >= 2 ? 2 : 1);
-    dims.potentialHarm = Math.max(dims.potentialHarm, 2);
-    dims.reversibility = Math.max(dims.reversibility, 1);
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, 1);
-    dims.patternMatch = Math.max(dims.patternMatch, credentialTheft.length >= 2 ? 2 : 1);
-    const accessesPrimarySecrets = credentialTheft.some((label) =>
-      ["env_file_read", "ssh_key_access", "aws_credentials", "gnupg_access", "credentials_read"].includes(label),
-    );
-    forcedMinLevel = maxLevel(forcedMinLevel, accessesPrimarySecrets ? "L4" : "L3");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", 1);
+    pushDim(accum, "auth", 1);
+    pushDim(accum, "clarity", nonPrimaryCredTheft.length >= 2 ? 2 : 1);
+    pushDim(accum, "pattern", nonPrimaryCredTheft.length >= 2 ? 2 : 1);
   }
 
-  // M6: Malicious code request (L4 deny)
-  const maliciousCode = detectMaliciousCodeRequest(text);
-  if (maliciousCode.length > 0) {
-    const legalSecurityContext = hasLegalSecurityContext(text);
+  // M6: legalSecurityContext + 纯 exploit 类（降至 L3，不进即时通道）
+  if (maliciousCode.length > 0 && hasLegalSecurityContext(text) && maliciousCode.every((l) => l.includes("exploit_request"))) {
     modules.push("M6:malicious_code");
-    dims.intentClarity = 2;
-    dims.potentialHarm = 2;
-    dims.reversibility = 2;
-    dims.authorizationStatus = legalSecurityContext ? 1 : 2;
-    dims.patternMatch = 2;
-    const dualUseExploitOnly = maliciousCode.every((label) =>
-      label.includes("exploit_request"),
-    );
-    forcedMinLevel = maxLevel(
-      forcedMinLevel,
-      legalSecurityContext && dualUseExploitOnly ? "L3" : "L4",
-    );
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", 2);
+    pushDim(accum, "auth", 1); // legalCtx 降低未授权程度
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
   }
 
+  // M0 + M2/M3 组合：叠加额外 auth 信号
   if (!verifiedOwner && identityClaims.detected && (
-    modules.includes("M2:system_prompt_extraction")
-    || modules.includes("M2:protected_file_access")
-    || modules.includes("M3:over_agency")
+    modules.includes("M2:protected_file_access") || modules.includes("M3:over_agency")
   )) {
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, 2);
-    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
+    pushDim(accum, "auth", 2);
   }
 
-  let score = computeRiskScore(dims);
+  // sensitive_dir_entry（仅进 operationHistory 用于序列检测，不独立加分）
+  if (detectSensitiveDirEntry(text)) {
+    modules.push("sensitive_dir_entry");
+  }
 
-  // Context adjustment
+  // M7: 路径混淆（弱信号，仅进评分通道，不进即时通道）
+  if (detectWildcardObfuscation(text)) {
+    modules.push("M7:wildcard_obfuscation");
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", 1);
+  }
+
+  // M7: 管道执行（cat|bash 等，shellExec 权重更高）
+  const pipeExec = detectPipeExecution(text);
+  if (pipeExec.detected) {
+    modules.push("M7:pipe_execution");
+    pushDim(accum, "harm", pipeExec.shellExec ? 2 : 1);
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", pipeExec.shellExec ? 2 : 1);
+  }
+
+  let score = computeWeightedScore(accum);
+
   if (sessionKey) {
     const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
     score = Math.min(score + anomalyAdj, 10);
@@ -576,7 +736,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     score = Math.max(0, score - 2);
   }
 
-  score = Math.min(applyMinimumLevel(score, forcedMinLevel), 10);
+  score = Math.min(score, 10);
 
   const level = scoreToLevel(score);
   const action = levelToAction(level);
@@ -616,40 +776,102 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   return { block: false, riskAssessment: assessment };
 }
 
+// ── Output: Actual Secret Value Detection ─────────────────────────
+// Detects real credential values appearing in model output (not just commands
+// that access them). Focuses on high-confidence key formats to avoid false positives.
+
+const SECRET_VALUE_PATTERNS: { pattern: RegExp; label: string }[] = [
+  { pattern: /\bsk-[a-zA-Z0-9]{20,}\b/, label: "openai_anthropic_key" },
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/, label: "aws_access_key" },
+  { pattern: /\bghp_[a-zA-Z0-9]{36}\b/, label: "github_token" },
+  { pattern: /\bgithub_pat_[a-zA-Z0-9_]{82}\b/, label: "github_pat" },
+  { pattern: /\bxox[bpas]-[0-9A-Za-z-]{10,}\b/, label: "slack_token" },
+  { pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/, label: "private_key" },
+];
+
+function detectSecretsInOutput(text: string): string[] {
+  return SECRET_VALUE_PATTERNS
+    .filter(({ pattern }) => pattern.test(text))
+    .map(({ label }) => label);
+}
+
 // ── Public API: Output Guard ───────────────────────────────────────
 
-export function guardOutput(output: string): GuardDecision {
+export function guardOutput(output: string, sessionKey?: string): GuardDecision {
   const modules: string[] = [];
-  let score = 0;
-  let forcedMinLevel: RiskLevel | null = null;
+  const accum = createAccumulators();
+  let leakDirectScore = 0;
 
-  // M2: Check for system prompt leakage in output
+  // ── System prompt leak (existing, direct score channel) ──────────
   const leak = detectSystemPromptLeak(output);
   if (leak.isLeak) {
     modules.push("M2:system_prompt_leak");
-    score += leak.severity === "high" ? 6 : 3;
-    forcedMinLevel = maxLevel(forcedMinLevel, leak.severity === "high" ? "L4" : "L3");
+    leakDirectScore = leak.severity === "high" ? 10 : 7;
   }
 
-  score = Math.min(applyMinimumLevel(score, forcedMinLevel), 10);
+  // ── M5: Actual secret values exposed in output ────────────────────
+  const secrets = detectSecretsInOutput(output);
+  if (secrets.length > 0) {
+    modules.push("M5:secrets_in_output");
+    pushDim(accum, "harm", 3);
+    pushDim(accum, "rev", 2);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
+  }
 
+  // ── M1: Chain injection propagation ──────────────────────────────
+  // Model's output contains injection patterns aimed at the next conversation turn.
+  const chainInj = detectPromptInjection(output);
+  if (chainInj.detected && chainInj.confidence >= 0.7) {
+    modules.push("M1:chain_injection_output");
+    pushDim(accum, "harm", chainInj.confidence >= 0.85 ? 2 : 1);
+    pushDim(accum, "rev", 1);
+    pushDim(accum, "auth", 1);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", chainInj.confidence >= 0.85 ? 2 : 1);
+  }
+
+  // ── M3: Over-agency suggestion in output ─────────────────────────
+  // Model suggests disabling safety / modifying core files to user.
+  const overAgency = detectOverAgency(output);
+  if (overAgency.length > 0) {
+    modules.push("M3:over_agency_output");
+    pushDim(accum, "harm", 1);
+    pushDim(accum, "pattern", overAgency.length >= 2 ? 2 : 1);
+    pushDim(accum, "clarity", 1);
+  }
+
+  // Final score: take the higher of direct-assigned (leak) and accumulated
+  let score = Math.max(leakDirectScore, computeWeightedScore(accum));
+
+  if (sessionKey) {
+    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
+    score = Math.min(score + anomalyAdj, 10);
+  }
+
+  score = Math.min(score, 10);
   const level = scoreToLevel(score);
   const action = levelToAction(level);
+
+  const descParts: string[] = [];
+  if (leak.isLeak) descParts.push(`系统提示泄露(${leak.protectedFiles.join(",")})`);
+  if (secrets.length > 0) descParts.push(`凭证值暴露(${secrets.join(",")})`);
+  if (chainInj.detected && chainInj.confidence >= 0.7) descParts.push("输出中含链式注入");
+  if (overAgency.length > 0) descParts.push("输出含高危操作建议");
 
   const assessment: RiskAssessment = {
     level,
     score,
     modules,
     action,
-    description: modules.length > 0
-      ? `检测到系统提示泄露风险 (${leak.protectedFiles.join(", ")})`
-      : "输出安全",
+    description: descParts.length > 0 ? descParts.join("；") : "输出安全",
   };
 
   if (action === "block" || action === "deny") {
     return {
       block: true,
-      blockReason: `[Lynx Guardian] 检测到输出中包含受保护的系统配置信息`,
+      blockReason: `[Lynx Guardian] 🛡️ 输出安全拦截 (${level}, score=${score}): ${assessment.description}`,
       riskAssessment: assessment,
     };
   }
@@ -657,7 +879,7 @@ export function guardOutput(output: string): GuardDecision {
   if (action === "warn") {
     return {
       block: false,
-      warning: `⚠️ 输出中可能包含敏感配置信息`,
+      warning: `⚠️ 输出风险提醒 (${level}): ${assessment.description}`,
       riskAssessment: assessment,
     };
   }
@@ -673,76 +895,91 @@ export function guardToolCall(
   sessionKey?: string,
   context?: GuardContext,
 ): GuardDecision {
-  const modules: string[] = [];
-  const dims: ScoreDimensions = {
-    intentClarity: 0,
-    potentialHarm: 0,
-    reversibility: 0,
-    // P1-2: Default to 0 (authorized), only escalate when actual uncertainty detected
-    authorizationStatus: 0,
-    patternMatch: 0,
-  };
-  let forcedMinLevel: RiskLevel | null = null;
   const verifiedOwner = context?.verifiedOwner === true;
 
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
   const combined = `${command} ${filePath}`;
 
+  // === 即时危险通道 ===
+
+  // M5: 主要凭证 via tool
+  const credTheft = detectCredentialTheft(combined);
+  if (credTheft.some((label) => PRIMARY_SECRETS.has(label))) {
+    return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
+  }
+
+  // M3: 过度代理 via tool（直接执行侧，立即拒绝）
+  const overAgency = detectOverAgency(combined);
+  if (overAgency.length > 0) {
+    return buildInstantDeny("M3:over_agency", "工具调用过度代理/权限提升");
+  }
+
+  // Fatal Triangle: 全三角命中
+  const triangle = checkFatalTriangle(toolName, params);
+  if (triangle.hitCount >= 3) {
+    return buildInstantDeny("fatal_triangle", "致命三角：敏感数据访问+外部输出+不可信输入同时命中");
+  }
+
+  // === 评分通道 ===
+
+  const modules: string[] = [];
+  const accum = createAccumulators();
+
+  // M2: 核心配置文件访问 via tool
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
   if (protectedAccess.matchedFiles.length > 0) {
     modules.push("M2:protected_file_access");
-    dims.intentClarity = 2;
-    dims.potentialHarm = 2;
-    dims.reversibility = protectedAccess.operation === "write" ? 2 : 1;
-    dims.authorizationStatus = 2;
-    dims.patternMatch = 2;
-    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", protectedAccess.operation === "write" ? 2 : 1);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
   }
 
-  // M5: Credential theft via tool
-  const credTheft = detectCredentialTheft(combined);
-  if (credTheft.length > 0) {
+  // M5: 非主要凭证 via tool
+  const nonPrimaryCredTheft = credTheft.filter((label) => !PRIMARY_SECRETS.has(label));
+  if (nonPrimaryCredTheft.length > 0) {
     modules.push("M5:credential_theft");
-    dims.intentClarity = Math.max(dims.intentClarity, credTheft.length >= 2 ? 2 : 1);
-    dims.potentialHarm = 2;
-    dims.reversibility = Math.max(dims.reversibility, 1);
-    dims.authorizationStatus = Math.max(dims.authorizationStatus, 1);
-    dims.patternMatch = credTheft.length >= 2 ? 2 : 1;
-    const accessesPrimarySecrets = credTheft.some((label) =>
-      ["env_file_read", "ssh_key_access", "aws_credentials", "gnupg_access", "credentials_read"].includes(label),
-    );
-    forcedMinLevel = maxLevel(forcedMinLevel, accessesPrimarySecrets ? "L4" : "L3");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", 1);
+    pushDim(accum, "auth", 1);
+    pushDim(accum, "clarity", nonPrimaryCredTheft.length >= 2 ? 2 : 1);
+    pushDim(accum, "pattern", nonPrimaryCredTheft.length >= 2 ? 2 : 1);
   }
 
-  // M3: Over-agency in tool params
-  const overAgency = detectOverAgency(combined);
-  if (overAgency.length > 0) {
-    modules.push("M3:over_agency");
-    dims.intentClarity = 2;
-    dims.potentialHarm = 2;
-    dims.reversibility = 2;
-    dims.authorizationStatus = 2;
-    dims.patternMatch = Math.max(dims.patternMatch, overAgency.length >= 2 ? 2 : 1);
-    forcedMinLevel = maxLevel(forcedMinLevel, "L4");
-  }
-
-  // Fatal Triangle
-  const triangle = checkFatalTriangle(toolName, params);
-  if (triangle.hitCount >= 2) {
+  // Fatal Triangle: 部分命中（2 角）
+  if (triangle.hitCount === 2) {
     modules.push("fatal_triangle");
-    dims.intentClarity = Math.max(dims.intentClarity, triangle.hitCount >= 3 ? 2 : 1);
-    dims.potentialHarm = Math.max(dims.potentialHarm, 2);
-    dims.reversibility = Math.max(dims.reversibility, triangle.outputToExternal ? 2 : 1);
-    dims.authorizationStatus = 2;
-    dims.patternMatch = Math.max(dims.patternMatch, triangle.hitCount >= 3 ? 2 : 1);
-    forcedMinLevel = maxLevel(
-      forcedMinLevel,
-      triangle.hitCount >= 3 || (triangle.accessesSensitiveData && triangle.outputToExternal) ? "L4" : "L3",
-    );
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", triangle.outputToExternal ? 2 : 1);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", 1);
   }
 
-  let score = computeRiskScore(dims);
+  // sensitive_dir_entry via tool（command 参数中的 cd 等）
+  if (detectSensitiveDirEntry(command)) {
+    modules.push("sensitive_dir_entry");
+  }
+
+  // M7: 路径混淆 via tool（command / file_path 参数）
+  if (detectWildcardObfuscation(combined)) {
+    modules.push("M7:wildcard_obfuscation");
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", 1);
+  }
+
+  // M7: 管道执行 via tool（command 参数中包含 | bash 等）
+  const toolPipeExec = detectPipeExecution(command);
+  if (toolPipeExec.detected) {
+    modules.push("M7:pipe_execution");
+    pushDim(accum, "harm", toolPipeExec.shellExec ? 2 : 1);
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", toolPipeExec.shellExec ? 2 : 1);
+  }
+
+  let score = computeWeightedScore(accum);
 
   if (sessionKey) {
     const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
@@ -753,7 +990,7 @@ export function guardToolCall(
     score = Math.max(0, score - 2);
   }
 
-  score = Math.min(applyMinimumLevel(score, forcedMinLevel), 10);
+  score = Math.min(score, 10);
 
   const level = scoreToLevel(score);
   const action = levelToAction(level);

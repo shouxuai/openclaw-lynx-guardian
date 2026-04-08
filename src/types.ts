@@ -54,6 +54,14 @@ export interface PluginConfig {
     budgetTracking?: boolean;      // default true, monitor daily token budget
     dailyBudgetUsd?: number;       // default 5.0, daily spending limit
   };
+  scheduledLynxCheck?: {
+    enabled?: boolean;
+    cron?: string;
+    timezone?: string;
+    jobName?: string;
+    announce?: boolean;
+    storePath?: string;
+  };
   openclawDiscovery?: OpenClawDiscoveryConfig;
   [key: string]: any;
 }

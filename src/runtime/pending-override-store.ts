@@ -1,4 +1,4 @@
-import type { RiskLevel } from "../guard/safety-guard.js";
+﻿import type { RiskLevel } from "../guard/safety-guard.js";
 
 export interface PendingOverride {
   operationFingerprint: string;
@@ -9,12 +9,6 @@ export interface PendingOverride {
   riskScore: number;
   riskLevel: RiskLevel;
   matchedModules: string[];
-  /**
-   * All keys under which this override was saved (e.g. sessionKey + channelId).
-   * Stored so that when the user confirms in a handler where only one key is
-   * available (e.g. channelId in message_received), the approval can be
-   * registered under every key the tool handler might later look up.
-   */
   sourceKeys: string[];
 }
 
@@ -43,18 +37,22 @@ export function savePendingOverride(sessionKey: string, override: PendingOverrid
     return;
   }
   const existing = pendingOverrides.get(sessionKey);
-  if (existing && !isExpired(existing, now)) {
-    // A pending override already exists for this key (another tool call in the same
-    // agent run was also blocked). Merge the module lists so the eventual workflow
-    // auth covers all blocked modules — but keep the original override object so
-    // the first-blocked operation's fingerprint stays as the canonical confirmation target.
+  const existingSourceKeys = Array.isArray(existing?.sourceKeys) ? existing.sourceKeys : null;
+  const nextSourceKeys = Array.isArray(override.sourceKeys) ? override.sourceKeys : null;
+
+  if (existing && !isExpired(existing, now) && existingSourceKeys && nextSourceKeys) {
     const merged = [...new Set([...existing.matchedModules, ...override.matchedModules])];
     existing.matchedModules = merged;
-    // Also union sourceKeys so cross-key lookups remain valid.
-    existing.sourceKeys = [...new Set([...existing.sourceKeys, ...override.sourceKeys])];
+    existing.sourceKeys = [...new Set([...existingSourceKeys, ...nextSourceKeys])];
     return;
   }
-  pendingOverrides.set(sessionKey, override);
+
+  pendingOverrides.set(
+    sessionKey,
+    nextSourceKeys
+      ? { ...override, sourceKeys: nextSourceKeys }
+      : ({ ...override } as PendingOverride),
+  );
 }
 
 export function getPendingOverride(sessionKey: string): PendingOverride | undefined {
@@ -98,22 +96,11 @@ export function clearPendingOverride(sessionKey: string): void {
   pendingOverrides.delete(sessionKey);
 }
 
-/**
- * Fallback: find and consume the most recently created non-expired pending override
- * across ALL stored keys.
- *
- * Used when the confirmation arrives in a handler (message_received) whose ctx only
- * has channelId, while the override was saved in a handler (before_tool_call) that
- * only had sessionKey — so the normal key-based lookup returns undefined.
- *
- * Returns the override and removes every key that pointed to the same object.
- */
 export function consumeMostRecentPendingOverride(): PendingOverride | undefined {
   const now = Date.now();
   pruneExpired(now);
   if (pendingOverrides.size === 0) return undefined;
 
-  // Find the entry with the largest createdAt (most recent).
   let bestKey: string | undefined;
   let best: PendingOverride | undefined;
   for (const [key, override] of pendingOverrides) {
@@ -124,7 +111,6 @@ export function consumeMostRecentPendingOverride(): PendingOverride | undefined 
   }
   if (!best || !bestKey) return undefined;
 
-  // Remove every key that points to the same object (covers multi-key saves).
   for (const [key, override] of pendingOverrides) {
     if (override === best) pendingOverrides.delete(key);
   }

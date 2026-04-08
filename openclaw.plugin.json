@@ -182,6 +182,41 @@
           }
         }
       },
+      "scheduledLynxCheck": {
+        "type": "object",
+        "description": "Managed native OpenClaw cron job for running /lynx-check on a configurable schedule",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable the managed scheduled /lynx-check cron job"
+          },
+          "cron": {
+            "type": "string",
+            "default": "37 8 * * *",
+            "description": "5-field cron expression, for example 37 8 * * * for 08:37 daily or 37 8 * * * for testing"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Optional IANA timezone, for example Asia/Shanghai"
+          },
+          "jobName": {
+            "type": "string",
+            "default": "Lynx Guardian Daily Check",
+            "description": "Display name for the managed cron job"
+          },
+          "announce": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether the isolated cron run should announce its report automatically"
+          },
+          "storePath": {
+            "type": "string",
+            "description": "Optional override of the OpenClaw cron jobs.json path, useful for tests or non-default cron.store setups"
+          }
+        }
+      },
       "openclawDiscovery": {
         "type": "object",
         "description": "OpenClaw service discovery configuration used by /lynx-check and related detection flows",
