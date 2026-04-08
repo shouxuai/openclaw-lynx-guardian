@@ -78,6 +78,19 @@ export function inferBlacklistModules(toolName: string, reason: string): string[
     return ["M2:protected_file_access"];
   }
 
+  const hardDenyExecutionKeywords = [
+    "download and execute",
+    "remote code execution",
+    "pipe to shell",
+    "reverse shell",
+    "command relay",
+    "encoding bypass",
+  ];
+
+  if (hardDenyExecutionKeywords.some((keyword) => normalizedReason.includes(keyword))) {
+    return ["M6:malicious_code"];
+  }
+
   const fileAccessKeywords = [
     "file",
     "directory",

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveRiskPolicy } from "../src/guard/risk-policy.js";
 import type { RiskAssessment } from "../src/guard/safety-guard.js";
+import { inferBlacklistModules } from "../src/runtime/override-runtime.js";
 
 const BASE_CONFIG = {
   allowOneTimeOverrideLevels: ["L2", "L3", "L4"] as const,
@@ -106,6 +107,24 @@ describe("Risk Policy Resolver", () => {
       action: "deny",
     };
     const result = resolveRiskPolicy(assessment, BASE_CONFIG);
+    expect(result.override.allowed).toBe(false);
+    expect(result.override.reason).toBe("module_not_allowed");
+  });
+
+  it("hard-denies download-and-execute blacklist hits instead of routing them to overridable M3", () => {
+    const modules = inferBlacklistModules(
+      "exec",
+      "download + chmod +x chain (download and execute)",
+    );
+    const assessment: RiskAssessment = {
+      level: "L4",
+      score: 9,
+      modules,
+      description: "download and execute chain",
+      action: "deny",
+    };
+    const result = resolveRiskPolicy(assessment, BASE_CONFIG);
+    expect(modules).not.toEqual(["M3:over_agency"]);
     expect(result.override.allowed).toBe(false);
     expect(result.override.reason).toBe("module_not_allowed");
   });
