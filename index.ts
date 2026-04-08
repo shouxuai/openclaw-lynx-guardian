@@ -814,7 +814,7 @@ export default function setup(api: OpenClawPluginApi) {
       try {
         const installAttempt = detectSkillInstall(toolName, params);
         if (installAttempt) {
-          log.info(`[lynx-guardian]特别打印仅在开发阶段进行使�?Skill install detected: ${JSON.stringify(installAttempt)}`);
+          log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，Skill install detected: ${JSON.stringify(installAttempt)}`);
           log.info(`[lynx-guardian] Skill install detected: ${installAttempt.skillName} via ${installAttempt.installMethod}`);
 
           const quick = quickBlacklistCheck(installAttempt.skillName);
@@ -847,7 +847,7 @@ export default function setup(api: OpenClawPluginApi) {
           };
 
           const assessment = await assessSkillRisk(installAttempt, fetchRemote);
-          log.info(`[lynx-guardian]特别打印仅在开发阶段进行使�?Skill assess risk detected: ${JSON.stringify(assessment)}`);
+          log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，Skill assess risk detected: ${JSON.stringify(assessment)}`);
           if (assessment.block) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
             try {
@@ -930,11 +930,11 @@ export default function setup(api: OpenClawPluginApi) {
 
     try {
       const userContext = readRecentContext(ctx.sessionKey);
-      log.info(`[lynx-guardian]特别打印仅在开发阶段进行使�?User context: ${userContext}`);
+      log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，User context: ${userContext}`);
       const content = `是否${match.reason} ${detail}？用户：${userContext}`;
 
       const res = await checkTool(userId, content);
-      log.info(`[lynx-guardian]特别打印仅在开发阶段进行使�?Tool check result: ${JSON.stringify(res)}`);
+      log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，Tool check result: ${JSON.stringify(res)}`);
       // Blacklist hits always require confirmation via the plugin's pending-override
       // mechanism, even when tool_check returns safe (risk_level=0).
       // "tool_check safe" means the user asked for the operation — that is necessary
