@@ -21,6 +21,31 @@ export function normalizeStringList(value: unknown): string[] {
     : [];
 }
 
+const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [
+  /[\\/]openclaw[\\/]skills[\\/]healthcheck[\\/]SKILL\.md$/i,
+  /[\\/]\.openclaw[\\/]workspace[\\/]memory[\\/]\d{4}-\d{2}-\d{2}\.md$/i,
+];
+
+function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
+  const subsystem = normalizeString(ctx?.subsystem).toLowerCase();
+  if (subsystem !== "plugins") {
+    return false;
+  }
+
+  const toolName = normalizeString(event?.toolName).toLowerCase();
+  if (toolName !== "read") {
+    return false;
+  }
+
+  const rawPath = normalizeString(event?.params?.file_path ?? event?.params?.path);
+  if (!rawPath) {
+    return false;
+  }
+
+  const canonicalPath = canonicalizePath(rawPath);
+  return TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS.some((pattern) => pattern.test(canonicalPath));
+}
+
 export function buildGuardContext(config: any, event: any, ctx: any): GuardContext {
   const ownerVerification = config?.selfSafetyGuard?.ownerVerification ?? {};
   const requesterId = normalizeString(
@@ -54,6 +79,7 @@ export function buildGuardContext(config: any, event: any, ctx: any): GuardConte
     verifiedOwner,
     requesterId,
     channel,
+    trustedInternalProtectedRead: isTrustedInternalProtectedRead(event, ctx),
   };
 }
 

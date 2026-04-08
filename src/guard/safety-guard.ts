@@ -37,6 +37,7 @@ export interface GuardContext {
   verifiedOwner?: boolean;
   requesterId?: string;
   channel?: string;
+  trustedInternalProtectedRead?: boolean;
 }
 
 interface IdentityDetectionResult {
@@ -896,6 +897,7 @@ export function guardToolCall(
   context?: GuardContext,
 ): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
+  const trustedInternalProtectedRead = context?.trustedInternalProtectedRead === true;
 
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
@@ -928,7 +930,7 @@ export function guardToolCall(
 
   // M2: 核心配置文件访问 via tool
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
-  if (protectedAccess.matchedFiles.length > 0) {
+  if (protectedAccess.matchedFiles.length > 0 && !trustedInternalProtectedRead) {
     modules.push("M2:protected_file_access");
     pushDim(accum, "harm", 2);
     pushDim(accum, "rev", protectedAccess.operation === "write" ? 2 : 1);

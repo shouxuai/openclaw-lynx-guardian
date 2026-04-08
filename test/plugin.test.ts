@@ -302,6 +302,35 @@ describe('Plugin Setup', () => {
     expect(api.checkTool).not.toHaveBeenCalled();
   });
 
+  it('should allow trusted plugin-subsystem healthcheck reads during scheduled Lynx runs', async () => {
+    setup(mockApi);
+    const handler = handlers['before_tool_call'];
+
+    const healthcheckSkillRead = await handler(
+      {
+        toolName: 'read',
+        params: { path: '/opt/homebrew/lib/node_modules/openclaw/skills/healthcheck/SKILL.md' },
+      },
+      {
+        sessionKey: 'sess-scheduled-lynx',
+        subsystem: 'plugins',
+      },
+    );
+    expect(healthcheckSkillRead).toBeUndefined();
+
+    const dailyMemoryRead = await handler(
+      {
+        toolName: 'read',
+        params: { path: '/Users/wuyu/.openclaw/workspace/memory/2026-04-08.md' },
+      },
+      {
+        sessionKey: 'sess-scheduled-lynx',
+        subsystem: 'plugins',
+      },
+    );
+    expect(dailyMemoryRead).toBeUndefined();
+  });
+
   it('should allow one-time override for local tool guard on the next identical retry only', async () => {
     mockApi.config = {
       selfSafetyGuard: {
