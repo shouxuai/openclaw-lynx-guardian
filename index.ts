@@ -12,6 +12,7 @@ import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, f
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
+import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
 import {
@@ -505,6 +506,17 @@ export default function setup(api: OpenClawPluginApi) {
         if (decision.warning) {
           prependContext += `${decision.warning}\n`;
         }
+        // 弱信号预警注入：L1/L2 不阻断时，向模型注入安全上下文让模型参与防御
+        if (!decision.block) {
+          const lvl = decision.riskAssessment.level;
+          if ((lvl === "L1" || lvl === "L2") && decision.riskAssessment.modules.length > 0) {
+            const injection = buildSecurityAwarenessInjection(decision.riskAssessment.modules);
+            if (injection?.hasContent) {
+              prependContext += injection.injectionText;
+              log.info(`[lynx-guardian] 安全预警注入：modules=${decision.riskAssessment.modules.join(",")}`);
+            }
+          }
+        }
       }
 
       if (tokenOptimizerConfig.enabled !== false && isTokenOptimizerAvailable()) {
@@ -656,7 +668,7 @@ export default function setup(api: OpenClawPluginApi) {
       const lastMessage = lastContent[lastContent.length - 1];
       const output = lastMessage?.text ?? "";
       if (selfSafetyGuardConfig.outputGuard !== false && output && !isDiscoveryResponse) {
-        const decision = guardOutput(output);
+        const decision = guardOutput(output, ctx.sessionKey);
         log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，Output risk detected: ${JSON.stringify(decision)}`);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);

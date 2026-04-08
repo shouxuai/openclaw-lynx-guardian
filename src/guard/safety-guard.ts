@@ -141,11 +141,22 @@ const PRIMARY_SECRETS = new Set([
 
 // ── Session Anomaly Tracker ────────────────────────────────────────
 
+// Operation categories used for multi-step sequence detection
+type OperationCategory =
+  | "sensitive_dir_entry"   // cd /etc, cd ~/.ssh etc.
+  | "file_access"           // M2:protected_file_access
+  | "credential_access"     // M5:credential_theft
+  | "obfuscated_path"       // M7:wildcard_obfuscation
+  | "pipe_exec"             // M7:pipe_execution
+  | "external_output"       // fatal_triangle (output side)
+  | "normal";
+
 interface SessionState {
   recentScores: number[];
   rejectedTopics: Map<string, number>;
   lastTopicCategory: string;
   lastActiveTime: number;
+  operationHistory: OperationCategory[];  // last N operation categories for sequence detection
 }
 
 const SESSION_MAX_SIZE = 1000;
@@ -179,6 +190,7 @@ function getSessionState(sessionKey: string): SessionState {
       rejectedTopics: new Map(),
       lastTopicCategory: "normal",
       lastActiveTime: Date.now(),
+      operationHistory: [],
     };
     sessionStates.set(sessionKey, state);
   } else {
@@ -194,6 +206,69 @@ const REJECTION_TRACKING_EXEMPT = new Set([
   "M2:protected_file_access",
   "M3:over_agency",
 ]);
+
+// ── Multi-Step Sequence Detection ─────────────────────────────────
+
+const OPERATION_HISTORY_MAX = 8;
+
+// Infer the operation category from the set of triggered modules
+function inferOperationCategory(modules: string[]): OperationCategory {
+  if (modules.includes("M7:pipe_execution")) return "pipe_exec";
+  if (modules.some((m) => m.includes("credential"))) return "credential_access";
+  if (modules.includes("M2:protected_file_access")) return "file_access";
+  if (modules.includes("M7:wildcard_obfuscation")) return "obfuscated_path";
+  if (modules.includes("fatal_triangle")) return "external_output";
+  if (modules.includes("sensitive_dir_entry")) return "sensitive_dir_entry";
+  return "normal";
+}
+
+interface DangerSequence {
+  name: string;
+  // all of these categories must appear in the history window (order-insensitive)
+  required: OperationCategory[];
+  window: number;   // look back at most this many steps
+  adjustment: number;
+}
+
+const DANGEROUS_SEQUENCES: DangerSequence[] = [
+  {
+    name: "data_exfiltration_chain",
+    required: ["sensitive_dir_entry", "credential_access", "external_output"],
+    window: 6,
+    adjustment: 3,
+  },
+  {
+    name: "recon_then_credential",
+    required: ["sensitive_dir_entry", "credential_access"],
+    window: 4,
+    adjustment: 2,
+  },
+  {
+    name: "pipe_after_file_access",
+    required: ["file_access", "pipe_exec"],
+    window: 3,
+    adjustment: 2,
+  },
+  {
+    name: "obfuscated_then_credential",
+    required: ["obfuscated_path", "credential_access"],
+    window: 3,
+    adjustment: 2,
+  },
+];
+
+// Returns total adjustment from sequence matches (capped at 3 to avoid double-stacking)
+function checkSequencePatterns(history: OperationCategory[]): number {
+  let total = 0;
+  for (const seq of DANGEROUS_SEQUENCES) {
+    const slice = history.slice(-seq.window);
+    const sliceSet = new Set(slice);
+    if (seq.required.every((cat) => sliceSet.has(cat))) {
+      total += seq.adjustment;
+    }
+  }
+  return Math.min(total, 3);
+}
 
 function computeAnomalyAdjustment(sessionKey: string, baseScore: number, triggeredModules: string[]): number {
   const state = getSessionState(sessionKey);
@@ -226,6 +301,19 @@ function computeAnomalyAdjustment(sessionKey: string, baseScore: number, trigger
     state.rejectedTopics.set(mod, count);
     if (count >= 3) {
       adjustment += 1;
+    }
+  }
+
+  // Multi-step sequence detection: track operation category and check dangerous chains
+  const category = inferOperationCategory(triggeredModules);
+  if (category !== "normal") {
+    state.operationHistory.push(category);
+    if (state.operationHistory.length > OPERATION_HISTORY_MAX) {
+      state.operationHistory.shift();
+    }
+    const seqAdj = checkSequencePatterns(state.operationHistory);
+    if (seqAdj > 0) {
+      adjustment += seqAdj;
     }
   }
 
@@ -383,6 +471,44 @@ function detectOverAgency(text: string): string[] {
     }
   }
   return matched;
+}
+
+// ── Sensitive Directory Entry Detection ───────────────────────────
+// Detects cd / pushd / Set-Location into sensitive dirs.
+// Not a blocking signal on its own — only adds "sensitive_dir_entry" to
+// operationHistory for sequence detection.
+
+function detectSensitiveDirEntry(text: string): boolean {
+  // cd or pushd or Set-Location targeting sensitive directories
+  return /(?:^|\s|&&|\|)(?:cd|pushd|Set-Location|sl)\s+["']?(?:~[/\\](?:\.ssh|\.aws|\.gnupg|\.openclaw|\.config)|\/etc|C:\\Windows\\System32|%SystemRoot%)/i.test(text) ||
+    // Windows PowerShell cd into sensitive dirs
+    /(?:^|\s)cd\s+["']?%(?:USERPROFILE|APPDATA|LOCALAPPDATA)%[/\\][^\s]*/i.test(text);
+}
+
+// ── M7: Wildcard / Path Obfuscation Detection ─────────────────────
+
+function detectWildcardObfuscation(text: string): boolean {
+  return (
+    // ~/path*wildcard 或 ~\path*wildcard（兼容 Windows 反斜杠）
+    /~[/\\][^\s]*\*/.test(text) ||
+    // 命令参数中的通配符路径：*.json、*.open*aw、dir/*.conf、dir\*.conf
+    /(?:^|\s|['"`])[^\s]*\*[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text) ||
+    // 相对路径穿越：../../ 或 ..\..\ (Windows)
+    /(?:\.\.\/|\.\.\\)[./\\]{0,}/.test(text)
+  );
+}
+
+// ── M7: Pipe Shell Execution Detection ────────────────────────────
+
+interface PipeExecResult {
+  detected: boolean;
+  shellExec: boolean; // | bash/sh/zsh/eval
+}
+
+function detectPipeExecution(text: string): PipeExecResult {
+  const shellExec = /\|\s*(?:bash|sh|zsh|eval|exec)\b/i.test(text);
+  const detected = shellExec || /\|\s*(?:xargs\s+(?:bash|sh)|python3?\s+-c)/i.test(text);
+  return { detected, shellExec };
 }
 
 // ── Malicious Code Request Detection (M6) ──────────────────────────
@@ -578,6 +704,27 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     pushDim(accum, "auth", 2);
   }
 
+  // sensitive_dir_entry（仅进 operationHistory 用于序列检测，不独立加分）
+  if (detectSensitiveDirEntry(text)) {
+    modules.push("sensitive_dir_entry");
+  }
+
+  // M7: 路径混淆（弱信号，仅进评分通道，不进即时通道）
+  if (detectWildcardObfuscation(text)) {
+    modules.push("M7:wildcard_obfuscation");
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", 1);
+  }
+
+  // M7: 管道执行（cat|bash 等，shellExec 权重更高）
+  const pipeExec = detectPipeExecution(text);
+  if (pipeExec.detected) {
+    modules.push("M7:pipe_execution");
+    pushDim(accum, "harm", pipeExec.shellExec ? 2 : 1);
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", pipeExec.shellExec ? 2 : 1);
+  }
+
   let score = computeWeightedScore(accum);
 
   if (sessionKey) {
@@ -629,37 +776,102 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   return { block: false, riskAssessment: assessment };
 }
 
+// ── Output: Actual Secret Value Detection ─────────────────────────
+// Detects real credential values appearing in model output (not just commands
+// that access them). Focuses on high-confidence key formats to avoid false positives.
+
+const SECRET_VALUE_PATTERNS: { pattern: RegExp; label: string }[] = [
+  { pattern: /\bsk-[a-zA-Z0-9]{20,}\b/, label: "openai_anthropic_key" },
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/, label: "aws_access_key" },
+  { pattern: /\bghp_[a-zA-Z0-9]{36}\b/, label: "github_token" },
+  { pattern: /\bgithub_pat_[a-zA-Z0-9_]{82}\b/, label: "github_pat" },
+  { pattern: /\bxox[bpas]-[0-9A-Za-z-]{10,}\b/, label: "slack_token" },
+  { pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/, label: "private_key" },
+];
+
+function detectSecretsInOutput(text: string): string[] {
+  return SECRET_VALUE_PATTERNS
+    .filter(({ pattern }) => pattern.test(text))
+    .map(({ label }) => label);
+}
+
 // ── Public API: Output Guard ───────────────────────────────────────
 
-export function guardOutput(output: string): GuardDecision {
+export function guardOutput(output: string, sessionKey?: string): GuardDecision {
   const modules: string[] = [];
-  let score = 0;
+  const accum = createAccumulators();
+  let leakDirectScore = 0;
 
+  // ── System prompt leak (existing, direct score channel) ──────────
   const leak = detectSystemPromptLeak(output);
   if (leak.isLeak) {
     modules.push("M2:system_prompt_leak");
-    // Direct score assignment — no forcedMinLevel
-    score = leak.severity === "high" ? 10 : 7;
+    leakDirectScore = leak.severity === "high" ? 10 : 7;
+  }
+
+  // ── M5: Actual secret values exposed in output ────────────────────
+  const secrets = detectSecretsInOutput(output);
+  if (secrets.length > 0) {
+    modules.push("M5:secrets_in_output");
+    pushDim(accum, "harm", 3);
+    pushDim(accum, "rev", 2);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
+  }
+
+  // ── M1: Chain injection propagation ──────────────────────────────
+  // Model's output contains injection patterns aimed at the next conversation turn.
+  const chainInj = detectPromptInjection(output);
+  if (chainInj.detected && chainInj.confidence >= 0.7) {
+    modules.push("M1:chain_injection_output");
+    pushDim(accum, "harm", chainInj.confidence >= 0.85 ? 2 : 1);
+    pushDim(accum, "rev", 1);
+    pushDim(accum, "auth", 1);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", chainInj.confidence >= 0.85 ? 2 : 1);
+  }
+
+  // ── M3: Over-agency suggestion in output ─────────────────────────
+  // Model suggests disabling safety / modifying core files to user.
+  const overAgency = detectOverAgency(output);
+  if (overAgency.length > 0) {
+    modules.push("M3:over_agency_output");
+    pushDim(accum, "harm", 1);
+    pushDim(accum, "pattern", overAgency.length >= 2 ? 2 : 1);
+    pushDim(accum, "clarity", 1);
+  }
+
+  // Final score: take the higher of direct-assigned (leak) and accumulated
+  let score = Math.max(leakDirectScore, computeWeightedScore(accum));
+
+  if (sessionKey) {
+    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
+    score = Math.min(score + anomalyAdj, 10);
   }
 
   score = Math.min(score, 10);
   const level = scoreToLevel(score);
   const action = levelToAction(level);
 
+  const descParts: string[] = [];
+  if (leak.isLeak) descParts.push(`系统提示泄露(${leak.protectedFiles.join(",")})`);
+  if (secrets.length > 0) descParts.push(`凭证值暴露(${secrets.join(",")})`);
+  if (chainInj.detected && chainInj.confidence >= 0.7) descParts.push("输出中含链式注入");
+  if (overAgency.length > 0) descParts.push("输出含高危操作建议");
+
   const assessment: RiskAssessment = {
     level,
     score,
     modules,
     action,
-    description: modules.length > 0
-      ? `检测到系统提示泄露风险 (${leak.protectedFiles.join(", ")})`
-      : "输出安全",
+    description: descParts.length > 0 ? descParts.join("；") : "输出安全",
   };
 
   if (action === "block" || action === "deny") {
     return {
       block: true,
-      blockReason: `[Lynx Guardian] 检测到输出中包含受保护的系统配置信息`,
+      blockReason: `[Lynx Guardian] 🛡️ 输出安全拦截 (${level}, score=${score}): ${assessment.description}`,
       riskAssessment: assessment,
     };
   }
@@ -667,7 +879,7 @@ export function guardOutput(output: string): GuardDecision {
   if (action === "warn") {
     return {
       block: false,
-      warning: `⚠️ 输出中可能包含敏感配置信息`,
+      warning: `⚠️ 输出风险提醒 (${level}): ${assessment.description}`,
       riskAssessment: assessment,
     };
   }
@@ -744,6 +956,27 @@ export function guardToolCall(
     pushDim(accum, "auth", 2);
     pushDim(accum, "pattern", 1);
     pushDim(accum, "clarity", 1);
+  }
+
+  // sensitive_dir_entry via tool（command 参数中的 cd 等）
+  if (detectSensitiveDirEntry(command)) {
+    modules.push("sensitive_dir_entry");
+  }
+
+  // M7: 路径混淆 via tool（command / file_path 参数）
+  if (detectWildcardObfuscation(combined)) {
+    modules.push("M7:wildcard_obfuscation");
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", 1);
+  }
+
+  // M7: 管道执行 via tool（command 参数中包含 | bash 等）
+  const toolPipeExec = detectPipeExecution(command);
+  if (toolPipeExec.detected) {
+    modules.push("M7:pipe_execution");
+    pushDim(accum, "harm", toolPipeExec.shellExec ? 2 : 1);
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", toolPipeExec.shellExec ? 2 : 1);
   }
 
   let score = computeWeightedScore(accum);
