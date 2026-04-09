@@ -93,3 +93,4 @@ test-results/
 /test
 /test-temp
 /docs/*
+.worktrees/
