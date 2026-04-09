@@ -38,7 +38,7 @@ import {
   formatContextRecommendation, formatModelRouting, formatBudgetStatus,
   buildOptimizationHints, isTokenOptimizerAvailable,
 } from "./src/runtime/token-optimizer-runner.js";
-import { reconcileScheduledLynxCheck } from "./src/runtime/scheduled-lynx-check.js";
+import { reconcileScheduledLynxCheck, resolveScheduledLynxCheckConfig } from "./src/runtime/scheduled-lynx-check.js";
 import { CONFIG } from "./src/config.js";
 import {
   canonicalizePath,
@@ -77,6 +77,12 @@ import {
   decorateAssistantMessage,
 } from "./src/runtime/message-decoration.js";
 import { buildManualLynxCheckReport } from "./src/discovery/manual-lynx-check.js";
+import {
+  clearRecentActiveDeliveryTargetForContext,
+  getRecentActiveDeliveryTarget,
+  rememberRecentActiveDeliveryTarget,
+  shouldPreferRecentActiveDelivery,
+} from "./src/runtime/recent-active-delivery.js";
 
 function isConfirmationPhrase(text: string, phrase: string): boolean {
   return text.includes(phrase.trim());
@@ -96,6 +102,7 @@ export default function setup(api: OpenClawPluginApi) {
   const skillGuardConfig = config.skillGuard ?? {};
   const tokenOptimizerConfig = config.tokenOptimizer ?? {};
   const scheduledLynxCheckConfig = config.scheduledLynxCheck ?? {};
+  const resolvedScheduledLynxCheckConfig = resolveScheduledLynxCheckConfig(scheduledLynxCheckConfig);
   const discoveryRuntime = {
     path: DISCOVERY_CONFIG_SOURCE_PATH,
     config: loadDiscoveryRuntimeConfig(config.openclawDiscovery),
@@ -268,6 +275,7 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("message_received", async (event, ctx) => {
     try {
       if (!event.content || event.content.length === 0) return;
+      rememberRecentActiveDeliveryTarget(ctx);
       log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，message_received event: ${JSON.stringify(event)}`);
       log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，message_received ctx: ${JSON.stringify(ctx)}`);
       const text = typeof event.content === "string"
@@ -396,6 +404,7 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("before_agent_start", async (event, ctx) => {
     try {
       if (!event.prompt && !event.messages) return;
+      rememberRecentActiveDeliveryTarget(ctx);
       let prependContext = "";
       let discoveryPrependBase: string | null = null;
       let discoveryInstruction: string | null = null;
@@ -632,6 +641,22 @@ export default function setup(api: OpenClawPluginApi) {
       if (!event.messages || event.messages.length === 0) return;
 
       const isDiscoveryResponse = existsSync(DISCOVERY_RESULT_PATH) || existsSync(DISCOVERY_RESULT_CONSUMED_PATH);
+
+      if (
+        existsSync(DISCOVERY_RESULT_PATH)
+        && shouldAttachPendingDiscoveryReport(DISCOVERY_REQUEST_PATH, ctx.sessionKey)
+        && shouldPreferRecentActiveDelivery(ctx, resolvedScheduledLynxCheckConfig.deliveryMode)
+      ) {
+        const recentTarget = getRecentActiveDeliveryTarget();
+        if (recentTarget) {
+          ctx.sendMessage = recentTarget.sendMessage;
+          log.info(
+            `[lynx-guardian] Discovery result will reuse recent active session (${recentTarget.messageProvider ?? recentTarget.channelId ?? recentTarget.sessionKey ?? recentTarget.targetKey})`,
+          );
+        } else {
+          log.warn("[lynx-guardian] No recent active delivery target available for scheduled /lynx-check");
+        }
+      }
 
       if (
         existsSync(DISCOVERY_RESULT_PATH)
@@ -1033,5 +1058,6 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("session_end", async (event, ctx) => {
     appendLifecycleProbe("session_end", event, ctx);
+    clearRecentActiveDeliveryTargetForContext(ctx);
   });
 }

@@ -60,6 +60,7 @@ export interface PluginConfig {
     timezone?: string;
     jobName?: string;
     announce?: boolean;
+    deliveryMode?: "recent-active" | "announce";
     storePath?: string;
   };
   openclawDiscovery?: OpenClawDiscoveryConfig;

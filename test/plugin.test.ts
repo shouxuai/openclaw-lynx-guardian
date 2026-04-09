@@ -11,6 +11,7 @@ import * as securityAuditRunner from '../src/runtime/security-audit-runner.js';
 import * as skillGuard from '../src/skills/skill-guard.js';
 import * as safetyGuard from '../src/guard/safety-guard.js';
 import * as blacklist from '../src/blacklist.js';
+import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
@@ -53,6 +54,7 @@ describe('Plugin Setup', () => {
   const pendingDiscoveryRequestPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.request.json');
   const hookProbeLogPath = join(openclawHome, '.openclaw', 'lynx', 'hook-probe.log');
   const scheduledCronStorePath = join(process.cwd(), 'test-temp', 'plugin-scheduled-lynx-check', 'jobs.json');
+  const recentActiveDeliveryPath = join(openclawHome, '.openclaw', 'lynx', 'recent-active-delivery.json');
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -70,6 +72,10 @@ describe('Plugin Setup', () => {
     if (existsSync(hookProbeLogPath)) {
       rmSync(hookProbeLogPath, { force: true });
     }
+    if (existsSync(recentActiveDeliveryPath)) {
+      rmSync(recentActiveDeliveryPath, { force: true });
+    }
+    recentActiveDelivery.resetRecentActiveDeliveryTargets(recentActiveDeliveryPath);
     if (existsSync(scheduledCronStorePath)) {
       rmSync(scheduledCronStorePath, { force: true });
     }
@@ -658,6 +664,96 @@ describe('Plugin Setup', () => {
     expect(report).toContain('Skill');
     expect(report).toContain('OpenClaw');
     expect(report.lastIndexOf('OpenClaw')).toBeGreaterThan(report.lastIndexOf('Skill'));
+  });
+
+  it('should route scheduled /lynx-check report to the most recent webchat session', async () => {
+    setup(mockApi);
+    const messageHandler = handlers['message_received'];
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const recentWebchatSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await messageHandler(
+      { content: 'just keep this webchat session active' },
+      {
+        sessionKey: 'sess-webchat-recent',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        sendMessage: recentWebchatSendMessage,
+      },
+    );
+
+    await beforeAgentStart(
+      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-scheduled-recent-webchat',
+        subsystem: 'plugins',
+      },
+    );
+
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: 'scheduled lynx run finished' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-scheduled-recent-webchat',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(recentWebchatSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+      }),
+    );
+  });
+
+  it('should route scheduled /lynx-check report to the most recent Feishu session', async () => {
+    setup(mockApi);
+    const messageHandler = handlers['message_received'];
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const recentFeishuSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await messageHandler(
+      { content: 'keep this feishu session active' },
+      {
+        sessionKey: 'sess-feishu-recent',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        sendMessage: recentFeishuSendMessage,
+      },
+    );
+
+    await beforeAgentStart(
+      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-scheduled-recent-feishu',
+        subsystem: 'plugins',
+      },
+    );
+
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: 'scheduled lynx run finished' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-scheduled-recent-feishu',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(recentFeishuSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+      }),
+    );
   });
 
   it('should trigger discovery reply on /check and send result messages', async () => {
