@@ -121,6 +121,34 @@ describe('Blacklist Logic', () => {
         expect(checkExecBlacklist(command)?.level, command).toBe('critical');
       }
     });
+
+    it('should block glob-obfuscated reads of protected system auth files', () => {
+      const obfuscatedCommands = [
+        'cat /et*/shadow',
+        'cat /etc/shado?',
+        'cat /etc/pa[s]swd',
+        'type C:\\Win*\\System32\\config\\S?M',
+        'ssh prod "cat /et*/shadow"',
+      ];
+
+      for (const command of obfuscatedCommands) {
+        expect(checkExecBlacklist(command)?.level, command).toBe('critical');
+      }
+    });
+
+    it('should block statically assembled reads of protected system auth files', () => {
+      const obfuscatedCommands = [
+        'AUTH_A=/et; AUTH_B=c/shadow; cat "$AUTH_A$AUTH_B"',
+        'AUTH_DIR=/etc; AUTH_FILE=shadow; cat ${AUTH_DIR}/${AUTH_FILE}',
+        'PART_A=$(echo /etc); PART_B=$(echo shadow); cat $PART_A/$PART_B',
+        'cat /etc/{passwd,shadow}',
+        'set ROOT=%SystemRoot%\\System32\\config & set HIVE=SAM & type %ROOT%\\%HIVE%',
+      ];
+
+      for (const command of obfuscatedCommands) {
+        expect(checkExecBlacklist(command)?.level, command).toBe('critical');
+      }
+    });
   });
 
   describe('checkExecBlacklist (Warning)', () => {

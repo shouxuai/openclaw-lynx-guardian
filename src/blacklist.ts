@@ -1,3 +1,5 @@
+import { findObfuscatedSystemAuthPath } from "./path-glob-protection.js";
+
 export type BlacklistMatch = {
   level: "critical" | "warning";
   pattern: string;
@@ -568,6 +570,15 @@ export function checkExecBlacklist(
   context?: CheckExecBlacklistContext,
 ): BlacklistMatch | null {
   if (!command) return null;
+
+  const obfuscatedSystemAuthPath = findObfuscatedSystemAuthPath(command);
+  if (obfuscatedSystemAuthPath) {
+    return {
+      level: "critical",
+      pattern: obfuscatedSystemAuthPath.token,
+      reason: "obfuscated or statically assembled access to system auth file",
+    };
+  }
 
   const pipeAttacks: Rule[] = [
     {

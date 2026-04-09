@@ -8,6 +8,11 @@
 
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
+import {
+  findObfuscatedLynxPluginPath,
+  findObfuscatedProtectedReferenceLabels,
+  findObfuscatedSystemAuthPath,
+} from "../path-glob-protection.js";
 
 // ── Risk Levels ────────────────────────────────────────────────────
 
@@ -125,10 +130,14 @@ function levelToAction(level: RiskLevel): "allow" | "log" | "warn" | "block" | "
 
 // Instant deny: bypass scoring, always L4
 function buildInstantDeny(moduleId: string, reason: string): GuardDecision {
+  return buildInstantDenyForModules([moduleId], reason);
+}
+
+function buildInstantDenyForModules(moduleIds: string[], reason: string): GuardDecision {
   const assessment: RiskAssessment = {
     level: "L4",
     score: 10,
-    modules: [moduleId],
+    modules: moduleIds,
     action: "deny",
     description: reason,
   };
@@ -439,8 +448,18 @@ function extractPluginTargets(text: string): string[] {
 
 function detectPluginIntegrityViolation(text: string, toolName?: string): boolean {
   const normalized = normalizeGuardPath(text);
-  if (!LYNX_PLUGIN_ROOT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+  const directPluginTarget = LYNX_PLUGIN_ROOT_PATTERNS.some((pattern) => pattern.test(normalized));
+  const obfuscatedPluginTarget = findObfuscatedLynxPluginPath(normalized) !== null;
+
+  if (!directPluginTarget && !obfuscatedPluginTarget) {
     return false;
+  }
+
+  if (obfuscatedPluginTarget) {
+    if (toolName === "write" || toolName === "edit") {
+      return true;
+    }
+    return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(text));
   }
 
   const pluginTargets = extractPluginTargets(normalized);
@@ -466,6 +485,8 @@ function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFi
       matchedFiles.push(label);
     }
   }
+
+  matchedFiles.push(...findObfuscatedProtectedReferenceLabels(text));
 
   if (matchedFiles.length === 0) {
     return { matchedFiles: [], operation: "unknown" };
@@ -633,6 +654,12 @@ function detectWildcardObfuscation(text: string): boolean {
 
 // ── M7: Pipe Shell Execution Detection ────────────────────────────
 
+function detectPathObfuscation(text: string): boolean {
+  return detectWildcardObfuscation(text)
+    || /~[/\\][^\s]*(?:\?|\[[^\]\s]+\])/.test(text)
+    || /(?:^|\s|['"`])[^\s]*(?:\?|\[[^\]\s]+\])[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text);
+}
+
 interface PipeExecResult {
   detected: boolean;
   shellExec: boolean; // | bash/sh/zsh/eval
@@ -738,9 +765,18 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   // M2: 系统提示探测（所有置信度）
+  const identityClaims = detectIdentityClaims(text);
+  const protectedAccess = detectProtectedFileAccess(text);
   const sysprompt = detectSystemPromptExtraction(text);
   if (sysprompt.detected) {
-    return buildInstantDeny("M2:system_prompt_extraction", "系统提示探测");
+    const instantModules = ["M2:system_prompt_extraction"];
+    if (protectedAccess.matchedFiles.length > 0) {
+      instantModules.push("M2:protected_file_access");
+    }
+    if (identityClaims.detected && !verifiedOwner) {
+      instantModules.push("M0:identity_verification");
+    }
+    return buildInstantDenyForModules(instantModules, "system prompt extraction");
   }
 
   // M5: 主要凭证/系统敏感文件
@@ -765,7 +801,6 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   const accum = createAccumulators();
 
   // M0: 身份声明（先到先得）
-  const identityClaims = detectIdentityClaims(text);
   if (identityClaims.detected && !verifiedOwner) {
     modules.push("M0:identity_verification");
     const v = identityClaims.directOwnerClaim ? 2 : 1;
@@ -785,7 +820,6 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   // M2: 核心配置文件访问（openclaw 自身文件）
-  const protectedAccess = detectProtectedFileAccess(text);
   if (protectedAccess.matchedFiles.length > 0) {
     modules.push("M2:protected_file_access");
     pushDim(accum, "harm", 2);
@@ -843,7 +877,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   // M7: 路径混淆（弱信号，仅进评分通道，不进即时通道）
-  if (detectWildcardObfuscation(text)) {
+  if (detectPathObfuscation(text)) {
     modules.push("M7:wildcard_obfuscation");
     pushDim(accum, "pattern", 1);
     pushDim(accum, "clarity", 1);
@@ -1049,6 +1083,10 @@ export function guardToolCall(
     return buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory");
   }
 
+  if (findObfuscatedSystemAuthPath(combined)) {
+    return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
+  }
+
   const credTheft = detectCredentialTheft(combined);
   if (credTheft.some((label) => PRIMARY_SECRETS.has(label))) {
     return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
@@ -1126,7 +1164,7 @@ export function guardToolCall(
   }
 
   // M7: 路径混淆 via tool（command / file_path 参数）
-  if (detectWildcardObfuscation(combined)) {
+  if (detectPathObfuscation(combined)) {
     modules.push("M7:wildcard_obfuscation");
     pushDim(accum, "pattern", 1);
     pushDim(accum, "clarity", 1);
