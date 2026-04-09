@@ -236,6 +236,40 @@ describe('Safety Guard - Tool Call Guard', () => {
     expect(decision.block).toBe(true);
   });
 
+  it('should hard-block writes inside the lynx plugin directory on Windows paths', () => {
+    const decision = guardToolCall('write', {
+      file_path: 'C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian\\src\\blacklist.ts',
+    });
+    expect(decision.riskAssessment.modules).toContain('M2:plugin_integrity');
+    expect(decision.riskAssessment.action).toBe('deny');
+    expect(decision.block).toBe(true);
+  });
+
+  it('should hard-block mutating exec commands against the lynx plugin directory on Unix paths', () => {
+    const decision = guardToolCall('exec', {
+      command: 'mv ~/.openclaw/extensions/openclaw-lynx-guardian/src/blacklist.ts ~/.openclaw/extensions/openclaw-lynx-guardian/src/blacklist.old.ts',
+    });
+    expect(decision.riskAssessment.modules).toContain('M2:plugin_integrity');
+    expect(decision.riskAssessment.action).toBe('deny');
+    expect(decision.block).toBe(true);
+  });
+
+  it('should hard-block inline interpreter deletes inside the lynx plugin directory', () => {
+    const decision = guardToolCall('exec', {
+      command: 'perl -e "unlink \'C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian\\src\\blacklist.ts\'"',
+    });
+    expect(decision.riskAssessment.modules).toContain('M2:plugin_integrity');
+    expect(decision.riskAssessment.action).toBe('deny');
+    expect(decision.block).toBe(true);
+  });
+
+  it('should allow plugin cache files outside the hard-lock set', () => {
+    const decision = guardToolCall('write', {
+      file_path: 'C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian\\.cache\\run.log',
+    });
+    expect(decision.riskAssessment.modules).not.toContain('M2:plugin_integrity');
+  });
+
   it('should allow safe tool calls', () => {
     const decision = guardToolCall('exec', { command: 'npm test' });
     expect(decision.block).toBe(false);

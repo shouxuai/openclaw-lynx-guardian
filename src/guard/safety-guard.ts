@@ -204,6 +204,7 @@ function getSessionState(sessionKey: string): SessionState {
 // workflow retries, NOT escalating attack attempts.
 const REJECTION_TRACKING_EXEMPT = new Set([
   "M0:identity_verification",
+  "M2:plugin_integrity",
   "M2:protected_file_access",
   "M3:over_agency",
 ]);
@@ -216,7 +217,7 @@ const OPERATION_HISTORY_MAX = 8;
 function inferOperationCategory(modules: string[]): OperationCategory {
   if (modules.includes("M7:pipe_execution")) return "pipe_exec";
   if (modules.some((m) => m.includes("credential"))) return "credential_access";
-  if (modules.includes("M2:protected_file_access")) return "file_access";
+  if (modules.includes("M2:plugin_integrity") || modules.includes("M2:protected_file_access")) return "file_access";
   if (modules.includes("M7:wildcard_obfuscation")) return "obfuscated_path";
   if (modules.includes("fatal_triangle")) return "external_output";
   if (modules.includes("sensitive_dir_entry")) return "sensitive_dir_entry";
@@ -389,6 +390,61 @@ const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
   /sed\s+-i/i,
   /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)/i,
 ];
+
+const LYNX_PLUGIN_ROOT_PATTERNS: RegExp[] = [
+  /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$)/i,
+];
+
+const LYNX_PLUGIN_CACHE_PATTERNS: RegExp[] = [
+  /(?:^|[\\/])\.cache(?:[\\/]|$)/i,
+  /(?:^|[\\/])tmp(?:[\\/]|$)/i,
+  /(?:^|[\\/])temp(?:[\\/]|$)/i,
+  /\.tmp$/i,
+  /\.log$/i,
+];
+
+const MUTATING_TOOL_PATTERNS: RegExp[] = [
+  /\b(?:write|edit|modify|update|append|overwrite|rewrite|rename|move|delete|remove|unlink|rm|mv|cp|copy|tee|touch)\b/i,
+  /\b(?:Remove-Item|Move-Item|Copy-Item|Rename-Item|Set-Content|Add-Content|Out-File|New-Item)\b/i,
+  /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
+  /\b(?:os\.(?:remove|unlink|rename)|shutil\.(?:move|rmtree)|pathlib\.Path\s*\([^)]*\)\s*\.\s*write_(?:text|bytes))\b/i,
+  /\b(?:File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|remove_tree)\b/i,
+  /\bopen\s*\([^)]*,\s*['"][^'"]*[wa+][^'"]*['"]\)/i,
+  /sed\s+-i/i,
+  />>?/,
+];
+
+function normalizeGuardPath(text: string): string {
+  return text.replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function extractPluginTargets(text: string): string[] {
+  const matches = text.match(/(?:^|[^\w])\.openclaw\/extensions\/openclaw-lynx-guardian(?:\/[^\s"'`;)]+)*/ig);
+  if (!matches) return [];
+  return matches.map((match) => match.replace(/^[^./]+/, ""));
+}
+
+function detectPluginIntegrityViolation(text: string, toolName?: string): boolean {
+  const normalized = normalizeGuardPath(text);
+  if (!LYNX_PLUGIN_ROOT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+
+  const pluginTargets = extractPluginTargets(normalized);
+  const nonCacheTargets = pluginTargets.filter(
+    (target) => !LYNX_PLUGIN_CACHE_PATTERNS.some((pattern) => pattern.test(target)),
+  );
+
+  if (nonCacheTargets.length === 0) {
+    return false;
+  }
+
+  if (toolName === "write" || toolName === "edit") {
+    return true;
+  }
+
+  return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFileAccessResult {
   const matchedFiles: string[] = [];
@@ -906,6 +962,10 @@ export function guardToolCall(
   // === 即时危险通道 ===
 
   // M5: 主要凭证 via tool
+  if (detectPluginIntegrityViolation(combined, toolName)) {
+    return buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory");
+  }
+
   const credTheft = detectCredentialTheft(combined);
   if (credTheft.some((label) => PRIMARY_SECRETS.has(label))) {
     return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
@@ -1022,6 +1082,9 @@ function buildDescription(modules: string[], level: RiskLevel): string {
   if (modules.length === 0) return "安全";
 
   const moduleNames: Record<string, string> = {
+    "M2:plugin_integrity": "Lynx plugin integrity",
+    "M3:remote_access_control": "SSH remote login control",
+    "M3:system_availability": "system shutdown/reboot control",
     "M0:identity_verification": "身份冒充/未验证身份声明",
     "M1:prompt_injection": "提示注入攻击",
     "M2:system_prompt_extraction": "系统提示探测",

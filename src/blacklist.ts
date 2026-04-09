@@ -30,7 +30,7 @@ const INLINE_INTERPRETER_FILE_OP =
 
 const WRAPPED_SHELL_HANDOFF = String.raw`(?:sh\s+-c|bash\s+-c|bash\s+-lc|cmd(?:\.exe)?\s+\/[cr]|powershell(?:\.exe)?(?:\s+-\S+)*\s+-Command|pwsh(?:\.exe)?(?:\s+-\S+)*\s+-Command)`;
 
-const WRAPPED_DANGEROUS_PAYLOAD = String.raw`(?:rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+\/|curl\b[^\n\r]*\|\s*(?:bash|sh)\b|wget\b[^\n\r]*\|\s*(?:bash|sh)\b|(?:iwr|Invoke-WebRequest)\b[^\n\r]*\|\s*(?:iex|Invoke-Expression)\b|(?:>>?|(?:echo|tee)\b[^\n\r]*>>?)\s*(?:${PROTECTED_AUTH_TARGET})|(?:nc\b[^\n\r]*\s-e\s+|ncat\b[^\n\r]*--(?:exec|sh-exec)\b|socat\b[^\n\r]*\bexec\b|\/dev\/tcp\/|New-Object\s+[^\n\r]*TCPClient)|--privileged\b|(?:-v|--volume)\s*\/:\s*\/host\b|nsenter\b|chroot\s+\/host\b|Remove-Item\b[^\n\r]*(?:-Recurse|-r)\b[^\n\r]*${PROTECTED_WINDOWS_TARGET}|del\s+\/[fFsS][^\n\r]*${PROTECTED_WINDOWS_TARGET}|Start-Process\b[^\n\r]*-Verb\s+RunAs\b|${INLINE_INTERPRETER_FILE_OP})`;
+const WRAPPED_DANGEROUS_PAYLOAD = String.raw`(?:rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+\/|curl\b[^\n\r]*\|\s*(?:bash|sh)\b|wget\b[^\n\r]*\|\s*(?:bash|sh)\b|(?:iwr|Invoke-WebRequest)\b[^\n\r]*\|\s*(?:iex|Invoke-Expression)\b|(?:>>?|(?:echo|tee)\b[^\n\r]*>>?)\s*(?:${PROTECTED_AUTH_TARGET})|(?:nc\b[^\n\r]*\s-e\s+|ncat\b[^\n\r]*--(?:exec|sh-exec)\b|socat\b[^\n\r]*\bexec\b|\/dev\/tcp\/|New-Object\s+[^\n\r]*TCPClient)|--privileged\b|(?:-v|--volume)\s*\/:\s*\/host\b|nsenter\b|chroot\s+\/host\b|Remove-Item\b[^\n\r]*(?:-Recurse|-r)\b[^\n\r]*${PROTECTED_WINDOWS_TARGET}|del\s+\/[fFsS][^\n\r]*${PROTECTED_WINDOWS_TARGET}|Start-Process\b[^\n\r]*-Verb\s+RunAs\b|\b(?:shutdown(?:\.exe)?|reboot|poweroff|halt|Restart-Computer|Stop-Computer)\b|\binit\s+[06]\b|\bsystemctl\s+(?:reboot|poweroff)\b|\bsystemctl\s+(?:start|stop|restart|enable|disable)\s+sshd\b|\bservice\s+ssh\s+(?:start|stop|restart)\b|\b(?:Start-Service|Stop-Service|Restart-Service|Set-Service)\s+sshd\b|\bsc(?:\.exe)?\s+(?:start|stop|config)\s+sshd\b|(?:>>?|tee|sed\s+-i|Set-Content|Add-Content|Out-File)[^\n\r]*\/etc\/ssh\/sshd_config\b|${INLINE_INTERPRETER_FILE_OP})`;
 
 const CRITICAL_EXEC: Rule[] = [
   {
@@ -75,12 +75,16 @@ const CRITICAL_EXEC: Rule[] = [
     pattern: /(?:>>?|Set-Content|Add-Content|Out-File)\s+[A-Za-z]:\\Windows\\System32\\config\\(?:SAM|SECURITY|SYSTEM)\b/i,
     reason: "write to system auth file",
   },
-  { pattern: /\b(?:shutdown|reboot)\b/, reason: "system shutdown/reboot" },
-  { pattern: /\b(?:Restart-Computer|Stop-Computer)\b/i, reason: "system shutdown/reboot" },
-  { pattern: /\binit\s+[06]\b/, reason: "system halt/reboot (init)" },
-  { pattern: /systemctl\s+(?:stop|disable)\s+sshd/, reason: "disable SSH (remote lockout)" },
-  { pattern: /\bsc(?:\.exe)?\s+(?:stop|config)\s+sshd\b.*(?:disabled)?/i, reason: "disable SSH (remote lockout)" },
-  { pattern: /\b(?:Stop-Service|Set-Service)\s+sshd\b.*(?:Disabled)?/i, reason: "disable SSH (remote lockout)" },
+  { pattern: /\b(?:shutdown(?:\.exe)?|reboot|poweroff|halt)\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\b(?:Restart-Computer|Stop-Computer)\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\binit\s+[06]\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\bsystemctl\s+(?:reboot|poweroff)\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\bsystemctl\s+(?:start|stop|restart|enable|disable)\s+sshd\b/i, reason: "ssh remote login control" },
+  { pattern: /\bservice\s+ssh\s+(?:start|stop|restart)\b/i, reason: "ssh remote login control" },
+  { pattern: /\b(?:Start-Service|Stop-Service|Restart-Service|Set-Service)\s+sshd\b/i, reason: "ssh remote login control" },
+  { pattern: /\bsc(?:\.exe)?\s+(?:start|stop|config)\s+sshd\b/i, reason: "ssh remote login control" },
+  { pattern: /(?:>>?|tee|sed\s+-i|Set-Content|Add-Content|Out-File)[^\n\r]*\/etc\/ssh\/sshd_config\b/i, reason: "ssh remote login control" },
+  { pattern: /\b(?:unlink|remove_tree|write(?:FileSync)?|append(?:FileSync)?|rename(?:Sync)?|File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|os\.(?:remove|unlink|rename)|shutil\.(?:move|rmtree)|pathlib\.Path\s*\([^)]*\)\s*\.\s*write_(?:text|bytes)|open\s*\()[^\n\r]*\/etc\/ssh\/sshd_config\b/i, reason: "ssh remote login control" },
   { pattern: /\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
   { pattern: /\/usr\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
   { pattern: /\beval\s+.*\b(base64|curl|wget|nc\b|bash\s+-i|\/dev\/tcp)/, reason: "eval with suspicious payload" },

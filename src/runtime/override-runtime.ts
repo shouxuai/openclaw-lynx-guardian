@@ -78,6 +78,14 @@ export function inferBlacklistModules(toolName: string, reason: string): string[
     return ["M2:protected_file_access"];
   }
 
+  if (normalizedReason.includes("ssh remote login control")) {
+    return ["M3:remote_access_control"];
+  }
+
+  if (normalizedReason.includes("system availability shutdown/reboot")) {
+    return ["M3:system_availability"];
+  }
+
   const hardDenyExecutionKeywords = [
     "download and execute",
     "remote code execution",

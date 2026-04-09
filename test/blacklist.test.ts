@@ -99,6 +99,28 @@ describe('Blacklist Logic', () => {
         expect(checkExecBlacklist(command)?.level, command).toBe('critical');
       }
     });
+
+    it('should block SSH remote-login control and shutdown availability actions', () => {
+      const hardLockCommands = [
+        'systemctl start sshd',
+        'systemctl enable sshd',
+        'systemctl restart sshd',
+        'Stop-Service sshd',
+        'Start-Service sshd',
+        'Set-Service sshd -StartupType Automatic',
+        'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config',
+        'shutdown /s /t 0',
+        'shutdown /r /t 0',
+        'systemctl reboot',
+        'systemctl poweroff',
+        'poweroff',
+        'halt',
+      ];
+
+      for (const command of hardLockCommands) {
+        expect(checkExecBlacklist(command)?.level, command).toBe('critical');
+      }
+    });
   });
 
   describe('checkExecBlacklist (Warning)', () => {

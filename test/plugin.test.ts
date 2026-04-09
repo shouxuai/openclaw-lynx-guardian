@@ -342,12 +342,7 @@ describe('Plugin Setup', () => {
       selfSafetyGuard: {
         policy: {
           confirmationPhrase: '纭鏀捐鏈鎿嶄綔',
-          allowOneTimeOverrideLevels: ['L3'],
-          moduleOverrides: {
-            M3: {
-              allowOneTimeOverride: true,
-            },
-          },
+          allowOneTimeOverrideLevels: ['L4'],
         },
       },
     };
@@ -358,11 +353,11 @@ describe('Plugin Setup', () => {
       block: true,
       blockReason: '[Lynx Guardian] blocked local tool',
       riskAssessment: {
-        level: 'L3',
-        score: 7,
-        modules: ['M3:over_agency'],
-        description: 'over-agency tool attempt',
-        action: 'block',
+        level: 'L4',
+        score: 9,
+        modules: ['M2:protected_file_access'],
+        description: 'protected file tool attempt',
+        action: 'deny',
       },
     });
 
@@ -391,6 +386,39 @@ describe('Plugin Setup', () => {
     expect(third).toBeUndefined();
 
 
+
+    expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
+  it('should not open pending override flow for hard-lock tool modules', async () => {
+    setup(mockApi);
+    const toolHandler = handlers['before_tool_call'];
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
+      block: true,
+      blockReason: '[Lynx Guardian] hard lock',
+      riskAssessment: {
+        level: 'L4',
+        score: 9,
+        modules: ['M2:plugin_integrity'],
+        description: 'plugin integrity lock',
+        action: 'deny',
+      },
+    });
+
+    const event = {
+      toolName: 'write',
+      params: {
+        file_path: 'C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian\\src\\blacklist.ts',
+      },
+    };
+
+    const first = await toolHandler(event, { sessionKey: 'sess-hard-lock' });
+    expect(first).toEqual({
+      block: true,
+      blockReason: '[Lynx Guardian] hard lock',
+    });
+    expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
 
     expect(api.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
