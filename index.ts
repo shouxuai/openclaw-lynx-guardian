@@ -10,6 +10,7 @@ import {
 } from "./src/utils.js";
 import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, fetchMaliciousSkillBlacklist } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
+import type { CheckExecBlacklistContext } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
 import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
@@ -765,6 +766,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
+    let execBlacklistContext: CheckExecBlacklistContext | undefined;
     const toolFingerprint = buildOperationFingerprint({
       sessionKey: ctx.sessionKey,
       actionType: "tool",
@@ -778,6 +780,7 @@ export default function setup(api: OpenClawPluginApi) {
       try {
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
+        execBlacklistContext = decision.contextHints;
         log.info(`[lynx-guardian]特别打印仅在开发阶段进行使用，Tool call risk detected: ${JSON.stringify(decision)}`);
 
         if (decision.block && !approvedToolOverride) {
@@ -927,7 +930,7 @@ export default function setup(api: OpenClawPluginApi) {
     let match = null;
     if (toolName === "exec") {
       const command = (params?.command ?? "") as string;
-      match = checkExecBlacklist(typeof command === "string" ? command : "");
+      match = checkExecBlacklist(typeof command === "string" ? command : "", execBlacklistContext);
     } else if (toolName === "write" || toolName === "edit") {
       const rawPath = (params?.file_path ?? params?.path ?? "") as string;
       log.info(`[lynx-guardian] Raw path: ${rawPath}`);

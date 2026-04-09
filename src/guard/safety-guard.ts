@@ -31,6 +31,9 @@ export interface GuardDecision {
     confirmationPhrase?: string;
     reason?: string;
   };
+  contextHints?: {
+    masqueradeTaintLevel?: ExecMasqueradeLevel;
+  };
 }
 
 export interface GuardContext {
@@ -50,6 +53,14 @@ interface IdentityDetectionResult {
 interface ProtectedFileAccessResult {
   matchedFiles: string[];
   operation: "read" | "write" | "unknown";
+}
+
+type ExecMasqueradeLevel = "soft" | "hard";
+
+interface ExecMasqueradeState {
+  level: ExecMasqueradeLevel;
+  expiresAt: number;
+  reasons: string[];
 }
 
 // ── Weighted Scoring Infrastructure ───────────────────────────────
@@ -158,6 +169,7 @@ interface SessionState {
   lastTopicCategory: string;
   lastActiveTime: number;
   operationHistory: OperationCategory[];  // last N operation categories for sequence detection
+  execMasquerade?: ExecMasqueradeState;
 }
 
 const SESSION_MAX_SIZE = 1000;
@@ -192,6 +204,7 @@ function getSessionState(sessionKey: string): SessionState {
       lastTopicCategory: "normal",
       lastActiveTime: Date.now(),
       operationHistory: [],
+      execMasquerade: undefined,
     };
     sessionStates.set(sessionKey, state);
   } else {
@@ -535,6 +548,69 @@ function detectOverAgency(text: string): string[] {
 // Not a blocking signal on its own — only adds "sensitive_dir_entry" to
 // operationHistory for sequence detection.
 
+function detectExecMasqueradeSetup(text: string): string[] {
+  const matched: string[] = [];
+  if (/\b(?:cp|copy|mv|move)\b[^\n\r]*(?:\/(?:usr\/)?bin\/)?(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|curl|wget|nc|ncat|socat)\b/i.test(text)) {
+    matched.push("binary_copy_or_rename");
+  }
+  if (/\bln\s+-s\b[^\n\r]*(?:\/(?:usr\/)?bin\/)?(?:sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)\b/i.test(text)) {
+    matched.push("symlink_remap");
+  }
+  if (/(?:^|\s)alias\s+\w+=["'][^"']*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i.test(text)) {
+    matched.push("alias_remap");
+  }
+  if (/(?:^|\s)(?:function\s+\w+\s*\{|\w+\s*\(\)\s*\{)[^\n\r]*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i.test(text)) {
+    matched.push("function_remap");
+  }
+  if (/(?:^|\s)Set-Alias\s+\w+\s+\S+/i.test(text)) {
+    matched.push("function_remap");
+  }
+  return matched;
+}
+
+function detectExecMasqueradeHint(text: string): string[] {
+  const matched: string[] = [];
+  if (/(?:^|\s)(?:export\s+PATH=|set\s+PATH=|\$env:PATH\s*=)/i.test(text)) {
+    matched.push("path_shadowing");
+  }
+  if (/(?:^|\s)(?:set\s+PATHEXT=|\$env:(?:PATHEXT|PSModulePath)\s*=)/i.test(text)) {
+    matched.push("exec_resolution_override");
+  }
+  return matched;
+}
+
+function getActiveExecMasqueradeLevel(sessionKey?: string): ExecMasqueradeLevel | undefined {
+  if (!sessionKey) return undefined;
+  const state = getSessionState(sessionKey);
+  if (!state.execMasquerade) return undefined;
+  if (Date.now() > state.execMasquerade.expiresAt) {
+    delete state.execMasquerade;
+    return undefined;
+  }
+  return state.execMasquerade.level;
+}
+
+function updateExecMasqueradeState(
+  sessionKey: string | undefined,
+  requestedLevel: ExecMasqueradeLevel,
+  reasons: string[],
+): ExecMasqueradeLevel {
+  if (!sessionKey) return requestedLevel;
+
+  const state = getSessionState(sessionKey);
+  const existing = getActiveExecMasqueradeLevel(sessionKey);
+  const nextLevel: ExecMasqueradeLevel =
+    existing === "hard" || requestedLevel === "hard" ? "hard" : "soft";
+
+  state.execMasquerade = {
+    level: nextLevel,
+    expiresAt: Date.now() + (nextLevel === "hard" ? 30 * 60 * 1000 : 10 * 60 * 1000),
+    reasons: Array.from(new Set([...(state.execMasquerade?.reasons ?? []), ...reasons])),
+  };
+
+  return nextLevel;
+}
+
 function detectSensitiveDirEntry(text: string): boolean {
   // cd or pushd or Set-Location targeting sensitive directories
   return /(?:^|\s|&&|\|)(?:cd|pushd|Set-Location|sl)\s+["']?(?:~[/\\](?:\.ssh|\.aws|\.gnupg|\.openclaw|\.config)|\/etc|C:\\Windows\\System32|%SystemRoot%)/i.test(text) ||
@@ -830,7 +906,10 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     };
   }
 
-  return { block: false, riskAssessment: assessment };
+  return {
+    block: false,
+    riskAssessment: assessment,
+  };
 }
 
 // ── Output: Actual Secret Value Detection ─────────────────────────
@@ -941,7 +1020,10 @@ export function guardOutput(output: string, sessionKey?: string): GuardDecision 
     };
   }
 
-  return { block: false, riskAssessment: assessment };
+  return {
+    block: false,
+    riskAssessment: assessment,
+  };
 }
 
 // ── Public API: Tool Call Guard ─────────────────────────────────────
@@ -958,6 +1040,7 @@ export function guardToolCall(
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
   const combined = `${command} ${filePath}`;
+  let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
 
   // === 即时危险通道 ===
 
@@ -989,6 +1072,23 @@ export function guardToolCall(
   const accum = createAccumulators();
 
   // M2: 核心配置文件访问 via tool
+  const masqueradeSetup = detectExecMasqueradeSetup(command);
+  const masqueradeHint = detectExecMasqueradeHint(command);
+
+  if (masqueradeSetup.length > 0) {
+    modules.push("M3:exec_masquerade_setup");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
+    masqueradeTaintLevel = updateExecMasqueradeState(sessionKey, "hard", masqueradeSetup);
+  } else if (masqueradeHint.length > 0) {
+    modules.push("M3:exec_masquerade_taint");
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", 1);
+    masqueradeTaintLevel = updateExecMasqueradeState(sessionKey, "soft", masqueradeHint);
+  }
+
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
   if (protectedAccess.matchedFiles.length > 0 && !trustedInternalProtectedRead) {
     modules.push("M2:protected_file_access");
@@ -1070,10 +1170,19 @@ export function guardToolCall(
       block: true,
       blockReason: `[Lynx Guardian] 🛡️ 工具调用安全拦截 (${level}): ${assessment.description}`,
       riskAssessment: assessment,
+      contextHints: {
+        masqueradeTaintLevel,
+      },
     };
   }
 
-  return { block: false, riskAssessment: assessment };
+  return {
+    block: false,
+    riskAssessment: assessment,
+    contextHints: {
+      masqueradeTaintLevel,
+    },
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { checkExecBlacklist } from '../src/blacklist.js';
 import { detectPromptInjection, detectSystemPromptExtraction } from '../src/guard/prompt-injection.js';
 import { detectSystemPromptLeak } from '../src/guard/system-prompt-guard.js';
 import { guardInput, guardOutput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
@@ -274,5 +275,61 @@ describe('Safety Guard - Tool Call Guard', () => {
     const decision = guardToolCall('exec', { command: 'npm test' });
     expect(decision.block).toBe(false);
     expect(decision.riskAssessment.score).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('Safety Guard - Exec Masquerade Taint', () => {
+  const sessionKey = 'exec-masquerade-session';
+
+  beforeEach(() => {
+    clearSessionState(sessionKey);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearSessionState(sessionKey);
+  });
+
+  it('should create hard taint after explicit executable remapping', () => {
+    const decision = guardToolCall('exec', { command: 'cp /bin/cat ./ls2' }, sessionKey);
+    expect(decision.riskAssessment.modules).toContain('M3:exec_masquerade_setup');
+    expect((decision as any).contextHints?.masqueradeTaintLevel).toBe('hard');
+  });
+
+  it('should carry taint into later blacklist evaluation in the same session', () => {
+    guardToolCall('exec', { command: 'mv /usr/bin/python3 ./safe' }, sessionKey);
+    const followUp = guardToolCall('exec', { command: 'safe -c "print(1)"' }, sessionKey);
+
+    expect(
+      checkExecBlacklist(
+        'safe -c "print(1)"',
+        (followUp as any).contextHints,
+      )?.level,
+    ).toBe('critical');
+  });
+
+  it('should upgrade soft taint to hard taint when explicit remapping follows PATH shadowing', () => {
+    const now = vi.spyOn(Date, 'now');
+    let current = 1_700_000_000_000;
+    now.mockImplementation(() => current);
+
+    const soft = guardToolCall('exec', { command: 'export PATH=/tmp/fakebin:$PATH' }, sessionKey);
+    expect((soft as any).contextHints?.masqueradeTaintLevel).toBe('soft');
+
+    current += 60_000;
+    const hard = guardToolCall('exec', { command: 'ln -s /bin/sh ./git' }, sessionKey);
+    expect((hard as any).contextHints?.masqueradeTaintLevel).toBe('hard');
+  });
+
+  it('should expire soft taint after its ttl', () => {
+    const now = vi.spyOn(Date, 'now');
+    let current = 1_700_000_000_000;
+    now.mockImplementation(() => current);
+
+    guardToolCall('exec', { command: 'export PATH=/tmp/fakebin:$PATH' }, sessionKey);
+    current += 10 * 60 * 1000 + 1;
+
+    const expired = guardToolCall('exec', { command: 'ls -la' }, sessionKey);
+    expect((expired as any).contextHints?.masqueradeTaintLevel).toBeUndefined();
   });
 });

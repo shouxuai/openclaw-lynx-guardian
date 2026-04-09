@@ -4,6 +4,10 @@ export type BlacklistMatch = {
   reason: string;
 };
 
+export interface CheckExecBlacklistContext {
+  masqueradeTaintLevel?: "soft" | "hard";
+}
+
 interface Rule {
   pattern: RegExp;
   reason: string;
@@ -31,6 +35,9 @@ const INLINE_INTERPRETER_FILE_OP =
 const WRAPPED_SHELL_HANDOFF = String.raw`(?:sh\s+-c|bash\s+-c|bash\s+-lc|cmd(?:\.exe)?\s+\/[cr]|powershell(?:\.exe)?(?:\s+-\S+)*\s+-Command|pwsh(?:\.exe)?(?:\s+-\S+)*\s+-Command)`;
 
 const WRAPPED_DANGEROUS_PAYLOAD = String.raw`(?:rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+\/|curl\b[^\n\r]*\|\s*(?:bash|sh)\b|wget\b[^\n\r]*\|\s*(?:bash|sh)\b|(?:iwr|Invoke-WebRequest)\b[^\n\r]*\|\s*(?:iex|Invoke-Expression)\b|(?:>>?|(?:echo|tee)\b[^\n\r]*>>?)\s*(?:${PROTECTED_AUTH_TARGET})|(?:nc\b[^\n\r]*\s-e\s+|ncat\b[^\n\r]*--(?:exec|sh-exec)\b|socat\b[^\n\r]*\bexec\b|\/dev\/tcp\/|New-Object\s+[^\n\r]*TCPClient)|--privileged\b|(?:-v|--volume)\s*\/:\s*\/host\b|nsenter\b|chroot\s+\/host\b|Remove-Item\b[^\n\r]*(?:-Recurse|-r)\b[^\n\r]*${PROTECTED_WINDOWS_TARGET}|del\s+\/[fFsS][^\n\r]*${PROTECTED_WINDOWS_TARGET}|Start-Process\b[^\n\r]*-Verb\s+RunAs\b|\b(?:shutdown(?:\.exe)?|reboot|poweroff|halt|Restart-Computer|Stop-Computer)\b|\binit\s+[06]\b|\bsystemctl\s+(?:reboot|poweroff)\b|\bsystemctl\s+(?:start|stop|restart|enable|disable)\s+sshd\b|\bservice\s+ssh\s+(?:start|stop|restart)\b|\b(?:Start-Service|Stop-Service|Restart-Service|Set-Service)\s+sshd\b|\bsc(?:\.exe)?\s+(?:start|stop|config)\s+sshd\b|(?:>>?|tee|sed\s+-i|Set-Content|Add-Content|Out-File)[^\n\r]*\/etc\/ssh\/sshd_config\b|${INLINE_INTERPRETER_FILE_OP})`;
+const MASQUERADE_SOURCE_EXEC = String.raw`(?:\/(?:usr\/)?bin\/)?(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|curl|wget|nc|ncat|socat)\b`;
+const KNOWN_EXECUTABLE_PREFIX =
+  /^(?:git|cat|head|tail|less|more|grep|ls|stat|file|wc|du|df|which|whereis|type|id|whoami|hostname|uname|date|uptime|Get-ChildItem|gci|Get-Location|pwd|Get-Item|gi|dir|apt|dpkg|pip|npm|node|python[23]?|perl|ruby|powershell(?:\.exe)?|pwsh(?:\.exe)?|cmd(?:\.exe)?|docker|podman|kubectl|ssh|osascript|mshta|curl|wget|nc|ncat|socat)\b/i;
 
 const CRITICAL_EXEC: Rule[] = [
   {
@@ -343,6 +350,40 @@ const SAFE_EXEC: RegExp[] = [
   /^(?:npm|npx|yarn|pnpm)\s+(?:run|test|start|build|dev|lint|format)\b/,
 ];
 
+const EXECUTABLE_MASQUERADE_SETUP: Rule[] = [
+  {
+    pattern: new RegExp(String.raw`\b(?:cp|copy|mv|move)\b[^\n\r]*${MASQUERADE_SOURCE_EXEC}`, "i"),
+    reason: "executable masquerade setup via copy/rename",
+  },
+  {
+    pattern: new RegExp(String.raw`\bln\s+-s\b[^\n\r]*${MASQUERADE_SOURCE_EXEC}`, "i"),
+    reason: "executable masquerade setup via copy/rename",
+  },
+  {
+    pattern: /(?:^|\s)alias\s+\w+=["'][^"']*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i,
+    reason: "executable masquerade setup via alias remap",
+  },
+  {
+    pattern: /(?:^|\s)(?:function\s+\w+\s*\{|\w+\s*\(\)\s*\{)[^\n\r]*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i,
+    reason: "executable masquerade setup via function remap",
+  },
+  {
+    pattern: /(?:^|\s)Set-Alias\s+\w+\s+\S+/i,
+    reason: "executable masquerade setup via function remap",
+  },
+];
+
+const EXECUTABLE_MASQUERADE_HINT: Rule[] = [
+  {
+    pattern: /(?:^|\s)(?:export\s+PATH=|set\s+PATH=|\$env:PATH\s*=)/i,
+    reason: "command resolution shadowing via PATH precedence change",
+  },
+  {
+    pattern: /(?:^|\s)(?:set\s+PATHEXT=|\$env:(?:PATHEXT|PSModulePath)\s*=)/i,
+    reason: "command resolution shadowing via executable resolution override",
+  },
+];
+
 const WRAPPED_CRITICAL_EXEC: Rule[] = [
   {
     pattern: new RegExp(
@@ -480,7 +521,52 @@ function splitCommand(cmd: string): string[] {
   return segments.filter(Boolean);
 }
 
-export function checkExecBlacklist(command: string): BlacklistMatch | null {
+function hasDangerousTaintStructure(segment: string): boolean {
+  return (
+    /(?:^|\s)(?:-c|--command|--eval|-e|\/c|\/r|-Command)\b/i.test(segment) ||
+    /\/etc\/(?:passwd|shadow|sudoers)\b/i.test(segment) ||
+    /[A-Za-z]:\\Windows\\System32\\config\\(?:SAM|SECURITY|SYSTEM)\b/i.test(segment) ||
+    /[><]/.test(segment) ||
+    /\|\s*(?:bash|sh|zsh|dash|pwsh|powershell|cmd|iex|Invoke-Expression)\b/i.test(segment) ||
+    new RegExp(WRAPPED_SHELL_HANDOFF, "i").test(segment)
+  );
+}
+
+function isClearlyReadOnlySafeSegment(segment: string): boolean {
+  return SAFE_EXEC.some((re) => re.test(segment)) && !hasDangerousTaintStructure(segment);
+}
+
+function shouldShortCircuitSafeExec(
+  segment: string,
+  context?: CheckExecBlacklistContext,
+): boolean {
+  if (!SAFE_EXEC.some((re) => re.test(segment))) return false;
+  if (!context?.masqueradeTaintLevel) return true;
+  return isClearlyReadOnlySafeSegment(segment);
+}
+
+function matchTaintedUnknownExec(
+  segment: string,
+  context?: CheckExecBlacklistContext,
+): BlacklistMatch | null {
+  if (!context?.masqueradeTaintLevel) return null;
+
+  const trimmed = segment.trim();
+  const token = trimmed.split(/\s+/, 1)[0];
+  if (!token || KNOWN_EXECUTABLE_PREFIX.test(token)) return null;
+  if (!hasDangerousTaintStructure(trimmed)) return null;
+
+  return {
+    level: context.masqueradeTaintLevel === "hard" ? "critical" : "warning",
+    pattern: "tainted-unknown-exec",
+    reason: "tainted session: untrusted executable name with dangerous execution structure",
+  };
+}
+
+export function checkExecBlacklist(
+  command: string,
+  context?: CheckExecBlacklistContext,
+): BlacklistMatch | null {
   if (!command) return null;
 
   const pipeAttacks: Rule[] = [
@@ -554,7 +640,9 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
   const fullMatch =
     matchRules(command, pipeAttacks, "critical") ??
     matchRules(command, chainAttacks, "critical") ??
-    matchRules(command, WRAPPED_CRITICAL_EXEC, "critical");
+    matchRules(command, WRAPPED_CRITICAL_EXEC, "critical") ??
+    matchRules(command, EXECUTABLE_MASQUERADE_SETUP, "critical") ??
+    matchRules(command, EXECUTABLE_MASQUERADE_HINT, "warning");
   if (fullMatch) return fullMatch;
 
   const segments = splitCommand(command);
@@ -576,7 +664,10 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
     const override = matchRules(segment, criticalOverride, "critical");
     if (override) return override;
 
-    if (SAFE_EXEC.some((re) => re.test(segment))) continue;
+    const taintedUnknown = matchTaintedUnknownExec(segment, context);
+    if (taintedUnknown) return taintedUnknown;
+
+    if (shouldShortCircuitSafeExec(segment, context)) continue;
 
     const match =
       matchRules(segment, CRITICAL_EXEC, "critical") ?? matchRules(segment, WARNING_EXEC, "warning");

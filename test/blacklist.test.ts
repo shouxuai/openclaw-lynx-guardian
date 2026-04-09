@@ -215,6 +215,52 @@ describe('Blacklist Logic', () => {
     });
   });
 
+  describe('checkExecBlacklist (Masquerade)', () => {
+    it('should flag executable masquerade setup and hint commands', () => {
+      const setupCases = [
+        'cp /bin/cat ./ls2',
+        'mv /usr/bin/python3 ./safe-tool',
+        'ln -s /bin/sh ./git',
+        'alias ls=\'cat /etc/shadow\'',
+      ];
+
+      for (const command of setupCases) {
+        expect(checkExecBlacklist(command)?.level, command).toBe('critical');
+      }
+
+      const hintCases = [
+        'export PATH=/tmp/fakebin:$PATH',
+        'set PATHEXT=.JS;.EXE;.BAT',
+        '$env:PATH = "C:\\temp\\fake;$env:PATH"',
+      ];
+
+      for (const command of hintCases) {
+        expect(checkExecBlacklist(command)?.level, command).toBe('warning');
+      }
+    });
+
+    it('should escalate unknown executable hosts in hard-tainted sessions', () => {
+      expect(
+        checkExecBlacklist(
+          'safe -c "import os; os.remove(\'/etc/passwd\')"',
+          { masqueradeTaintLevel: 'hard' } as any,
+        )?.level,
+      ).toBe('critical');
+
+      expect(
+        checkExecBlacklist(
+          'ls2 /etc/passwd',
+          { masqueradeTaintLevel: 'hard' } as any,
+        )?.level,
+      ).toBe('critical');
+    });
+
+    it('should keep obviously read-only commands allowed during soft taint', () => {
+      expect(checkExecBlacklist('ls -la', { masqueradeTaintLevel: 'soft' } as any)).toBeNull();
+      expect(checkExecBlacklist('cat README.md', { masqueradeTaintLevel: 'soft' } as any)).toBeNull();
+    });
+  });
+
   describe('checkPathBlacklist', () => {
     it('should block /etc/passwd', () => {
       expect(checkPathBlacklist('/etc/passwd')?.level).toBe('critical');

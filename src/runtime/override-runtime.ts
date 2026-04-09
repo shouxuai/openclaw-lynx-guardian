@@ -99,6 +99,10 @@ export function inferBlacklistModules(toolName: string, reason: string): string[
     return ["M6:malicious_code"];
   }
 
+  if (normalizedReason.includes("masquerade") || normalizedReason.includes("command resolution shadowing")) {
+    return ["M3:over_agency"];
+  }
+
   const fileAccessKeywords = [
     "file",
     "directory",
