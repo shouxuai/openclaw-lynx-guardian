@@ -28,7 +28,8 @@ Prefer the plugin's `scheduledLynxCheck` config block, which keeps one native Op
     "cron": "0 9 * * *",
     "timezone": "Asia/Shanghai",
     "jobName": "Lynx Guardian Daily Check",
-    "announce": true
+    "announce": true,
+    "deliveryMode": "recent-active"
   }
 }
 ```
@@ -43,7 +44,9 @@ Common `cron` values:
 
 - The plugin writes one managed native cron job, so there are no duplicate daily checks.
 - The exact message `/lynx-check` reuses Lynx Guardian's existing manual detection path.
-- `announce` returns the produced report automatically instead of waiting for a later heartbeat turn.
+- `deliveryMode: "recent-active"` routes the produced report back to the most recently active supported chat session.
+- If the most recently active session is `webchat`, the report goes back to `webchat`; if the most recent session is Feishu, the report goes back to Feishu.
+- `announce` remains the fallback path when no recent active chat target can be reused.
 
 ## Heartbeat fallback
 
@@ -60,3 +63,4 @@ Use heartbeat only when the user explicitly prefers one shared periodic loop ove
 - Do not rely on natural-language paraphrases for the scheduled command when exact `/lynx-check` is available.
 - Do not create both heartbeat and cron schedules for the same daily check unless the user explicitly asks for both.
 - Do not hand-edit the managed cron job if changing plugin config is available.
+- Do not assume isolated cron sessions can find `webchat` automatically without the plugin remembering a recent active target.

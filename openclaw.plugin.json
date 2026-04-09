@@ -211,6 +211,12 @@
             "default": true,
             "description": "Whether the isolated cron run should announce its report automatically"
           },
+          "deliveryMode": {
+            "type": "string",
+            "enum": ["recent-active", "announce"],
+            "default": "recent-active",
+            "description": "How scheduled /lynx-check reports should be delivered. recent-active reuses the most recently active supported chat session; announce keeps the isolated session announce behavior."
+          },
           "storePath": {
             "type": "string",
             "description": "Optional override of the OpenClaw cron jobs.json path, useful for tests or non-default cron.store setups"

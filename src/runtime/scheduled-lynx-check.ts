@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, resolve } from "path";
+import type { ScheduledLynxDeliveryMode } from "./recent-active-delivery.js";
 
 export const SCHEDULED_LYNX_CHECK_JOB_ID = "lynx-guardian-scheduled-lynx-check";
 
@@ -10,6 +11,7 @@ export interface ScheduledLynxCheckConfig {
   timezone?: string;
   jobName?: string;
   announce?: boolean;
+  deliveryMode?: ScheduledLynxDeliveryMode;
   storePath?: string;
 }
 
@@ -61,6 +63,7 @@ export function resolveScheduledLynxCheckConfig(
       ? normalized.jobName.trim()
       : "Lynx Guardian Daily Check",
     announce: normalized.announce !== false,
+    deliveryMode: normalized.deliveryMode === "announce" ? "announce" : "recent-active",
     storePath: typeof normalized.storePath === "string" && normalized.storePath.trim().length > 0
       ? resolveStorePath(normalized.storePath)
       : undefined,

@@ -47,7 +47,10 @@ const MODULE_OVERRIDE_ELIGIBLE: Record<string, boolean> = {
   "M0:identity_verification":  true,
   "M2:protected_file_access":  true,
   // Self-modification / privilege escalation — configurable, default on
-  "M3:over_agency":            true,
+  "M2:plugin_integrity":       false,
+  "M3:over_agency":            false,
+  "M3:remote_access_control":  false,
+  "M3:system_availability":    false,
   // The following are always hard-deny
   "M1:prompt_injection":       false,
   "M2:system_prompt_extraction": false,

@@ -78,6 +78,14 @@ export function inferBlacklistModules(toolName: string, reason: string): string[
     return ["M2:protected_file_access"];
   }
 
+  if (normalizedReason.includes("ssh remote login control")) {
+    return ["M3:remote_access_control"];
+  }
+
+  if (normalizedReason.includes("system availability shutdown/reboot")) {
+    return ["M3:system_availability"];
+  }
+
   const hardDenyExecutionKeywords = [
     "download and execute",
     "remote code execution",
@@ -89,6 +97,10 @@ export function inferBlacklistModules(toolName: string, reason: string): string[
 
   if (hardDenyExecutionKeywords.some((keyword) => normalizedReason.includes(keyword))) {
     return ["M6:malicious_code"];
+  }
+
+  if (normalizedReason.includes("masquerade") || normalizedReason.includes("command resolution shadowing")) {
+    return ["M3:over_agency"];
   }
 
   const fileAccessKeywords = [

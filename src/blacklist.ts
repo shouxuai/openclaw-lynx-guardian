@@ -1,13 +1,45 @@
+import { findObfuscatedSystemAuthPath } from "./path-glob-protection.js";
+
 export type BlacklistMatch = {
   level: "critical" | "warning";
   pattern: string;
   reason: string;
 };
 
+export interface CheckExecBlacklistContext {
+  masqueradeTaintLevel?: "soft" | "hard";
+}
+
 interface Rule {
   pattern: RegExp;
   reason: string;
 }
+
+const PROTECTED_UNIX_TARGET = String.raw`\/(?:etc\/(?:passwd|shadow|sudoers)|boot(?:\/[^\n\r'"]*)?|bin(?:\/[^\n\r'"]*)?|sbin(?:\/[^\n\r'"]*)?|usr(?:\/[^\n\r'"]*)?|var(?:\/[^\n\r'"]*)?)`;
+const PROTECTED_WINDOWS_TARGET =
+  String.raw`[A-Za-z]:\\+(?:Windows|Program Files(?:\s\(x86\))?|ProgramData|Boot)(?:\\+[^\n\r'"]*)?`;
+const PROTECTED_AUTH_TARGET =
+  String.raw`(?:\/etc\/(?:passwd|shadow|sudoers)|[A-Za-z]:\\+Windows\\+System32\\+config\\+(?:SAM|SECURITY|SYSTEM))`;
+const INLINE_PROTECTED_TARGET = String.raw`(?:${PROTECTED_UNIX_TARGET}|${PROTECTED_WINDOWS_TARGET})`;
+const INLINE_QUOTE = String.raw`(?:['"]|\\['"])`;
+
+const INLINE_NODE_FILE_OP =
+  String.raw`(?:\b(?:unlinkSync|writeFileSync|appendFileSync|rmSync|rmdirSync)\s*\(\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\brenameSync\s*\(\s*[^,\n\r]+,\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE})`;
+const INLINE_PYTHON_FILE_OP =
+  String.raw`(?:\b(?:os\.(?:remove|unlink)|shutil\.rmtree)\s*\(\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\b(?:os\.rename|shutil\.move)\s*\(\s*[^,\n\r]+,\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\bopen\s*\(\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}\s*,\s*${INLINE_QUOTE}[^'"]*[wa+][^'"]*${INLINE_QUOTE}|\bpathlib\.Path\s*\(\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}\s*\)\s*\.\s*(?:write_text|write_bytes)\b)`;
+const INLINE_PERL_FILE_OP =
+  String.raw`(?:\bunlink\s*(?:\(\s*)?${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\bopen\b[^\n\r]*${INLINE_QUOTE}(?:>|>>|\+>|[wa]\+?)${INLINE_QUOTE}[^\n\r]*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\bsysopen\b[^\n\r]*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}[^\n\r]*\b(?:O_WRONLY|O_RDWR|O_APPEND|O_TRUNC|O_CREAT)\b|\brename\s*(?:\(\s*)?[^,\n\r]+,\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\bremove_tree\s*(?:\(\s*)?${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE})`;
+const INLINE_RUBY_FILE_OP =
+  String.raw`(?:\b(?:File\.(?:delete|unlink|write)|FileUtils\.rm_rf)\s*\(\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\b(?:File\.rename|FileUtils\.mv)\s*\(\s*[^,\n\r]+,\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}|\bFile\.open\s*\(\s*${INLINE_QUOTE}${INLINE_PROTECTED_TARGET}${INLINE_QUOTE}\s*,\s*${INLINE_QUOTE}[^'"]*[wa+][^'"]*${INLINE_QUOTE})`;
+const INLINE_INTERPRETER_FILE_OP =
+  String.raw`(?:${INLINE_NODE_FILE_OP}|${INLINE_PYTHON_FILE_OP}|${INLINE_PERL_FILE_OP}|${INLINE_RUBY_FILE_OP})`;
+
+const WRAPPED_SHELL_HANDOFF = String.raw`(?:sh\s+-c|bash\s+-c|bash\s+-lc|cmd(?:\.exe)?\s+\/[cr]|powershell(?:\.exe)?(?:\s+-\S+)*\s+-Command|pwsh(?:\.exe)?(?:\s+-\S+)*\s+-Command)`;
+
+const WRAPPED_DANGEROUS_PAYLOAD = String.raw`(?:rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+\/|curl\b[^\n\r]*\|\s*(?:bash|sh)\b|wget\b[^\n\r]*\|\s*(?:bash|sh)\b|(?:iwr|Invoke-WebRequest)\b[^\n\r]*\|\s*(?:iex|Invoke-Expression)\b|(?:>>?|(?:echo|tee)\b[^\n\r]*>>?)\s*(?:${PROTECTED_AUTH_TARGET})|(?:nc\b[^\n\r]*\s-e\s+|ncat\b[^\n\r]*--(?:exec|sh-exec)\b|socat\b[^\n\r]*\bexec\b|\/dev\/tcp\/|New-Object\s+[^\n\r]*TCPClient)|--privileged\b|(?:-v|--volume)\s*\/:\s*\/host\b|nsenter\b|chroot\s+\/host\b|Remove-Item\b[^\n\r]*(?:-Recurse|-r)\b[^\n\r]*${PROTECTED_WINDOWS_TARGET}|del\s+\/[fFsS][^\n\r]*${PROTECTED_WINDOWS_TARGET}|Start-Process\b[^\n\r]*-Verb\s+RunAs\b|\b(?:shutdown(?:\.exe)?|reboot|poweroff|halt|Restart-Computer|Stop-Computer)\b|\binit\s+[06]\b|\bsystemctl\s+(?:reboot|poweroff)\b|\bsystemctl\s+(?:start|stop|restart|enable|disable)\s+sshd\b|\bservice\s+ssh\s+(?:start|stop|restart)\b|\b(?:Start-Service|Stop-Service|Restart-Service|Set-Service)\s+sshd\b|\bsc(?:\.exe)?\s+(?:start|stop|config)\s+sshd\b|(?:>>?|tee|sed\s+-i|Set-Content|Add-Content|Out-File)[^\n\r]*\/etc\/ssh\/sshd_config\b|${INLINE_INTERPRETER_FILE_OP})`;
+const MASQUERADE_SOURCE_EXEC = String.raw`(?:\/(?:usr\/)?bin\/)?(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|curl|wget|nc|ncat|socat)\b`;
+const KNOWN_EXECUTABLE_PREFIX =
+  /^(?:git|cat|head|tail|less|more|grep|ls|stat|file|wc|du|df|which|whereis|type|id|whoami|hostname|uname|date|uptime|Get-ChildItem|gci|Get-Location|pwd|Get-Item|gi|dir|apt|dpkg|pip|npm|node|python[23]?|perl|ruby|powershell(?:\.exe)?|pwsh(?:\.exe)?|cmd(?:\.exe)?|docker|podman|kubectl|ssh|osascript|mshta|curl|wget|nc|ncat|socat)\b/i;
 
 const CRITICAL_EXEC: Rule[] = [
   {
@@ -52,12 +84,16 @@ const CRITICAL_EXEC: Rule[] = [
     pattern: /(?:>>?|Set-Content|Add-Content|Out-File)\s+[A-Za-z]:\\Windows\\System32\\config\\(?:SAM|SECURITY|SYSTEM)\b/i,
     reason: "write to system auth file",
   },
-  { pattern: /\b(?:shutdown|reboot)\b/, reason: "system shutdown/reboot" },
-  { pattern: /\b(?:Restart-Computer|Stop-Computer)\b/i, reason: "system shutdown/reboot" },
-  { pattern: /\binit\s+[06]\b/, reason: "system halt/reboot (init)" },
-  { pattern: /systemctl\s+(?:stop|disable)\s+sshd/, reason: "disable SSH (remote lockout)" },
-  { pattern: /\bsc(?:\.exe)?\s+(?:stop|config)\s+sshd\b.*(?:disabled)?/i, reason: "disable SSH (remote lockout)" },
-  { pattern: /\b(?:Stop-Service|Set-Service)\s+sshd\b.*(?:Disabled)?/i, reason: "disable SSH (remote lockout)" },
+  { pattern: /\b(?:shutdown(?:\.exe)?|reboot|poweroff|halt)\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\b(?:Restart-Computer|Stop-Computer)\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\binit\s+[06]\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\bsystemctl\s+(?:reboot|poweroff)\b/i, reason: "system availability shutdown/reboot" },
+  { pattern: /\bsystemctl\s+(?:start|stop|restart|enable|disable)\s+sshd\b/i, reason: "ssh remote login control" },
+  { pattern: /\bservice\s+ssh\s+(?:start|stop|restart)\b/i, reason: "ssh remote login control" },
+  { pattern: /\b(?:Start-Service|Stop-Service|Restart-Service|Set-Service)\s+sshd\b/i, reason: "ssh remote login control" },
+  { pattern: /\bsc(?:\.exe)?\s+(?:start|stop|config)\s+sshd\b/i, reason: "ssh remote login control" },
+  { pattern: /(?:>>?|tee|sed\s+-i|Set-Content|Add-Content|Out-File)[^\n\r]*\/etc\/ssh\/sshd_config\b/i, reason: "ssh remote login control" },
+  { pattern: /\b(?:unlink|remove_tree|write(?:FileSync)?|append(?:FileSync)?|rename(?:Sync)?|File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|os\.(?:remove|unlink|rename)|shutil\.(?:move|rmtree)|pathlib\.Path\s*\([^)]*\)\s*\.\s*write_(?:text|bytes)|open\s*\()[^\n\r]*\/etc\/ssh\/sshd_config\b/i, reason: "ssh remote login control" },
   { pattern: /\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
   { pattern: /\/usr\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
   { pattern: /\beval\s+.*\b(base64|curl|wget|nc\b|bash\s+-i|\/dev\/tcp)/, reason: "eval with suspicious payload" },
@@ -65,6 +101,10 @@ const CRITICAL_EXEC: Rule[] = [
     pattern:
       /\bnode\s+(-e|--eval)\s+.*\b(child_process|\.exec\s*\(|\.spawn\s*\(|\.execSync\s*\(|\.spawnSync\s*\()/,
     reason: "node -e with subprocess execution",
+  },
+  {
+    pattern: new RegExp(String.raw`\bnode\s+(-e|--eval)\s+.*${INLINE_NODE_FILE_OP}`, "i"),
+    reason: "node -e with dangerous fs op on protected system target",
   },
   {
     pattern:
@@ -95,6 +135,10 @@ const CRITICAL_EXEC: Rule[] = [
     reason: "python -c with dangerous system call",
   },
   {
+    pattern: new RegExp(String.raw`\bpython[23]?\s+(-c|--command)\s+.*${INLINE_PYTHON_FILE_OP}`, "i"),
+    reason: "python -c with dangerous fs op on protected system target",
+  },
+  {
     pattern: /\bpython[23]?\s+(-c|--command)\s+.*\bopen\s*\(\s*['"]\/etc\//,
     reason: "python -c writing to system config",
   },
@@ -116,7 +160,7 @@ const CRITICAL_EXEC: Rule[] = [
     reason: "python -c with exec/eval containing dangerous module",
   },
   {
-    pattern: /\bperl\s+(-e|--eval)\s+.*\b(system\s*\(|exec\s*\(|unlink\s+['"]\/(?!tmp\/))/,
+    pattern: new RegExp(String.raw`\bperl\b[^\n\r]*\s(-e|--eval)\s+.*(?:\b(system\s*\(|exec\s*\()|${INLINE_PERL_FILE_OP})`, "i"),
     reason: "perl -e with dangerous system call",
   },
   {
@@ -124,7 +168,7 @@ const CRITICAL_EXEC: Rule[] = [
     reason: "perl -e with network socket (IO::Socket)",
   },
   {
-    pattern: /\bruby\s+(-e|--eval)\s+.*\b(system\s*\(|exec\s*\(|File\.delete|FileUtils\.rm_rf)/,
+    pattern: new RegExp(String.raw`\bruby\s+(-e|--eval)\s+.*(?:\b(system\s*\(|exec\s*\()|${INLINE_RUBY_FILE_OP})`, "i"),
     reason: "ruby -e with dangerous system call",
   },
   {
@@ -308,6 +352,110 @@ const SAFE_EXEC: RegExp[] = [
   /^(?:npm|npx|yarn|pnpm)\s+(?:run|test|start|build|dev|lint|format)\b/,
 ];
 
+const EXECUTABLE_MASQUERADE_SETUP: Rule[] = [
+  {
+    pattern: new RegExp(String.raw`\b(?:cp|copy|mv|move)\b[^\n\r]*${MASQUERADE_SOURCE_EXEC}`, "i"),
+    reason: "executable masquerade setup via copy/rename",
+  },
+  {
+    pattern: new RegExp(String.raw`\bln\s+-s\b[^\n\r]*${MASQUERADE_SOURCE_EXEC}`, "i"),
+    reason: "executable masquerade setup via copy/rename",
+  },
+  {
+    pattern: /(?:^|\s)alias\s+\w+=["'][^"']*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i,
+    reason: "executable masquerade setup via alias remap",
+  },
+  {
+    pattern: /(?:^|\s)(?:function\s+\w+\s*\{|\w+\s*\(\)\s*\{)[^\n\r]*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i,
+    reason: "executable masquerade setup via function remap",
+  },
+  {
+    pattern: /(?:^|\s)Set-Alias\s+\w+\s+\S+/i,
+    reason: "executable masquerade setup via function remap",
+  },
+];
+
+const EXECUTABLE_MASQUERADE_HINT: Rule[] = [
+  {
+    pattern: /(?:^|\s)(?:export\s+PATH=|set\s+PATH=|\$env:PATH\s*=)/i,
+    reason: "command resolution shadowing via PATH precedence change",
+  },
+  {
+    pattern: /(?:^|\s)(?:set\s+PATHEXT=|\$env:(?:PATHEXT|PSModulePath)\s*=)/i,
+    reason: "command resolution shadowing via executable resolution override",
+  },
+];
+
+const WRAPPED_CRITICAL_EXEC: Rule[] = [
+  {
+    pattern: new RegExp(
+      String.raw`\b(?:docker|podman)\s+(?:exec|run)\b(?=.*(?:` +
+        WRAPPED_SHELL_HANDOFF +
+        String.raw`|--privileged\b|(?:-v|--volume)\s*\/:\s*\/host\b|nsenter\b|chroot\s+\/host\b))(?=.*` +
+        WRAPPED_DANGEROUS_PAYLOAD +
+        String.raw`)`,
+      "i",
+    ),
+    reason: "dangerous payload tunneled through container wrapper",
+  },
+  {
+    pattern: new RegExp(
+      String.raw`\bdocker\s+compose\s+(?:exec|run)\b(?=.*(?:` +
+        WRAPPED_SHELL_HANDOFF +
+        String.raw`|--privileged\b|(?:-v|--volume)\s*\/:\s*\/host\b|nsenter\b|chroot\s+\/host\b))(?=.*` +
+        WRAPPED_DANGEROUS_PAYLOAD +
+        String.raw`)`,
+      "i",
+    ),
+    reason: "dangerous payload tunneled through container wrapper",
+  },
+  {
+    pattern: new RegExp(
+      String.raw`\bkubectl\s+(?:exec|run)\b(?=.*--\s*(?:sh\s+-c|bash\s+-c|bash\s+-lc)\b)(?=.*` +
+        WRAPPED_DANGEROUS_PAYLOAD +
+        String.raw`)`,
+      "i",
+    ),
+    reason: "dangerous payload tunneled through kubectl wrapper",
+  },
+  {
+    pattern: new RegExp(
+      String.raw`\bkubectl\s+debug\b(?=.*` + WRAPPED_DANGEROUS_PAYLOAD + String.raw`)`,
+      "i",
+    ),
+    reason: "dangerous payload tunneled through kubectl wrapper",
+  },
+  {
+    pattern: new RegExp(
+      String.raw`\bosascript\b(?=.*(?:do\s+shell\s+script|tell\s+application\s+"(?:Terminal|iTerm)"))(?=.*` +
+        WRAPPED_DANGEROUS_PAYLOAD +
+        String.raw`)`,
+      "i",
+    ),
+    reason: "dangerous payload tunneled through AppleScript shell bridge",
+  },
+  {
+    pattern: new RegExp(
+      String.raw`\bssh\b(?=.*['"].*` + WRAPPED_DANGEROUS_PAYLOAD + String.raw`.*['"])`,
+      "i",
+    ),
+    reason: "dangerous payload tunneled through remote shell wrapper",
+  },
+  {
+    pattern: new RegExp(
+      String.raw`\b(?:cmd(?:\.exe)?\s+\/[cr]|powershell(?:\.exe)?(?:\s+-\S+)*\s+-Command|pwsh(?:\.exe)?(?:\s+-\S+)*\s+-Command)\b(?=.*` +
+        WRAPPED_DANGEROUS_PAYLOAD +
+        String.raw`)`,
+      "i",
+    ),
+    reason: "dangerous payload tunneled through Windows command host",
+  },
+  {
+    pattern: /\bmshta\b\s+(?:https?:\/\/\S+|javascript:|vbscript:)/i,
+    reason: "dangerous payload tunneled through Windows script host",
+  },
+];
+
 function isQuotedOrCommented(text: string, matchIndex: number): boolean {
   const before = text.slice(0, matchIndex);
   const doubleQuotes = (before.match(/"/g) || []).length;
@@ -375,8 +523,62 @@ function splitCommand(cmd: string): string[] {
   return segments.filter(Boolean);
 }
 
-export function checkExecBlacklist(command: string): BlacklistMatch | null {
+function hasDangerousTaintStructure(segment: string): boolean {
+  return (
+    /(?:^|\s)(?:-c|--command|--eval|-e|\/c|\/r|-Command)\b/i.test(segment) ||
+    /\/etc\/(?:passwd|shadow|sudoers)\b/i.test(segment) ||
+    /[A-Za-z]:\\Windows\\System32\\config\\(?:SAM|SECURITY|SYSTEM)\b/i.test(segment) ||
+    /[><]/.test(segment) ||
+    /\|\s*(?:bash|sh|zsh|dash|pwsh|powershell|cmd|iex|Invoke-Expression)\b/i.test(segment) ||
+    new RegExp(WRAPPED_SHELL_HANDOFF, "i").test(segment)
+  );
+}
+
+function isClearlyReadOnlySafeSegment(segment: string): boolean {
+  return SAFE_EXEC.some((re) => re.test(segment)) && !hasDangerousTaintStructure(segment);
+}
+
+function shouldShortCircuitSafeExec(
+  segment: string,
+  context?: CheckExecBlacklistContext,
+): boolean {
+  if (!SAFE_EXEC.some((re) => re.test(segment))) return false;
+  if (!context?.masqueradeTaintLevel) return true;
+  return isClearlyReadOnlySafeSegment(segment);
+}
+
+function matchTaintedUnknownExec(
+  segment: string,
+  context?: CheckExecBlacklistContext,
+): BlacklistMatch | null {
+  if (!context?.masqueradeTaintLevel) return null;
+
+  const trimmed = segment.trim();
+  const token = trimmed.split(/\s+/, 1)[0];
+  if (!token || KNOWN_EXECUTABLE_PREFIX.test(token)) return null;
+  if (!hasDangerousTaintStructure(trimmed)) return null;
+
+  return {
+    level: context.masqueradeTaintLevel === "hard" ? "critical" : "warning",
+    pattern: "tainted-unknown-exec",
+    reason: "tainted session: untrusted executable name with dangerous execution structure",
+  };
+}
+
+export function checkExecBlacklist(
+  command: string,
+  context?: CheckExecBlacklistContext,
+): BlacklistMatch | null {
   if (!command) return null;
+
+  const obfuscatedSystemAuthPath = findObfuscatedSystemAuthPath(command);
+  if (obfuscatedSystemAuthPath) {
+    return {
+      level: "critical",
+      pattern: obfuscatedSystemAuthPath.token,
+      reason: "obfuscated or statically assembled access to system auth file",
+    };
+  }
 
   const pipeAttacks: Rule[] = [
     {
@@ -447,7 +649,11 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
   ];
 
   const fullMatch =
-    matchRules(command, pipeAttacks, "critical") ?? matchRules(command, chainAttacks, "critical");
+    matchRules(command, pipeAttacks, "critical") ??
+    matchRules(command, chainAttacks, "critical") ??
+    matchRules(command, WRAPPED_CRITICAL_EXEC, "critical") ??
+    matchRules(command, EXECUTABLE_MASQUERADE_SETUP, "critical") ??
+    matchRules(command, EXECUTABLE_MASQUERADE_HINT, "warning");
   if (fullMatch) return fullMatch;
 
   const segments = splitCommand(command);
@@ -469,7 +675,10 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
     const override = matchRules(segment, criticalOverride, "critical");
     if (override) return override;
 
-    if (SAFE_EXEC.some((re) => re.test(segment))) continue;
+    const taintedUnknown = matchTaintedUnknownExec(segment, context);
+    if (taintedUnknown) return taintedUnknown;
+
+    if (shouldShortCircuitSafeExec(segment, context)) continue;
 
     const match =
       matchRules(segment, CRITICAL_EXEC, "critical") ?? matchRules(segment, WARNING_EXEC, "warning");

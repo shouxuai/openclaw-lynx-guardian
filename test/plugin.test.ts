@@ -11,6 +11,7 @@ import * as securityAuditRunner from '../src/runtime/security-audit-runner.js';
 import * as skillGuard from '../src/skills/skill-guard.js';
 import * as safetyGuard from '../src/guard/safety-guard.js';
 import * as blacklist from '../src/blacklist.js';
+import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
@@ -53,6 +54,7 @@ describe('Plugin Setup', () => {
   const pendingDiscoveryRequestPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.request.json');
   const hookProbeLogPath = join(openclawHome, '.openclaw', 'lynx', 'hook-probe.log');
   const scheduledCronStorePath = join(process.cwd(), 'test-temp', 'plugin-scheduled-lynx-check', 'jobs.json');
+  const recentActiveDeliveryPath = join(openclawHome, '.openclaw', 'lynx', 'recent-active-delivery.json');
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -70,6 +72,10 @@ describe('Plugin Setup', () => {
     if (existsSync(hookProbeLogPath)) {
       rmSync(hookProbeLogPath, { force: true });
     }
+    if (existsSync(recentActiveDeliveryPath)) {
+      rmSync(recentActiveDeliveryPath, { force: true });
+    }
+    recentActiveDelivery.resetRecentActiveDeliveryTargets(recentActiveDeliveryPath);
     if (existsSync(scheduledCronStorePath)) {
       rmSync(scheduledCronStorePath, { force: true });
     }
@@ -302,17 +308,41 @@ describe('Plugin Setup', () => {
     expect(api.checkTool).not.toHaveBeenCalled();
   });
 
+  it('should allow trusted plugin-subsystem healthcheck reads during scheduled Lynx runs', async () => {
+    setup(mockApi);
+    const handler = handlers['before_tool_call'];
+
+    const healthcheckSkillRead = await handler(
+      {
+        toolName: 'read',
+        params: { path: '/opt/homebrew/lib/node_modules/openclaw/skills/healthcheck/SKILL.md' },
+      },
+      {
+        sessionKey: 'sess-scheduled-lynx',
+        subsystem: 'plugins',
+      },
+    );
+    expect(healthcheckSkillRead).toBeUndefined();
+
+    const dailyMemoryRead = await handler(
+      {
+        toolName: 'read',
+        params: { path: '/Users/wuyu/.openclaw/workspace/memory/2026-04-08.md' },
+      },
+      {
+        sessionKey: 'sess-scheduled-lynx',
+        subsystem: 'plugins',
+      },
+    );
+    expect(dailyMemoryRead).toBeUndefined();
+  });
+
   it('should allow one-time override for local tool guard on the next identical retry only', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         policy: {
           confirmationPhrase: '纭鏀捐鏈鎿嶄綔',
-          allowOneTimeOverrideLevels: ['L3'],
-          moduleOverrides: {
-            M3: {
-              allowOneTimeOverride: true,
-            },
-          },
+          allowOneTimeOverrideLevels: ['L4'],
         },
       },
     };
@@ -323,11 +353,11 @@ describe('Plugin Setup', () => {
       block: true,
       blockReason: '[Lynx Guardian] blocked local tool',
       riskAssessment: {
-        level: 'L3',
-        score: 7,
-        modules: ['M3:over_agency'],
-        description: 'over-agency tool attempt',
-        action: 'block',
+        level: 'L4',
+        score: 9,
+        modules: ['M2:protected_file_access'],
+        description: 'protected file tool attempt',
+        action: 'deny',
       },
     });
 
@@ -356,6 +386,39 @@ describe('Plugin Setup', () => {
     expect(third).toBeUndefined();
 
 
+
+    expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
+  it('should not open pending override flow for hard-lock tool modules', async () => {
+    setup(mockApi);
+    const toolHandler = handlers['before_tool_call'];
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
+      block: true,
+      blockReason: '[Lynx Guardian] hard lock',
+      riskAssessment: {
+        level: 'L4',
+        score: 9,
+        modules: ['M2:plugin_integrity'],
+        description: 'plugin integrity lock',
+        action: 'deny',
+      },
+    });
+
+    const event = {
+      toolName: 'write',
+      params: {
+        file_path: 'C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian\\src\\blacklist.ts',
+      },
+    };
+
+    const first = await toolHandler(event, { sessionKey: 'sess-hard-lock' });
+    expect(first).toEqual({
+      block: true,
+      blockReason: '[Lynx Guardian] hard lock',
+    });
+    expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
 
     expect(api.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
@@ -629,6 +692,96 @@ describe('Plugin Setup', () => {
     expect(report).toContain('Skill');
     expect(report).toContain('OpenClaw');
     expect(report.lastIndexOf('OpenClaw')).toBeGreaterThan(report.lastIndexOf('Skill'));
+  });
+
+  it('should route scheduled /lynx-check report to the most recent webchat session', async () => {
+    setup(mockApi);
+    const messageHandler = handlers['message_received'];
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const recentWebchatSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await messageHandler(
+      { content: 'just keep this webchat session active' },
+      {
+        sessionKey: 'sess-webchat-recent',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        sendMessage: recentWebchatSendMessage,
+      },
+    );
+
+    await beforeAgentStart(
+      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-scheduled-recent-webchat',
+        subsystem: 'plugins',
+      },
+    );
+
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: 'scheduled lynx run finished' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-scheduled-recent-webchat',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(recentWebchatSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+      }),
+    );
+  });
+
+  it('should route scheduled /lynx-check report to the most recent Feishu session', async () => {
+    setup(mockApi);
+    const messageHandler = handlers['message_received'];
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const recentFeishuSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await messageHandler(
+      { content: 'keep this feishu session active' },
+      {
+        sessionKey: 'sess-feishu-recent',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        sendMessage: recentFeishuSendMessage,
+      },
+    );
+
+    await beforeAgentStart(
+      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-scheduled-recent-feishu',
+        subsystem: 'plugins',
+      },
+    );
+
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: 'scheduled lynx run finished' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-scheduled-recent-feishu',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(recentFeishuSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+      }),
+    );
   });
 
   it('should trigger discovery reply on /check and send result messages', async () => {

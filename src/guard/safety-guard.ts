@@ -8,6 +8,11 @@
 
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
+import {
+  findObfuscatedLynxPluginPath,
+  findObfuscatedProtectedReferenceLabels,
+  findObfuscatedSystemAuthPath,
+} from "../path-glob-protection.js";
 
 // ── Risk Levels ────────────────────────────────────────────────────
 
@@ -31,12 +36,16 @@ export interface GuardDecision {
     confirmationPhrase?: string;
     reason?: string;
   };
+  contextHints?: {
+    masqueradeTaintLevel?: ExecMasqueradeLevel;
+  };
 }
 
 export interface GuardContext {
   verifiedOwner?: boolean;
   requesterId?: string;
   channel?: string;
+  trustedInternalProtectedRead?: boolean;
 }
 
 interface IdentityDetectionResult {
@@ -49,6 +58,14 @@ interface IdentityDetectionResult {
 interface ProtectedFileAccessResult {
   matchedFiles: string[];
   operation: "read" | "write" | "unknown";
+}
+
+type ExecMasqueradeLevel = "soft" | "hard";
+
+interface ExecMasqueradeState {
+  level: ExecMasqueradeLevel;
+  expiresAt: number;
+  reasons: string[];
 }
 
 // ── Weighted Scoring Infrastructure ───────────────────────────────
@@ -113,10 +130,14 @@ function levelToAction(level: RiskLevel): "allow" | "log" | "warn" | "block" | "
 
 // Instant deny: bypass scoring, always L4
 function buildInstantDeny(moduleId: string, reason: string): GuardDecision {
+  return buildInstantDenyForModules([moduleId], reason);
+}
+
+function buildInstantDenyForModules(moduleIds: string[], reason: string): GuardDecision {
   const assessment: RiskAssessment = {
     level: "L4",
     score: 10,
-    modules: [moduleId],
+    modules: moduleIds,
     action: "deny",
     description: reason,
   };
@@ -157,6 +178,7 @@ interface SessionState {
   lastTopicCategory: string;
   lastActiveTime: number;
   operationHistory: OperationCategory[];  // last N operation categories for sequence detection
+  execMasquerade?: ExecMasqueradeState;
 }
 
 const SESSION_MAX_SIZE = 1000;
@@ -191,6 +213,7 @@ function getSessionState(sessionKey: string): SessionState {
       lastTopicCategory: "normal",
       lastActiveTime: Date.now(),
       operationHistory: [],
+      execMasquerade: undefined,
     };
     sessionStates.set(sessionKey, state);
   } else {
@@ -203,6 +226,7 @@ function getSessionState(sessionKey: string): SessionState {
 // workflow retries, NOT escalating attack attempts.
 const REJECTION_TRACKING_EXEMPT = new Set([
   "M0:identity_verification",
+  "M2:plugin_integrity",
   "M2:protected_file_access",
   "M3:over_agency",
 ]);
@@ -215,7 +239,7 @@ const OPERATION_HISTORY_MAX = 8;
 function inferOperationCategory(modules: string[]): OperationCategory {
   if (modules.includes("M7:pipe_execution")) return "pipe_exec";
   if (modules.some((m) => m.includes("credential"))) return "credential_access";
-  if (modules.includes("M2:protected_file_access")) return "file_access";
+  if (modules.includes("M2:plugin_integrity") || modules.includes("M2:protected_file_access")) return "file_access";
   if (modules.includes("M7:wildcard_obfuscation")) return "obfuscated_path";
   if (modules.includes("fatal_triangle")) return "external_output";
   if (modules.includes("sensitive_dir_entry")) return "sensitive_dir_entry";
@@ -389,6 +413,71 @@ const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
   /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)/i,
 ];
 
+const LYNX_PLUGIN_ROOT_PATTERNS: RegExp[] = [
+  /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$)/i,
+];
+
+const LYNX_PLUGIN_CACHE_PATTERNS: RegExp[] = [
+  /(?:^|[\\/])\.cache(?:[\\/]|$)/i,
+  /(?:^|[\\/])tmp(?:[\\/]|$)/i,
+  /(?:^|[\\/])temp(?:[\\/]|$)/i,
+  /\.tmp$/i,
+  /\.log$/i,
+];
+
+const MUTATING_TOOL_PATTERNS: RegExp[] = [
+  /\b(?:write|edit|modify|update|append|overwrite|rewrite|rename|move|delete|remove|unlink|rm|mv|cp|copy|tee|touch)\b/i,
+  /\b(?:Remove-Item|Move-Item|Copy-Item|Rename-Item|Set-Content|Add-Content|Out-File|New-Item)\b/i,
+  /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
+  /\b(?:os\.(?:remove|unlink|rename)|shutil\.(?:move|rmtree)|pathlib\.Path\s*\([^)]*\)\s*\.\s*write_(?:text|bytes))\b/i,
+  /\b(?:File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|remove_tree)\b/i,
+  /\bopen\s*\([^)]*,\s*['"][^'"]*[wa+][^'"]*['"]\)/i,
+  /sed\s+-i/i,
+  />>?/,
+];
+
+function normalizeGuardPath(text: string): string {
+  return text.replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function extractPluginTargets(text: string): string[] {
+  const matches = text.match(/(?:^|[^\w])\.openclaw\/extensions\/openclaw-lynx-guardian(?:\/[^\s"'`;)]+)*/ig);
+  if (!matches) return [];
+  return matches.map((match) => match.replace(/^[^./]+/, ""));
+}
+
+function detectPluginIntegrityViolation(text: string, toolName?: string): boolean {
+  const normalized = normalizeGuardPath(text);
+  const directPluginTarget = LYNX_PLUGIN_ROOT_PATTERNS.some((pattern) => pattern.test(normalized));
+  const obfuscatedPluginTarget = findObfuscatedLynxPluginPath(normalized) !== null;
+
+  if (!directPluginTarget && !obfuscatedPluginTarget) {
+    return false;
+  }
+
+  if (obfuscatedPluginTarget) {
+    if (toolName === "write" || toolName === "edit") {
+      return true;
+    }
+    return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(text));
+  }
+
+  const pluginTargets = extractPluginTargets(normalized);
+  const nonCacheTargets = pluginTargets.filter(
+    (target) => !LYNX_PLUGIN_CACHE_PATTERNS.some((pattern) => pattern.test(target)),
+  );
+
+  if (nonCacheTargets.length === 0) {
+    return false;
+  }
+
+  if (toolName === "write" || toolName === "edit") {
+    return true;
+  }
+
+  return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFileAccessResult {
   const matchedFiles: string[] = [];
   for (const { pattern, label } of PROTECTED_FILE_PATTERNS) {
@@ -396,6 +485,8 @@ function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFi
       matchedFiles.push(label);
     }
   }
+
+  matchedFiles.push(...findObfuscatedProtectedReferenceLabels(text));
 
   if (matchedFiles.length === 0) {
     return { matchedFiles: [], operation: "unknown" };
@@ -478,6 +569,69 @@ function detectOverAgency(text: string): string[] {
 // Not a blocking signal on its own — only adds "sensitive_dir_entry" to
 // operationHistory for sequence detection.
 
+function detectExecMasqueradeSetup(text: string): string[] {
+  const matched: string[] = [];
+  if (/\b(?:cp|copy|mv|move)\b[^\n\r]*(?:\/(?:usr\/)?bin\/)?(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|curl|wget|nc|ncat|socat)\b/i.test(text)) {
+    matched.push("binary_copy_or_rename");
+  }
+  if (/\bln\s+-s\b[^\n\r]*(?:\/(?:usr\/)?bin\/)?(?:sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)\b/i.test(text)) {
+    matched.push("symlink_remap");
+  }
+  if (/(?:^|\s)alias\s+\w+=["'][^"']*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i.test(text)) {
+    matched.push("alias_remap");
+  }
+  if (/(?:^|\s)(?:function\s+\w+\s*\{|\w+\s*\(\)\s*\{)[^\n\r]*(?:cat|less|more|head|tail|sh|bash|zsh|dash|python(?:3)?|node|perl|ruby|powershell|pwsh)\b/i.test(text)) {
+    matched.push("function_remap");
+  }
+  if (/(?:^|\s)Set-Alias\s+\w+\s+\S+/i.test(text)) {
+    matched.push("function_remap");
+  }
+  return matched;
+}
+
+function detectExecMasqueradeHint(text: string): string[] {
+  const matched: string[] = [];
+  if (/(?:^|\s)(?:export\s+PATH=|set\s+PATH=|\$env:PATH\s*=)/i.test(text)) {
+    matched.push("path_shadowing");
+  }
+  if (/(?:^|\s)(?:set\s+PATHEXT=|\$env:(?:PATHEXT|PSModulePath)\s*=)/i.test(text)) {
+    matched.push("exec_resolution_override");
+  }
+  return matched;
+}
+
+function getActiveExecMasqueradeLevel(sessionKey?: string): ExecMasqueradeLevel | undefined {
+  if (!sessionKey) return undefined;
+  const state = getSessionState(sessionKey);
+  if (!state.execMasquerade) return undefined;
+  if (Date.now() > state.execMasquerade.expiresAt) {
+    delete state.execMasquerade;
+    return undefined;
+  }
+  return state.execMasquerade.level;
+}
+
+function updateExecMasqueradeState(
+  sessionKey: string | undefined,
+  requestedLevel: ExecMasqueradeLevel,
+  reasons: string[],
+): ExecMasqueradeLevel {
+  if (!sessionKey) return requestedLevel;
+
+  const state = getSessionState(sessionKey);
+  const existing = getActiveExecMasqueradeLevel(sessionKey);
+  const nextLevel: ExecMasqueradeLevel =
+    existing === "hard" || requestedLevel === "hard" ? "hard" : "soft";
+
+  state.execMasquerade = {
+    level: nextLevel,
+    expiresAt: Date.now() + (nextLevel === "hard" ? 30 * 60 * 1000 : 10 * 60 * 1000),
+    reasons: Array.from(new Set([...(state.execMasquerade?.reasons ?? []), ...reasons])),
+  };
+
+  return nextLevel;
+}
+
 function detectSensitiveDirEntry(text: string): boolean {
   // cd or pushd or Set-Location targeting sensitive directories
   return /(?:^|\s|&&|\|)(?:cd|pushd|Set-Location|sl)\s+["']?(?:~[/\\](?:\.ssh|\.aws|\.gnupg|\.openclaw|\.config)|\/etc|C:\\Windows\\System32|%SystemRoot%)/i.test(text) ||
@@ -499,6 +653,12 @@ function detectWildcardObfuscation(text: string): boolean {
 }
 
 // ── M7: Pipe Shell Execution Detection ────────────────────────────
+
+function detectPathObfuscation(text: string): boolean {
+  return detectWildcardObfuscation(text)
+    || /~[/\\][^\s]*(?:\?|\[[^\]\s]+\])/.test(text)
+    || /(?:^|\s|['"`])[^\s]*(?:\?|\[[^\]\s]+\])[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text);
+}
 
 interface PipeExecResult {
   detected: boolean;
@@ -605,9 +765,18 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   // M2: 系统提示探测（所有置信度）
+  const identityClaims = detectIdentityClaims(text);
+  const protectedAccess = detectProtectedFileAccess(text);
   const sysprompt = detectSystemPromptExtraction(text);
   if (sysprompt.detected) {
-    return buildInstantDeny("M2:system_prompt_extraction", "系统提示探测");
+    const instantModules = ["M2:system_prompt_extraction"];
+    if (protectedAccess.matchedFiles.length > 0) {
+      instantModules.push("M2:protected_file_access");
+    }
+    if (identityClaims.detected && !verifiedOwner) {
+      instantModules.push("M0:identity_verification");
+    }
+    return buildInstantDenyForModules(instantModules, "system prompt extraction");
   }
 
   // M5: 主要凭证/系统敏感文件
@@ -632,7 +801,6 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   const accum = createAccumulators();
 
   // M0: 身份声明（先到先得）
-  const identityClaims = detectIdentityClaims(text);
   if (identityClaims.detected && !verifiedOwner) {
     modules.push("M0:identity_verification");
     const v = identityClaims.directOwnerClaim ? 2 : 1;
@@ -652,7 +820,6 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   // M2: 核心配置文件访问（openclaw 自身文件）
-  const protectedAccess = detectProtectedFileAccess(text);
   if (protectedAccess.matchedFiles.length > 0) {
     modules.push("M2:protected_file_access");
     pushDim(accum, "harm", 2);
@@ -710,7 +877,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   // M7: 路径混淆（弱信号，仅进评分通道，不进即时通道）
-  if (detectWildcardObfuscation(text)) {
+  if (detectPathObfuscation(text)) {
     modules.push("M7:wildcard_obfuscation");
     pushDim(accum, "pattern", 1);
     pushDim(accum, "clarity", 1);
@@ -773,7 +940,10 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     };
   }
 
-  return { block: false, riskAssessment: assessment };
+  return {
+    block: false,
+    riskAssessment: assessment,
+  };
 }
 
 // ── Output: Actual Secret Value Detection ─────────────────────────
@@ -884,7 +1054,10 @@ export function guardOutput(output: string, sessionKey?: string): GuardDecision 
     };
   }
 
-  return { block: false, riskAssessment: assessment };
+  return {
+    block: false,
+    riskAssessment: assessment,
+  };
 }
 
 // ── Public API: Tool Call Guard ─────────────────────────────────────
@@ -896,14 +1069,24 @@ export function guardToolCall(
   context?: GuardContext,
 ): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
+  const trustedInternalProtectedRead = context?.trustedInternalProtectedRead === true;
 
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
   const combined = `${command} ${filePath}`;
+  let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
 
   // === 即时危险通道 ===
 
   // M5: 主要凭证 via tool
+  if (detectPluginIntegrityViolation(combined, toolName)) {
+    return buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory");
+  }
+
+  if (findObfuscatedSystemAuthPath(combined)) {
+    return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
+  }
+
   const credTheft = detectCredentialTheft(combined);
   if (credTheft.some((label) => PRIMARY_SECRETS.has(label))) {
     return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
@@ -927,8 +1110,25 @@ export function guardToolCall(
   const accum = createAccumulators();
 
   // M2: 核心配置文件访问 via tool
+  const masqueradeSetup = detectExecMasqueradeSetup(command);
+  const masqueradeHint = detectExecMasqueradeHint(command);
+
+  if (masqueradeSetup.length > 0) {
+    modules.push("M3:exec_masquerade_setup");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
+    masqueradeTaintLevel = updateExecMasqueradeState(sessionKey, "hard", masqueradeSetup);
+  } else if (masqueradeHint.length > 0) {
+    modules.push("M3:exec_masquerade_taint");
+    pushDim(accum, "pattern", 1);
+    pushDim(accum, "clarity", 1);
+    masqueradeTaintLevel = updateExecMasqueradeState(sessionKey, "soft", masqueradeHint);
+  }
+
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
-  if (protectedAccess.matchedFiles.length > 0) {
+  if (protectedAccess.matchedFiles.length > 0 && !trustedInternalProtectedRead) {
     modules.push("M2:protected_file_access");
     pushDim(accum, "harm", 2);
     pushDim(accum, "rev", protectedAccess.operation === "write" ? 2 : 1);
@@ -964,7 +1164,7 @@ export function guardToolCall(
   }
 
   // M7: 路径混淆 via tool（command / file_path 参数）
-  if (detectWildcardObfuscation(combined)) {
+  if (detectPathObfuscation(combined)) {
     modules.push("M7:wildcard_obfuscation");
     pushDim(accum, "pattern", 1);
     pushDim(accum, "clarity", 1);
@@ -1008,10 +1208,19 @@ export function guardToolCall(
       block: true,
       blockReason: `[Lynx Guardian] 🛡️ 工具调用安全拦截 (${level}): ${assessment.description}`,
       riskAssessment: assessment,
+      contextHints: {
+        masqueradeTaintLevel,
+      },
     };
   }
 
-  return { block: false, riskAssessment: assessment };
+  return {
+    block: false,
+    riskAssessment: assessment,
+    contextHints: {
+      masqueradeTaintLevel,
+    },
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -1020,6 +1229,9 @@ function buildDescription(modules: string[], level: RiskLevel): string {
   if (modules.length === 0) return "安全";
 
   const moduleNames: Record<string, string> = {
+    "M2:plugin_integrity": "Lynx plugin integrity",
+    "M3:remote_access_control": "SSH remote login control",
+    "M3:system_availability": "system shutdown/reboot control",
     "M0:identity_verification": "身份冒充/未验证身份声明",
     "M1:prompt_injection": "提示注入攻击",
     "M2:system_prompt_extraction": "系统提示探测",
