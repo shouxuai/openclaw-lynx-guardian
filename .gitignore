@@ -92,3 +92,4 @@ test-results/
 /.
 /test
 /test-temp
+/docs/*
