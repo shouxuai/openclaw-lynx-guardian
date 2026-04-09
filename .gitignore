@@ -91,6 +91,7 @@ test-results/
 /docs
 /.
 /test
+/test/**
 /test-temp
-/docs/*
+/docs/**
 .worktrees/

@@ -255,7 +255,6 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("gateway_start", async (event, ctx) => {
     try {
       ensureResources();
-      log.info(`[lynx-guardian]我看看看看看 Resources synced on gateway_start (port=${event?.port ?? "unknown"})`);
       await reconcileScheduledLynxCheck({
         config: scheduledLynxCheckConfig,
         logger: log,
