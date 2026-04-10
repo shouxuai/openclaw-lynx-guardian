@@ -12,6 +12,8 @@ import * as skillGuard from '../src/skills/skill-guard.js';
 import * as safetyGuard from '../src/guard/safety-guard.js';
 import * as blacklist from '../src/blacklist.js';
 import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js';
+import { deliverLynxReport } from '../src/runtime/lynx-message-delivery.js';
+import * as tokenOptimizerRunner from '../src/runtime/token-optimizer-runner.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
@@ -35,6 +37,17 @@ vi.mock('../src/runtime/security-audit-runner.js', () => ({
   runSecurityAudit: vi.fn().mockResolvedValue(null),
   runMaliciousScriptScan: vi.fn().mockResolvedValue(null),
   formatAuditSummary: vi.fn().mockReturnValue('audit summary'),
+}));
+vi.mock('../src/runtime/token-optimizer-runner.js', () => ({
+  recommendContext: vi.fn().mockResolvedValue(null),
+  routeModel: vi.fn().mockResolvedValue(null),
+  checkBudget: vi.fn().mockResolvedValue(null),
+  planHeartbeat: vi.fn().mockResolvedValue(null),
+  formatContextRecommendation: vi.fn().mockReturnValue('context mock'),
+  formatModelRouting: vi.fn().mockReturnValue('routing mock'),
+  formatBudgetStatus: vi.fn().mockReturnValue('budget mock'),
+  buildOptimizationHints: vi.fn().mockReturnValue(''),
+  isTokenOptimizerAvailable: vi.fn().mockReturnValue(false),
 }));
 vi.mock('../src/skills/skill-guard.js', async () => {
   const actual = await vi.importActual<typeof import('../src/skills/skill-guard.js')>('../src/skills/skill-guard.js');
@@ -122,6 +135,12 @@ describe('Plugin Setup', () => {
       runOnStartup: false,
       fullScan: false,
     });
+    vi.mocked(tokenOptimizerRunner.recommendContext).mockResolvedValue(null);
+    vi.mocked(tokenOptimizerRunner.routeModel).mockResolvedValue(null);
+    vi.mocked(tokenOptimizerRunner.checkBudget).mockResolvedValue(null);
+    vi.mocked(tokenOptimizerRunner.planHeartbeat).mockResolvedValue(null);
+    vi.mocked(tokenOptimizerRunner.buildOptimizationHints).mockReturnValue('');
+    vi.mocked(tokenOptimizerRunner.isTokenOptimizerAvailable).mockReturnValue(false);
     vi.mocked(discovery.formatDiscoverySummary).mockImplementation((report: any) => [
       'OpenClaw scan complete',
       `- scanned targets: ${report.scannedTargets}`,
@@ -580,7 +599,7 @@ describe('Plugin Setup', () => {
     expect(existsSync(consumedDiscoveryPath)).toBe(false);
   });
 
-  it('should append discovery report once on before_message_write after a matching manual discovery request', async () => {
+  it('should keep before_message_write as decoration-only even after a matching manual discovery request', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const beforeMessageWrite = handlers['before_message_write'];
@@ -598,16 +617,13 @@ describe('Plugin Setup', () => {
       { sessionKey: 'sess-discovery-append' },
     );
 
-    expect(firstResult).toEqual({
-      message: {
-        role: 'assistant',
-        content: expect.stringContaining('Lynx Guardian OpenClaw'),
-      },
-    });
-    expect((firstResult as any).message.content).toContain('check completed');
-    expect(existsSync(pendingDiscoveryPath)).toBe(false);
-    expect(existsSync(consumedDiscoveryPath)).toBe(true);
-    expect(existsSync(pendingDiscoveryRequestPath)).toBe(false);
+    expect(firstResult).toBeUndefined();
+    expect(existsSync(pendingDiscoveryPath)).toBe(true);
+    expect(existsSync(consumedDiscoveryPath)).toBe(false);
+    expect(existsSync(pendingDiscoveryRequestPath)).toBe(true);
+    expect(mockApi.logger.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('Discovery report appended in before_message_write'),
+    );
 
     const secondResult = await beforeMessageWrite(
       { message: { role: 'assistant', content: 'follow-up reply' } },
@@ -694,7 +710,7 @@ describe('Plugin Setup', () => {
     expect(mockApi.logger.error).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({
-        prependContext: expect.stringContaining('完整报告将由插件自动附加'),
+        prependContext: expect.stringContaining('完整报告将由插件主动发送'),
       }),
     );
     expect(existsSync(pendingDiscoveryPath)).toBe(true);
@@ -711,6 +727,7 @@ describe('Plugin Setup', () => {
     const messageHandler = handlers['message_received'];
     const beforeAgentStart = handlers['before_agent_start'];
     const agentEnd = handlers['agent_end'];
+    const currentPluginSendMessage = vi.fn().mockResolvedValue(undefined);
     const recentWebchatSendMessage = vi.fn().mockResolvedValue(undefined);
 
     await messageHandler(
@@ -728,6 +745,7 @@ describe('Plugin Setup', () => {
       {
         sessionKey: 'sess-scheduled-recent-webchat',
         subsystem: 'plugins',
+        sendMessage: currentPluginSendMessage,
       },
     );
 
@@ -749,6 +767,9 @@ describe('Plugin Setup', () => {
         content: expect.stringContaining('Lynx Guardian OpenClaw'),
       }),
     );
+    expect(currentPluginSendMessage).not.toHaveBeenCalled();
+    expect(existsSync(pendingDiscoveryPath)).toBe(false);
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('sender-execution-plane'));
   });
 
   it('should route scheduled /lynx-check report to the most recent Feishu session', async () => {
@@ -756,6 +777,7 @@ describe('Plugin Setup', () => {
     const messageHandler = handlers['message_received'];
     const beforeAgentStart = handlers['before_agent_start'];
     const agentEnd = handlers['agent_end'];
+    const currentPluginSendMessage = vi.fn().mockResolvedValue(undefined);
     const recentFeishuSendMessage = vi.fn().mockResolvedValue(undefined);
 
     await messageHandler(
@@ -773,6 +795,7 @@ describe('Plugin Setup', () => {
       {
         sessionKey: 'sess-scheduled-recent-feishu',
         subsystem: 'plugins',
+        sendMessage: currentPluginSendMessage,
       },
     );
 
@@ -794,9 +817,403 @@ describe('Plugin Setup', () => {
         content: expect.stringContaining('Lynx Guardian OpenClaw'),
       }),
     );
+    expect(currentPluginSendMessage).not.toHaveBeenCalled();
+    expect(existsSync(pendingDiscoveryPath)).toBe(false);
   });
 
-  it('should trigger discovery reply on /check and send result messages', async () => {
+  it('should use same-session fallback for non-plugin agent_end delivery and clear pending files on success', async () => {
+    setup(mockApi);
+    const agentEnd = handlers['agent_end'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    mkdirSync(join(openclawHome, '.openclaw'), { recursive: true });
+    writeFileSync(pendingDiscoveryPath, 'scan result: 127.0.0.1:18789', 'utf8');
+    writeFileSync(
+      pendingDiscoveryRequestPath,
+      JSON.stringify({
+        sessionKey: 'sess-agent-end-current',
+        userInput: 'help me check the lynx ip process',
+      }),
+      'utf8',
+    );
+
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-agent-end-current',
+        sendMessage,
+      },
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+      }),
+    );
+    expect(existsSync(pendingDiscoveryPath)).toBe(false);
+    expect(existsSync(pendingDiscoveryRequestPath)).toBe(false);
+  });
+
+  it('should prefer resolved target + shared sender before legacy or same-session fallbacks', async () => {
+    const fallbackSendMessage = vi.fn().mockResolvedValue(undefined);
+    const resolveMessageTarget = vi.fn().mockResolvedValue({
+      targetKey: 'webchat:webchat:sender',
+      channelId: 'webchat',
+      messageProvider: 'webchat',
+    });
+    const sharedSend = vi.fn().mockResolvedValue(undefined);
+    const recentRouteSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await deliverLynxReport({
+      log: mockApi.logger,
+      ctx: {
+        sessionKey: 'sess-scheduled-recent-adapter',
+        sendMessage: fallbackSendMessage,
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+      tag: 'scheduled-/lynx-check-report',
+      routeHint: {
+        targetKey: 'recent-webchat',
+        sessionKey: 'sess-scheduled-recent-adapter',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        updatedAtMs: 1712701000000,
+      },
+      routeHintSendMessage: recentRouteSendMessage,
+      allowSameSessionFallback: true,
+      message: {
+        role: 'assistant',
+        content: 'report',
+      },
+    });
+
+    expect(result).toEqual({
+      delivered: true,
+      transport: 'shared-resolved-target',
+    });
+    expect(resolveMessageTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+      }),
+    );
+    expect(sharedSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({
+          channelId: 'webchat',
+          messageProvider: 'webchat',
+        }),
+        message: expect.objectContaining({
+          role: 'assistant',
+          content: 'report',
+        }),
+      }),
+    );
+    expect(recentRouteSendMessage).not.toHaveBeenCalled();
+    expect(fallbackSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should resolve current-context target when route hint is absent', async () => {
+    const fallbackSendMessage = vi.fn().mockResolvedValue(undefined);
+    const resolveMessageTarget = vi.fn().mockResolvedValue({
+      targetKey: 'sess-current',
+      sessionKey: 'sess-current',
+      channelId: 'webchat',
+      messageProvider: 'webchat',
+    });
+    const sharedSend = vi.fn().mockResolvedValue(undefined);
+
+    const result = await deliverLynxReport({
+      log: mockApi.logger,
+      ctx: {
+        sessionKey: 'sess-current',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-a',
+        sendMessage: fallbackSendMessage,
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+      tag: 'manual-/lynx-check-report',
+      allowSameSessionFallback: true,
+      message: {
+        role: 'assistant',
+        content: 'report',
+      },
+    });
+
+    expect(result).toEqual({
+      delivered: true,
+      transport: 'shared-resolved-target',
+    });
+    expect(resolveMessageTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetKey: 'webchat:webchat:sender-a',
+        sessionKey: 'sess-current',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-a',
+      }),
+    );
+    expect(sharedSend).toHaveBeenCalledTimes(1);
+    expect(fallbackSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should fall back to legacy route sender when shared resolution returns null', async () => {
+    const fallbackSendMessage = vi.fn().mockResolvedValue(undefined);
+    const resolveMessageTarget = vi.fn().mockResolvedValue(null);
+    const sharedSend = vi.fn().mockResolvedValue(undefined);
+    const recentRouteSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await deliverLynxReport({
+      log: mockApi.logger,
+      ctx: {
+        sessionKey: 'sess-current',
+        sendMessage: fallbackSendMessage,
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+      tag: 'scheduled-/lynx-check-report',
+      routeHint: {
+        targetKey: 'recent-webchat',
+        sessionKey: 'sess-current',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        updatedAtMs: 1712701000000,
+      },
+      routeHintSendMessage: recentRouteSendMessage,
+      allowSameSessionFallback: true,
+      message: {
+        role: 'assistant',
+        content: 'report',
+      },
+    });
+
+    expect(result).toEqual({
+      delivered: true,
+      transport: 'legacy-route-hint-sendMessage',
+    });
+    expect(resolveMessageTarget).toHaveBeenCalledTimes(1);
+    expect(sharedSend).not.toHaveBeenCalled();
+    expect(recentRouteSendMessage).toHaveBeenCalledTimes(1);
+    expect(fallbackSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should not use same-session fallback when route hint lacks sessionKey', async () => {
+    const fallbackSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await deliverLynxReport({
+      log: mockApi.logger,
+      ctx: {
+        sessionKey: 'sess-current',
+        sendMessage: fallbackSendMessage,
+      },
+      tag: 'manual-/lynx-check-report',
+      routeHint: {
+        targetKey: 'recent-webchat',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        updatedAtMs: 1712701000000,
+      },
+      allowSameSessionFallback: true,
+      message: {
+        role: 'assistant',
+        content: 'report',
+      },
+    });
+
+    expect(result).toEqual({
+      delivered: false,
+      transport: 'none',
+    });
+    expect(fallbackSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should actively send manual /lynx-check report through sender execution plane in current session with visible send logs', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const resolveMessageTarget = vi.fn().mockResolvedValue({
+      targetKey: 'webchat:webchat:sender-manual',
+      sessionKey: 'sess-manual-lynx-check',
+      channelId: 'webchat',
+      messageProvider: 'webchat',
+      senderId: 'sender-manual',
+    });
+    const sharedSend = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handler(
+      { content: '/lynx-check' },
+      {
+        sessionKey: 'sess-manual-lynx-check',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-manual',
+        sendMessage,
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+    );
+
+    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
+    expect(resolveMessageTarget).toHaveBeenCalled();
+    expect(sharedSend).toHaveBeenCalledTimes(2);
+    expect(sharedSend).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        message: expect.objectContaining({
+          role: 'assistant',
+          content: expect.stringContaining('Skill'),
+        }),
+      }),
+    );
+    expect(sharedSend).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        message: expect.objectContaining({
+          content: expect.stringContaining('OpenClaw'),
+        }),
+      }),
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('sender-execution-plane success'));
+    expect(result).toEqual({
+      block: true,
+      blockReason: expect.stringContaining('OpenClaw'),
+    });
+  });
+
+  it('should retry manual /lynx-check active send until the report message succeeds', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('webchat temporarily unavailable'))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await handler(
+      { content: '/lynx-check' },
+      { sessionKey: 'sess-manual-lynx-check-retry', sendMessage },
+    );
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        role: 'assistant',
+      }),
+    );
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('OpenClaw'),
+      }),
+    );
+    expect(mockApi.logger.warn).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
+    expect(result).toEqual({
+      block: true,
+      blockReason: expect.stringContaining('OpenClaw'),
+    });
+  });
+
+  it('should fall back to blockReason when manual /lynx-check report delivery exhausts all attempts', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(new Error('webchat unavailable'));
+
+    const result = await handler(
+      { content: '/lynx-check' },
+      { sessionKey: 'sess-manual-lynx-check-fallback', sendMessage },
+    );
+
+    expect(sendMessage).toHaveBeenCalledTimes(4);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('OpenClaw'),
+      }),
+    );
+    expect(mockApi.logger.error).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
+    expect(mockApi.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Manual /lynx-check will fall back to blockReason report'),
+    );
+    expect(result).toEqual({
+      block: true,
+      blockReason: expect.stringContaining('OpenClaw'),
+    });
+  });
+
+  it('should bypass native /check and only claim /lynx-check plus keywords', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const resolveMessageTarget = vi.fn().mockResolvedValue({
+      targetKey: 'webchat:webchat:sender-bypass',
+      sessionKey: 'sess-lynx-check',
+      channelId: 'webchat',
+      messageProvider: 'webchat',
+      senderId: 'sender-bypass',
+    });
+    const sharedSend = vi.fn().mockResolvedValue(undefined);
+
+    const nativeCheck = await handler(
+      { content: '/check' },
+      {
+        sessionKey: 'sess-native-check',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-bypass',
+        sendMessage,
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+    );
+    expect(nativeCheck).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sharedSend).not.toHaveBeenCalled();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
+
+    await handler(
+      { content: '/lynx-check' },
+      {
+        sessionKey: 'sess-lynx-check',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-bypass',
+        sendMessage,
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+    );
+    expect(sharedSend).toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should bypass native /check and avoid sending discovery messages', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -806,53 +1223,73 @@ describe('Plugin Setup', () => {
       { sessionKey: 'sess-check', sendMessage },
     );
 
+    expect(result).toBeUndefined();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should bypass bare check command', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handler(
+      { content: 'check' },
+      { sessionKey: 'sess-check-bare', sendMessage },
+    );
+
+    expect(result).toBeUndefined();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should not capture arbitrary slash command after colon-prefix normalization', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handler(
+      { content: '/foo: check lynx ip process' },
+      { sessionKey: 'sess-arbitrary-slash', sendMessage },
+    );
+
+    expect(result).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
+  });
+
+  it('should capture colon-separated natural language lynx request', async () => {
+    setup(mockApi);
+    const handler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handler(
+      { content: 'please check: lynx gateway ip' },
+      { sessionKey: 'sess-natural-colon', sendMessage },
+    );
+
     expect(discovery.discoverOpenClaw).toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        role: 'assistant',
-      }),
-    );
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        role: 'assistant',
-      }),
-    );
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        role: 'assistant',
-      }),
-    );
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        role: 'assistant',
-      }),
-    );
     expect(result).toEqual(
       expect.objectContaining({
         block: true,
       }),
     );
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('OpenClaw'));
   });
 
-  it('should trigger discovery reply on bare check command', async () => {
+  it('should not capture unrelated recheck shipping phrase', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
 
-    await handler(
-      { content: 'check' },
-      { sessionKey: 'sess-check-bare', sendMessage },
+    const result = await handler(
+      { content: 'recheck lynx shipping process' },
+      { sessionKey: 'sess-recheck-shipping', sendMessage },
     );
 
-    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('收到手动 OpenClaw 服务检测指令'));
+    expect(result).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
   });
 
   it('should trigger discovery reply on chinese detection prompt', async () => {
@@ -869,7 +1306,7 @@ describe('Plugin Setup', () => {
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
-  it('should still return discovery summary when sendMessage is unavailable', async () => {
+  it('should bypass /check when sendMessage is unavailable', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
 
@@ -878,13 +1315,8 @@ describe('Plugin Setup', () => {
       { sessionKey: 'sess-check-fallback' },
     );
 
-    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
-    expect(result).toEqual(
-      expect.objectContaining({
-        block: true,
-      }),
-    );
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('OpenClaw'));
+    expect(result).toBeUndefined();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
   });
 });
 

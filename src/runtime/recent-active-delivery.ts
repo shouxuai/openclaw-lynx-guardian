@@ -1,28 +1,30 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import type { EventContext, Message } from "../types.js";
-import { normalizeString } from "./plugin-runtime-helpers.js";
+import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
 export type ScheduledLynxDeliveryMode = "recent-active" | "announce";
 
-export interface RecentActiveDeliverySnapshot {
+export interface RecentActiveRouteHint {
   targetKey: string;
   sessionKey?: string;
   channelId?: string;
   messageProvider?: string;
   senderId?: string;
+  bindingId?: string;
   updatedAtMs: number;
 }
 
-export interface RecentActiveDeliveryTarget extends RecentActiveDeliverySnapshot {
+export interface RecentActiveDeliverySnapshot extends RecentActiveRouteHint {}
+
+export interface RecentActiveDeliveryTarget extends RecentActiveRouteHint {
   sendMessage: (message: Message) => Promise<void>;
 }
 
 const liveTargets = new Map<string, RecentActiveDeliveryTarget["sendMessage"]>();
 
 function getDefaultRecentActiveDeliveryPath(): string {
-  return join(homedir(), ".openclaw", "lynx", "recent-active-delivery.json");
+  return join(resolveRuntimeHomeDir(), ".openclaw", "lynx", "recent-active-delivery.json");
 }
 
 function resolveRecentActiveDeliveryPath(customPath?: string): string {
@@ -31,7 +33,7 @@ function resolveRecentActiveDeliveryPath(customPath?: string): string {
     return getDefaultRecentActiveDeliveryPath();
   }
   if (trimmed.startsWith("~")) {
-    return resolve(trimmed.replace(/^~(?=$|[\\/])/, homedir()));
+    return resolve(trimmed.replace(/^~(?=$|[\\/])/, resolveRuntimeHomeDir()));
   }
   return resolve(trimmed);
 }
@@ -52,7 +54,7 @@ function buildTargetKey(parts: {
     .join(":");
 }
 
-function buildSnapshot(ctx: EventContext, now: number): RecentActiveDeliverySnapshot | null {
+function buildSnapshot(ctx: EventContext, now: number): RecentActiveRouteHint | null {
   if (!ctx || typeof ctx.sendMessage !== "function") {
     return null;
   }
@@ -61,11 +63,12 @@ function buildSnapshot(ctx: EventContext, now: number): RecentActiveDeliverySnap
     return null;
   }
 
-  const snapshot: RecentActiveDeliverySnapshot = {
+  const snapshot: RecentActiveRouteHint = {
     sessionKey: normalizeString(ctx.sessionKey) || undefined,
     channelId: normalizeString((ctx as any).channelId ?? (ctx as any).channel) || undefined,
     messageProvider: normalizeString((ctx as any).messageProvider ?? (ctx as any).source) || undefined,
     senderId: normalizeString((ctx as any).senderId ?? (ctx as any).userId) || undefined,
+    bindingId: normalizeString((ctx as any).bindingId) || undefined,
     updatedAtMs: now,
     targetKey: "",
   };
@@ -78,7 +81,7 @@ function buildSnapshot(ctx: EventContext, now: number): RecentActiveDeliverySnap
   return snapshot;
 }
 
-function writeSnapshot(filePath: string, snapshot: RecentActiveDeliverySnapshot): void {
+function writeSnapshot(filePath: string, snapshot: RecentActiveRouteHint): void {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, JSON.stringify(snapshot), "utf8");
 }
@@ -100,12 +103,13 @@ export function readRecentActiveDeliverySnapshot(customPath?: string): RecentAct
       return null;
     }
 
-    const snapshot: RecentActiveDeliverySnapshot = {
+    const snapshot: RecentActiveRouteHint = {
       targetKey: normalizeString((parsed as any).targetKey),
       sessionKey: normalizeString((parsed as any).sessionKey) || undefined,
       channelId: normalizeString((parsed as any).channelId) || undefined,
       messageProvider: normalizeString((parsed as any).messageProvider) || undefined,
       senderId: normalizeString((parsed as any).senderId) || undefined,
+      bindingId: normalizeString((parsed as any).bindingId) || undefined,
       updatedAtMs: typeof (parsed as any).updatedAtMs === "number" ? (parsed as any).updatedAtMs : 0,
     };
 

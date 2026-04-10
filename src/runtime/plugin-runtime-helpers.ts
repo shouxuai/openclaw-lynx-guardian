@@ -1,3 +1,4 @@
+import { homedir } from "os";
 import { normalize, resolve } from "path";
 import type { GuardContext } from "../guard/safety-guard.js";
 
@@ -19,6 +20,21 @@ export function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((item) => normalizeString(item)).filter(Boolean)
     : [];
+}
+
+export function resolveRuntimeHomeDir(): string {
+  const envHome = normalizeString(process.env.HOME) || normalizeString(process.env.USERPROFILE);
+  if (envHome) {
+    return envHome;
+  }
+
+  const homeDrive = normalizeString(process.env.HOMEDRIVE);
+  const homePath = normalizeString(process.env.HOMEPATH);
+  if (homeDrive && homePath) {
+    return `${homeDrive}${homePath}`;
+  }
+
+  return homedir();
 }
 
 const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [

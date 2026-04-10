@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import type { ScheduledLynxDeliveryMode } from "./recent-active-delivery.js";
+import { resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
 export const SCHEDULED_LYNX_CHECK_JOB_ID = "lynx-guardian-scheduled-lynx-check";
 
@@ -147,7 +147,7 @@ export async function reconcileScheduledLynxCheck(params: {
 }
 
 function getDefaultCronStorePath(): string {
-  return join(homedir(), ".openclaw", "cron", "jobs.json");
+  return join(resolveRuntimeHomeDir(), ".openclaw", "cron", "jobs.json");
 }
 
 function resolveStorePath(storePath: string): string {
@@ -156,7 +156,7 @@ function resolveStorePath(storePath: string): string {
     return getDefaultCronStorePath();
   }
   if (trimmed.startsWith("~")) {
-    return resolve(trimmed.replace(/^~(?=$|[\\/])/, homedir()));
+    return resolve(trimmed.replace(/^~(?=$|[\\/])/, resolveRuntimeHomeDir()));
   }
   return resolve(trimmed);
 }

@@ -83,9 +83,29 @@ export interface Message {
   [key: string]: any;
 }
 
+export interface ResolvedMessageTarget {
+  targetKey: string;
+  sessionKey?: string;
+  channelId?: string;
+  messageProvider?: string;
+  senderId?: string;
+  bindingId?: string;
+  [key: string]: any;
+}
+
+export interface SharedMessageSender {
+  send(options: {
+    target: ResolvedMessageTarget;
+    message: Message;
+    metadata?: Record<string, unknown>;
+  }): Promise<void>;
+}
+
 export interface EventContext {
   sessionKey?: string;
   sendMessage?: (message: Message) => Promise<void>;
+  resolveMessageTarget?: (hint: Partial<ResolvedMessageTarget>) => Promise<ResolvedMessageTarget | null>;
+  sharedMessageSender?: SharedMessageSender;
   terminateSession?: (options: { reason: string; silent: boolean }) => Promise<void>;
   [key: string]: any;
 }
