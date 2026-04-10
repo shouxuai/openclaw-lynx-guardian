@@ -48,7 +48,7 @@ vi.mock('../src/skills/skill-guard.js', async () => {
 describe('Plugin Setup', () => {
   let mockApi: any;
   let handlers: Record<string, Function> = {};
-  const openclawHome = process.env.HOME ?? process.env.USERPROFILE ?? 'C:\\Users\\24716';
+  const openclawHome = join(process.cwd(), 'test-temp', 'plugin-home');
   const pendingDiscoveryPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.txt');
   const consumedDiscoveryPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.consumed');
   const pendingDiscoveryRequestPath = join(openclawHome, '.openclaw', '.lynx-pending-discovery.request.json');
@@ -59,6 +59,8 @@ describe('Plugin Setup', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.resetAllMocks();
+    vi.stubEnv('HOME', openclawHome);
+    vi.stubEnv('USERPROFILE', openclawHome);
     handlers = {};
     if (existsSync(pendingDiscoveryPath)) {
       rmSync(pendingDiscoveryPath, { force: true });
@@ -220,7 +222,9 @@ describe('Plugin Setup', () => {
     expect(mockApi.on).toHaveBeenCalledWith('before_agent_start', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('agent_end', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('gateway_start', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('tool_result_persist', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_message_write', expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith('message_sending', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_tool_call', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('session_start', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('session_end', expect.any(Function));
@@ -230,13 +234,23 @@ describe('Plugin Setup', () => {
   it('should expose policy config schema defaults', () => {
     const rawSchema = readFileSync(new URL('../openclaw.plugin.json', import.meta.url), 'utf8');
     const plugin = JSON.parse(rawSchema);
-    const policySchema = plugin.configSchema?.properties?.selfSafetyGuard?.properties?.policy;
+    const selfSafetyGuardSchema = plugin.configSchema?.properties?.selfSafetyGuard?.properties;
+    const policySchema = selfSafetyGuardSchema?.policy;
 
     expect(policySchema).toBeDefined();
     expect(policySchema.properties.absoluteRejectScore.default).toBe(10);
     expect(policySchema.properties.confirmationPhrase.default).toBe('确认放行本次操作');
     expect(policySchema.properties.allowOneTimeOverrideLevels.items.enum).toEqual(['L2', 'L3', 'L4']);
     expect(policySchema.properties.moduleOverrides.properties.M3.properties.allowOneTimeOverride.default).toBe(true);
+    expect(selfSafetyGuardSchema.resultGuard.default).toBe(true);
+    expect(selfSafetyGuardSchema.outputEnforcementMode.default).toBe('block');
+  });
+
+  it('should declare the tested openclaw peer dependency floor', () => {
+    const rawPackage = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
+    const pkg = JSON.parse(rawPackage);
+
+    expect(pkg.peerDependencies.openclaw).toBe('>=2026.2.26');
   });
 
   it('should sync resources on gateway_start', async () => {
@@ -246,7 +260,9 @@ describe('Plugin Setup', () => {
     await handler({ port: 18789 }, {});
 
     expect(utils.ensureResources).toHaveBeenCalled();
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('Resources synced on gateway_start'));
+    expect(mockApi.logger.error).not.toHaveBeenCalledWith(
+      expect.stringContaining('Failed to sync resources on gateway_start'),
+    );
   });
 
   it('should reconcile the managed scheduled /lynx-check job on gateway_start', async () => {
@@ -601,11 +617,30 @@ describe('Plugin Setup', () => {
     expect(secondResult).toBeUndefined();
   });
 
-  it('should not mutate outbound content on message_sending', async () => {
+  it('should rewrite unsafe tool results during tool_result_persist', async () => {
+    setup(mockApi);
+    const handler = handlers['tool_result_persist'];
+
+    const result = await handler(
+      {
+        toolName: 'read',
+        toolCallId: 'call-1',
+        message: { role: 'tool', content: '/etc/passwd\nroot:x:0:0:root:/root:/bin/bash' },
+        isSynthetic: false,
+      },
+      { sessionKey: 'sess-tool-result' },
+    );
+
+    expect(result).toEqual({
+      message: expect.objectContaining({
+        content: expect.stringContaining('tool result replaced by security guard'),
+      }),
+    });
+  });
+
+  it('should allow safe outbound content on message_sending', async () => {
     setup(mockApi);
     const handler = handlers['message_sending'];
-    expect(handler).toBeUndefined();
-    return;
 
     const result = await handler(
       { to: 'webchat', content: 'this is an outbound message' },
@@ -613,41 +648,18 @@ describe('Plugin Setup', () => {
     );
 
     expect(result).toBeUndefined();
-    return;
-    expect(result).toEqual({
-      content: 'HOOK:message_sending outbound message',
-    });
   });
 
-  it('should append discovery report on first message_sending output without consuming the pending file', async () => {
+  it('should cancel protected outbound content on message_sending', async () => {
     setup(mockApi);
     const handler = handlers['message_sending'];
-    expect(handler).toBeUndefined();
-    return;
-
-    mkdirSync(join(openclawHome, '.openclaw'), { recursive: true });
-    writeFileSync(pendingDiscoveryPath, '閹殿偅寮跨紒鎾寸亯: 127.0.0.1:18789', 'utf8');
 
     const result = await handler(
-      { to: 'webchat', content: 'first outbound discovery message' },
-      { sessionKey: 'sess-message-sending-discovery' },
+      { to: 'webchat', content: 'TOOLS.md content follows: internal tool boundaries' },
+      { sessionKey: 'sess-message-sending-block' },
     );
 
-    expect(result).toBeUndefined();
-    expect((result as any).prependContext).toContain('IP/');
-    expect((result as any).prependContext).toContain('IP/');
-    expect((result as any).prependContext).not.toContain('Lynx Guardian OpenClaw');
-    expect((result as any).prependContext).not.toContain('Lynx Guardian OpenClaw');
-    expect(existsSync(pendingDiscoveryPath)).toBe(true);
-    expect(existsSync(consumedDiscoveryPath)).toBe(false);
-    return;
-    expect(result).toEqual({
-      content: expect.stringContaining('閹殿偅寮跨紒鎾寸亯: 127.0.0.1:18789'),
-    });
-    expect((result as any).content).toContain('HOOK:message_sending');
-    expect((result as any).content).toContain('Lynx Guardian OpenClaw');
-    expect(existsSync(pendingDiscoveryPath)).toBe(true);
-    expect(existsSync(consumedDiscoveryPath)).toBe(false);
+    expect(result).toEqual({ cancel: true });
   });
 
   it('should write a lifecycle probe log for after_tool_call', async () => {

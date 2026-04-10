@@ -4,6 +4,7 @@ import { checkExecBlacklist } from '../src/blacklist.js';
 import { detectPromptInjection, detectSystemPromptExtraction } from '../src/guard/prompt-injection.js';
 import { detectSystemPromptLeak } from '../src/guard/system-prompt-guard.js';
 import { guardInput, guardOutput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
+import { guardAssistantPersistence, guardToolResultPersistence } from '../src/guard/result-guard.js';
 
 describe('Prompt Injection Detection (M1)', () => {
   it('should detect direct injection: ignore previous instructions', () => {
@@ -235,6 +236,28 @@ describe('Safety Guard - Output Guard', () => {
     const decision = guardOutput('Here is your code:\n\nfunction hello() {\n  return "world";\n}');
     expect(decision.block).toBe(false);
     expect(decision.riskAssessment.score).toBe(0);
+  });
+});
+
+describe('Safety Guard - Result Persistence Guard', () => {
+  it('should rewrite persisted /etc/passwd tool results', () => {
+    const decision = guardToolResultPersistence('read', {
+      role: 'tool',
+      content: '/etc/passwd\nroot:x:0:0:root:/root:/bin/bash',
+    });
+
+    expect(decision.block).toBe(true);
+    expect(String(decision.message?.content)).toContain('tool result replaced by security guard');
+  });
+
+  it('should rewrite assistant messages that still contain leaked protected content', () => {
+    const decision = guardAssistantPersistence({
+      role: 'assistant',
+      content: 'TOOLS.md content follows: internal tool boundaries',
+    });
+
+    expect(decision.block).toBe(true);
+    expect(String(decision.message?.content)).toContain('assistant output replaced by security guard');
   });
 });
 

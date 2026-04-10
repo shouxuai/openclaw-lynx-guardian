@@ -96,6 +96,7 @@ describe("hook helper modules", () => {
       verifiedOwner: true,
       requesterId: "owner-1",
       channel: "private-room",
+      trustedInternalProtectedRead: false,
     });
   });
 

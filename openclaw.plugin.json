@@ -22,7 +22,18 @@
           "outputGuard": {
             "type": "boolean",
             "default": true,
-            "description": "Enable output guard: system prompt leak detection with best-effort redaction (M2)"
+            "description": "Enable output guard: persisted assistant-output and outbound-delivery enforcement for protected content"
+          },
+          "resultGuard": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable synchronous interception of unsafe tool results before transcript persistence"
+          },
+          "outputEnforcementMode": {
+            "type": "string",
+            "enum": ["warn", "redact", "block"],
+            "default": "block",
+            "description": "Default enforcement mode for persisted assistant output and outbound delivery"
           },
           "toolGuard": {
             "type": "boolean",

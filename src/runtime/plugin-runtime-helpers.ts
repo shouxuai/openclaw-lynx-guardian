@@ -112,3 +112,47 @@ export function redactAgentOutput(event: any, replacement: string): void {
     }
   }
 }
+
+export function extractMessageText(message: any): string {
+  if (!message) {
+    return "";
+  }
+
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+
+  if (!Array.isArray(message.content)) {
+    return "";
+  }
+
+  return message.content
+    .filter((block: any) => block && typeof block.text === "string")
+    .map((block: any) => block.text)
+    .join("\n");
+}
+
+export function createReplacementMessage(message: any, replacement: string): any {
+  if (!message) {
+    return message;
+  }
+
+  if (typeof message.content === "string") {
+    return {
+      ...message,
+      content: replacement,
+    };
+  }
+
+  if (Array.isArray(message.content)) {
+    return {
+      ...message,
+      content: [{ type: "text", text: replacement }],
+    };
+  }
+
+  return {
+    ...message,
+    content: replacement,
+  };
+}

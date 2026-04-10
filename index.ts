@@ -1,6 +1,6 @@
 import { join } from "path";
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
-import type { OpenClawPluginApi } from "./src/types.js";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
   ensureUserRegistered,
   readRecentContext,
@@ -13,6 +13,7 @@ import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import type { CheckExecBlacklistContext } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
+import { guardAssistantPersistence, guardToolResultPersistence } from "./src/guard/result-guard.js";
 import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
@@ -84,6 +85,7 @@ import {
   rememberRecentActiveDeliveryTarget,
   shouldPreferRecentActiveDelivery,
 } from "./src/runtime/recent-active-delivery.js";
+import { getHookCapabilityReport, getOpenClawRuntimeVersion } from "./src/runtime/hook-capabilities.js";
 
 function isConfirmationPhrase(text: string, phrase: string): boolean {
   return text.includes(phrase.trim());
@@ -109,6 +111,7 @@ export default function setup(api: OpenClawPluginApi) {
     config: loadDiscoveryRuntimeConfig(config.openclawDiscovery),
   };
   const openClawDiscoveryConfig = discoveryRuntime.config;
+  const hookCapabilityReport = getHookCapabilityReport(getOpenClawRuntimeVersion());
   const DISCOVERY_RESULT_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.txt");
   const DISCOVERY_RESULT_CONSUMED_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.consumed");
   const DISCOVERY_REQUEST_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.request.json");
@@ -129,6 +132,15 @@ export default function setup(api: OpenClawPluginApi) {
   }
 
   try {
+    log.info(
+      `[lynx-guardian] Hook capability report: runtime=${hookCapabilityReport.runtimeVersion}, tested-min=${hookCapabilityReport.testedMinimumVersion}, supported=${String(hookCapabilityReport.supported)}`,
+    );
+    if (hookCapabilityReport.supported === false) {
+      log.warn(
+        `[lynx-guardian] Output interception requires openclaw >= ${hookCapabilityReport.testedMinimumVersion}; some hooks may not fire on this runtime.`,
+      );
+    }
+
     userId = ensureUserRegistered();
     registerUser(userId).then(res => {
       log.info(`[lynx-guardian] Registered user: ${userId}, status: ${res.code}`);
@@ -756,6 +768,14 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       nextMessage = decorateAssistantMessage(nextMessage);
+      if (selfSafetyGuardConfig.outputGuard !== false && nextMessage.role === "assistant") {
+        const persistenceDecision = guardAssistantPersistence(nextMessage);
+        if (persistenceDecision.block) {
+          return {
+            message: persistenceDecision.message,
+          };
+        }
+      }
       if (nextMessage === originalMessage) return;
 
       log.info("[lynx-guardian] Assistant message decorated before persistence");
@@ -764,6 +784,25 @@ export default function setup(api: OpenClawPluginApi) {
       };
     } catch (err: any) {
       log.error(`[lynx-guardian] before_message_write handler failed: ${err.message}`);
+    }
+  });
+
+  api.on("tool_result_persist", (event, ctx) => {
+    appendLifecycleProbe("tool_result_persist", event, ctx);
+    if (selfSafetyGuardConfig.resultGuard === false) return;
+    const decision = guardToolResultPersistence(event.toolName, event.message);
+    if (!decision.block) return;
+    return {
+      message: decision.message,
+    };
+  });
+
+  api.on("message_sending", async (event, ctx) => {
+    appendLifecycleProbe("message_sending", event, ctx);
+    if (selfSafetyGuardConfig.outputGuard === false) return;
+    const decision = guardOutput(event.content, ctx.sessionKey);
+    if (decision.block) {
+      return { cancel: true };
     }
   });
 

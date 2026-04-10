@@ -18,7 +18,7 @@
     "vitest": "^1.0.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.1.26"
+    "openclaw": ">=2026.2.26"
   },
   "openclaw": {
     "extensions": [
