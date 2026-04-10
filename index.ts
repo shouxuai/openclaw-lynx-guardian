@@ -535,14 +535,14 @@ export default function setup(api: OpenClawPluginApi) {
           let budgetRec = null;
 
           if (tokenOptimizerConfig.contextOptimizer !== false) {
-            ctxRec = await recommendContext(promptText);
+            ctxRec = await recommendContext(userInput);
             if (ctxRec) {
               log.info(`[lynx-guardian] ${formatContextRecommendation(ctxRec)}`);
             }
           }
 
           if (tokenOptimizerConfig.modelRouter !== false) {
-            modelRec = await routeModel(promptText);
+            modelRec = await routeModel(userInput);
             if (modelRec) {
               log.info(`[lynx-guardian] ${formatModelRouting(modelRec)}`);
             }
@@ -555,7 +555,10 @@ export default function setup(api: OpenClawPluginApi) {
             }
           }
 
-          const hints = buildOptimizationHints(ctxRec, modelRec, budgetRec);
+          const hints = buildOptimizationHints(ctxRec, modelRec, budgetRec, {
+            promptText,
+            userInput,
+          });
           if (hints) {
             prependContext += `${hints}\n`;
           }
