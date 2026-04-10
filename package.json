@@ -12,7 +12,7 @@
   "main": "index.ts",
   "types": "index.d.ts",
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.39",
     "tsup": "^8.5.1",
     "typescript": "^5.0.0",
     "vitest": "^1.0.0"
