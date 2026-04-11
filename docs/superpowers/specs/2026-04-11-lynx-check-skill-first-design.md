@@ -1,4 +1,4 @@
-# Lynx Check Skill-First Execution Design
+# Lynx Check Orchestrator Skill-First Execution Design
 
 ## Summary
 
@@ -8,14 +8,18 @@ The plugin will no longer directly run the Lynx check pipeline or hardcode the c
 
 - recognize manual and scheduled `/lynx-check` triggers;
 - persist a run intent for the current request;
-- inject a strict hidden instruction that forces the model to execute the check through the existing `lynx-guardian-daily-lynx-check` skill in execution mode;
+- inject a strict hidden instruction that forces the model to execute the check through the orchestrator skill entrypoint;
 - remember the current or recent-active delivery target;
 - provide a delivery fallback if the skill failed to send the final report message.
 
-The `lynx-guardian-daily-lynx-check` skill will be upgraded from a scheduling-only skill into a dual-mode orchestrator:
+The current `lynx-guardian-daily-lynx-check` skill will be repurposed into an orchestrator skill, with a recommended future-facing name of `lynx-guardian-check-orchestrator`.
+
+This orchestrator skill will own scheduling and dispatch behavior, while execution-heavy references and scripts live under capability skills such as `SX-openclaw-discovery`.
+
+The orchestrator skill will expose two internal modes:
 
 - `Scheduler Mode`: manages `scheduledLynxCheck` config and native cron behavior;
-- `Execution Mode`: performs the actual Lynx check run, combines the security audit and OpenClaw discovery capabilities, assembles the final report, attempts active delivery, and writes run results back for plugin fallback.
+- `Execution Dispatch Mode`: performs the actual Lynx check run by dispatching to the security audit and OpenClaw discovery capabilities, assembles the final report, attempts active delivery, and writes run results back for plugin fallback.
 
 ## Problem Statement
 
@@ -39,7 +43,7 @@ This has several problems:
 ## Goals
 
 - Unify manual and scheduled `/lynx-check` under one execution path.
-- Make the existing `lynx-guardian-daily-lynx-check` skill the primary execution surface.
+- Make the orchestrator skill entrypoint the primary execution surface for manual and scheduled `/lynx-check`.
 - Remove hardcoded composite report assembly from the plugin runtime path.
 - Preserve recent-active delivery routing and sender execution plane fallback in the plugin.
 - Reuse the existing `SX-security-audit` and `SX-openclaw-discovery` capabilities during check execution.
@@ -50,7 +54,7 @@ This has several problems:
 - Replacing the native `scheduledLynxCheck` cron sync mechanism.
 - Removing current output interception hooks such as `before_message_write` or `tool_result_persist`.
 - Reworking general safety-guard policy behavior.
-- Introducing a second parallel Lynx execution skill.
+- Introducing a second competing `/lynx-check` orchestration skill.
 
 ## Current State
 
@@ -60,8 +64,9 @@ Current runtime behavior relevant to `/lynx-check`:
 - `buildManualLynxCheckReport()` assembles a four-part composite report in plugin code.
 - `before_agent_start` still contains `/lynx-check`-specific report injection behavior.
 - `agent_end` already has an active-delivery fallback mechanism that can route to the current or recent-active target.
-- `lynx-guardian-daily-lynx-check` currently describes scheduling strategy, but does not own execution.
-- `SX-security-audit` and `SX-openclaw-discovery` already describe reusable audit/discovery behavior, but are not the primary execution contract for `/lynx-check`.
+- `lynx-guardian-daily-lynx-check` currently contains only `SKILL.md`, making it a natural place for orchestration rather than execution-heavy assets.
+- `SX-openclaw-discovery` now contains the moved `references/` and `scripts/` assets that were previously under `lynx-guardian-daily-lynx-check`.
+- `SX-security-audit` and `SX-openclaw-discovery` already describe reusable audit/discovery behavior, but are not yet the enforced execution contract for `/lynx-check`.
 
 ## Proposed Architecture
 
@@ -84,9 +89,17 @@ The plugin must not:
 - directly invoke the current `manual-lynx-check.ts` execution pipeline for the main flow;
 - pretend a send happened without a result record confirming delivery success.
 
-### 2. Skill Responsibilities
+### 2. Orchestrator Skill Responsibilities
 
-The existing `skills/lynx-guardian-daily-lynx-check/SKILL.md` becomes the single public Lynx execution skill.
+The current `skills/lynx-guardian-daily-lynx-check/SKILL.md` becomes the single public Lynx orchestration skill entrypoint.
+
+Recommended target name:
+
+- `lynx-guardian-check-orchestrator`
+
+Compatibility path during migration:
+
+- keep the existing `lynx-guardian-daily-lynx-check` path as the compatibility entrypoint until dependent prompts and references are updated.
 
 It will expose two internal modes:
 
@@ -94,9 +107,9 @@ It will expose two internal modes:
   - edits or explains `scheduledLynxCheck`;
   - keeps native cron management behavior unchanged.
 
-- `Execution Mode`
+- `Execution Dispatch Mode`
   - reads the current run intent;
-  - executes Lynx checks;
+  - dispatches Lynx checks to capability skills;
   - combines security audit and OpenClaw discovery outputs;
   - assembles the final composite report;
   - attempts active report delivery as a new message;
@@ -112,9 +125,12 @@ The new execution mode should treat these existing capabilities as first-class b
 
 - `SX-openclaw-discovery`
   - provides discovery semantics and output expectations for OpenClaw service detection;
+  - owns the moved `references/` and `scripts/` assets used for discovery execution;
   - contributes the OpenClaw discovery section and raw discovery appendix to the final report.
 
-The final report remains a single `/lynx-check` composite report, but its content source moves from plugin hardcoding into skill orchestration.
+The final report remains a single `/lynx-check` composite report, but its content source moves from plugin hardcoding into orchestrator-driven skill composition.
+
+The orchestrator skill may later add its own `references/` or `scripts/`, but only for orchestration-specific helpers such as intent/result handling, dispatch templates, or delivery coordination. Discovery execution assets should not be duplicated back out of `SX-openclaw-discovery`.
 
 ## Run Lifecycle
 
@@ -151,15 +167,15 @@ Recommended file layout:
 `before_agent_start` injects a strict hidden directive that tells the model:
 
 - this is a managed Lynx check run;
-- it must use `lynx-guardian-daily-lynx-check` execution mode;
-- it must combine the skill with `SX-security-audit` and `SX-openclaw-discovery`;
+- it must use the orchestrator skill execution-dispatch mode;
+- it must dispatch to `SX-security-audit` and `SX-openclaw-discovery`;
 - it must attempt delivery of the final report as a new message;
 - if delivery fails, it must write the result record instead of falsely claiming success;
 - it must not state that the check is complete unless execution mode finished.
 
 ### Step 4. Skill Execution
 
-Execution mode runs in three phases:
+Execution-dispatch mode runs in three phases:
 
 - `preflight`
   - load intent;
@@ -167,8 +183,8 @@ Execution mode runs in three phases:
   - determine preferred delivery target.
 
 - `checks`
-  - run security audit capability;
-  - run OpenClaw discovery capability;
+  - run the security audit capability through `SX-security-audit`;
+  - run the OpenClaw discovery capability through `SX-openclaw-discovery`;
   - preserve the current Lynx report sections for public exposure and skill integrity;
   - generate one composite report.
 
@@ -238,7 +254,7 @@ The plugin continues to own:
 
 - explicit run intent store for `/lynx-check`;
 - explicit run result store for `/lynx-check`;
-- upgraded `lynx-guardian-daily-lynx-check` skill with execution mode;
+- upgraded orchestrator skill with execution-dispatch mode;
 - hidden prompt injection tailored to the new skill contract;
 - plugin fallback logic that keys off run result state.
 
@@ -255,6 +271,21 @@ Add or update tests for:
 - existing output interception behavior remains intact;
 - legacy `manual-lynx-check.ts` no longer drives the primary runtime flow.
 
+Prefer OpenClaw-integrated validation over unit-only validation for the final acceptance loop.
+
+Recommended integration validation:
+
+- use the local OpenClaw API endpoint `http://127.0.0.1:18789/v1/chat/completions` to issue `/lynx-check` requests through the real runtime;
+- use OpenClaw TUI to issue manual `/lynx-check` runs through the real interactive runtime when validating prompt injection, skill dispatch, and visible delivery behavior;
+- validate that manual `/lynx-check` causes hidden prompt injection, orchestrator-skill dispatch, result persistence, and either skill-send success or plugin fallback send;
+- validate that scheduled `/lynx-check` follows the same orchestration path through native OpenClaw scheduling, not a test-only shortcut;
+- when possible, drive OpenClaw itself end-to-end through either the chat completions endpoint or TUI instead of only mocking plugin hooks, so the test covers the actual model-execution and delivery behavior.
+
+Unit and integration tests should complement each other:
+
+- unit tests lock stores, routing, and fallback logic;
+- OpenClaw-driven integration tests validate the real `/v1/chat/completions`, TUI flow, and native runtime behavior.
+
 ## Error Handling
 
 - If intent creation fails, block the run with a short operational error.
@@ -264,18 +295,21 @@ Add or update tests for:
 
 ## Migration Notes
 
-- `manual-lynx-check.ts` should be deprecated after the new skill-first execution path is stable.
+- `manual-lynx-check.ts` should be deprecated after the new orchestrator path is stable.
 - Existing discovery pending-file behavior should not remain the primary `/lynx-check` report path.
 - The scheduling semantics of `scheduledLynxCheck` remain unchanged so user-facing cron behavior does not regress.
+- The compatibility path can keep `lynx-guardian-daily-lynx-check` as the current skill location while the visible skill name shifts toward `lynx-guardian-check-orchestrator`.
 
 ## Recommendation
 
 Implement the migration in one focused change set:
 
 1. introduce explicit run intent and run result records;
-2. upgrade the skill to dual-mode behavior;
-3. change plugin `/lynx-check` handling from direct execution to hidden prompt orchestration;
-4. reuse existing sender execution plane only as fallback;
-5. remove plugin-side hardcoded composite report assembly from the main runtime path.
+2. repurpose the current daily skill into the orchestrator entrypoint and rename it conceptually toward `lynx-guardian-check-orchestrator`;
+3. move execution-heavy discovery assets to `SX-openclaw-discovery` and keep orchestration-specific assets with the orchestrator skill only if needed;
+4. change plugin `/lynx-check` handling from direct execution to hidden prompt orchestration;
+5. reuse existing sender execution plane only as fallback;
+6. remove plugin-side hardcoded composite report assembly from the main runtime path;
+7. validate the final behavior through the local OpenClaw endpoint and native runtime flow.
 
 This is the smallest change that fixes the abstraction problem without regressing recent-active routing, scheduled sync, or output interception.
