@@ -15,12 +15,14 @@ import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js'
 import { deliverLynxReport } from '../src/runtime/lynx-message-delivery.js';
 import {
   createLynxCheckRunIntent,
+  getLynxCheckRunResultPath,
   getLynxCheckRunReportPath,
   readLatestPendingLynxCheckRunIntent,
   readLynxCheckRunIntent,
   readLynxCheckRunResult,
   writeLynxCheckRunResult,
 } from '../src/runtime/lynx-check-run-store.js';
+import { buildLynxCheckExecutionPrompt } from '../src/runtime/lynx-check-orchestrator.js';
 import * as tokenOptimizerRunner from '../src/runtime/token-optimizer-runner.js';
 
 vi.mock('../src/utils.js');
@@ -384,6 +386,120 @@ describe('Plugin Setup', () => {
     expect(dailyMemoryRead).toBeUndefined();
   });
 
+  it('should allow orchestrator skill protected reads only during managed /lynx-check runs', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const toolHandler = handlers['before_tool_call'];
+
+    await beforeAgentStart(
+      { prompt: '[2026-04-11 09:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-managed-orchestrator-read',
+        subsystem: 'plugins',
+      },
+    );
+
+    const orchestratorSkillRead = await toolHandler(
+      {
+        toolName: 'read',
+        params: { path: '/Users/wuyu/.openclaw/skills/lynx-guardian-check-orchestrator/SKILL.md' },
+      },
+      {
+        sessionKey: 'sess-managed-orchestrator-read',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(orchestratorSkillRead).toBeUndefined();
+  });
+
+  it('should allow orchestrator skill protected reads during managed /lynx-check runs without subsystem marker', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const toolHandler = handlers['before_tool_call'];
+
+    await beforeAgentStart(
+      { prompt: '[2026-04-11 09:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-managed-orchestrator-read-no-subsystem',
+        subsystem: 'plugins',
+      },
+    );
+
+    const orchestratorSkillRead = await toolHandler(
+      {
+        toolName: 'read',
+        params: { path: 'skills/lynx-guardian-check-orchestrator/SKILL.md' },
+      },
+      {
+        sessionKey: 'sess-managed-orchestrator-read-no-subsystem',
+      },
+    );
+
+    expect(orchestratorSkillRead).toBeUndefined();
+  });
+
+  it('should not treat tool calls without sessionKey as managed runs even when another session has a pending run', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const toolHandler = handlers['before_tool_call'];
+
+    await beforeAgentStart(
+      { prompt: '[2026-04-11 09:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-managed-existing-run',
+        subsystem: 'plugins',
+      },
+    );
+
+    const orchestratorReadWithoutSession = await toolHandler(
+      {
+        toolName: 'read',
+        params: { path: '/Users/wuyu/.openclaw/skills/lynx-guardian-check-orchestrator/SKILL.md' },
+      },
+      {
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(orchestratorReadWithoutSession).toEqual(
+      expect.objectContaining({
+        block: true,
+      }),
+    );
+  });
+
+  it('should orchestrator-flow still block unrelated protected reads during managed /lynx-check runs', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const toolHandler = handlers['before_tool_call'];
+
+    await beforeAgentStart(
+      { prompt: '[2026-04-11 09:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-managed-non-orchestrator-read',
+        subsystem: 'plugins',
+      },
+    );
+
+    const unrelatedProtectedRead = await toolHandler(
+      {
+        toolName: 'read',
+        params: { path: '/Users/wuyu/.openclaw/skills/not-allowed/SKILL.md' },
+      },
+      {
+        sessionKey: 'sess-managed-non-orchestrator-read',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(unrelatedProtectedRead).toEqual(
+      expect.objectContaining({
+        block: true,
+      }),
+    );
+  });
+
   it('should allow one-time override for local tool guard on the next identical retry only', async () => {
     mockApi.config = {
       selfSafetyGuard: {
@@ -420,10 +536,7 @@ describe('Plugin Setup', () => {
       { content: '纭鏀捐鏈鎿嶄綔' },
       { sessionKey: 'sess-local-tool-override' },
     );
-    expect(confirm).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('工作流'),
-    });
+    expect(confirm).toBeUndefined();
 
     const second = await toolHandler(event, { sessionKey: 'sess-local-tool-override' });
     expect(second).toBeUndefined();
@@ -527,10 +640,7 @@ describe('Plugin Setup', () => {
       { content: '纭鏀捐鏈鎿嶄綔' },
       { sessionKey: 'sess-api-tool-override' },
     );
-    expect(confirm).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('工作流'),
-    });
+    expect(confirm).toBeUndefined();
 
     const second = await toolHandler(event, { sessionKey: 'sess-api-tool-override' });
     expect(second).toBeUndefined();
@@ -737,7 +847,7 @@ describe('Plugin Setup', () => {
         prependContext: expect.stringContaining('Execution Dispatch Mode'),
       }),
     );
-    expect((result as any).prependContext).toContain('lynx-guardian-daily-lynx-check');
+    expect((result as any).prependContext).toContain('lynx-guardian-check-orchestrator');
     expect((result as any).prependContext).toContain('SX-security-audit');
     expect((result as any).prependContext).toContain('SX-openclaw-discovery');
     expect(existsSync(pendingDiscoveryPath)).toBe(false);
@@ -767,6 +877,111 @@ describe('Plugin Setup', () => {
         reportPath: getLynxCheckRunReportPath(runIntent!.requestId),
       }),
     );
+  });
+
+  it('should normalize unsupported run result status into an explicit handled failure shape', () => {
+    const intent = createLynxCheckRunIntent({
+      requestId: 'run-result-partial-status',
+      source: 'manual',
+      trigger: 'lynx_command',
+      preferredTargetKind: 'current',
+    });
+    const resultPath = getLynxCheckRunResultPath(intent.requestId);
+
+    writeFileSync(resultPath, JSON.stringify({
+      requestId: intent.requestId,
+      status: 'partial',
+      sendAttempted: true,
+      sendSucceeded: false,
+      transport: 'skill-partial',
+      reportPath: `.openclaw/lynx/check-runs/${intent.requestId}.report.md`,
+      completedAtMs: Date.now(),
+    }, null, 2), 'utf8');
+
+    expect(readLynxCheckRunResult(intent.requestId)).toEqual(
+      expect.objectContaining({
+        requestId: intent.requestId,
+        status: 'failed',
+        sendAttempted: true,
+        sendSucceeded: false,
+        transport: 'skill-partial',
+      }),
+    );
+  });
+
+  it('should preserve sendSucceeded when coercing unsupported run result statuses', () => {
+    const intent = createLynxCheckRunIntent({
+      requestId: 'run-result-partial-keep-send-succeeded',
+      source: 'manual',
+      trigger: 'lynx_command',
+      preferredTargetKind: 'current',
+    });
+    const resultPath = getLynxCheckRunResultPath(intent.requestId);
+
+    writeFileSync(resultPath, JSON.stringify({
+      requestId: intent.requestId,
+      status: 'partial',
+      sendAttempted: true,
+      sendSucceeded: true,
+      transport: 'skill-partial',
+      reportPath: `.openclaw/lynx/check-runs/${intent.requestId}.report.md`,
+      completedAtMs: Date.now(),
+    }, null, 2), 'utf8');
+
+    expect(readLynxCheckRunResult(intent.requestId)).toEqual(
+      expect.objectContaining({
+        requestId: intent.requestId,
+        status: 'failed',
+        sendAttempted: true,
+        sendSucceeded: true,
+        transport: 'skill-partial',
+      }),
+    );
+  });
+
+  it('should drop unsupported relative traversal reportPath outside lynx check-runs root', () => {
+    const intent = createLynxCheckRunIntent({
+      requestId: 'run-result-traversal-report-path',
+      source: 'manual',
+      trigger: 'lynx_command',
+      preferredTargetKind: 'current',
+    });
+    const resultPath = getLynxCheckRunResultPath(intent.requestId);
+
+    writeFileSync(resultPath, JSON.stringify({
+      requestId: intent.requestId,
+      status: 'failed',
+      sendAttempted: true,
+      sendSucceeded: false,
+      transport: 'skill-failed',
+      reportPath: '../escaped.report.md',
+      completedAtMs: Date.now(),
+    }, null, 2), 'utf8');
+
+    expect(readLynxCheckRunResult(intent.requestId)).toEqual(
+      expect.objectContaining({
+        requestId: intent.requestId,
+        status: 'failed',
+        reportPath: undefined,
+      }),
+    );
+  });
+
+  it('should build run result prompt paths as current-runtime readable absolute paths with only valid statuses', () => {
+    const prompt = buildLynxCheckExecutionPrompt({
+      requestId: 'run-result-prompt-paths',
+      source: 'manual',
+      preferredTargetKind: 'current',
+      skillPath: 'skills/lynx-guardian-check-orchestrator/SKILL.md',
+    });
+
+    const expectedResultPath = getLynxCheckRunResultPath('run-result-prompt-paths');
+    const expectedReportPath = getLynxCheckRunReportPath('run-result-prompt-paths');
+
+    expect(prompt).toContain(`write it to ${expectedReportPath}.`);
+    expect(prompt).toContain(`write ${expectedResultPath} with requestId, status, sendAttempted, sendSucceeded, transport, reportPath, errorMessage, and completedAtMs.`);
+    expect(prompt).toContain('status must be one of: not_started, running, completed, failed.');
+    expect(prompt).not.toContain('partial');
   });
 
   it('should fallback-send scheduled /lynx-check report to the most recent webchat session when skill delivery fails', async () => {
@@ -1175,7 +1390,7 @@ describe('Plugin Setup', () => {
       }),
     );
     expect((result as any).prependContext).toContain('requestId');
-    expect((result as any).prependContext).toContain('lynx-guardian-daily-lynx-check');
+    expect((result as any).prependContext).toContain('lynx-guardian-check-orchestrator');
     const runIntent = readLatestPendingLynxCheckRunIntent('sess-manual-lynx-check-retry');
     expect(runIntent).toEqual(
       expect.objectContaining({
@@ -1193,7 +1408,7 @@ describe('Plugin Setup', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('should not fallback-send when the orchestrator skill already delivered the report', async () => {
+  it('should not fallback-send when the managed /lynx-check skill already delivered the report', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const agentEnd = handlers['agent_end'];
@@ -1242,6 +1457,115 @@ describe('Plugin Setup', () => {
 
     expect(recentWebchatSendMessage).not.toHaveBeenCalled();
     expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
+  });
+
+  it('agent_end should keep waiting through running and avoid premature fallback while result settles to completed', async () => {
+    vi.useFakeTimers();
+    try {
+      setup(mockApi);
+      const beforeAgentStart = handlers['before_agent_start'];
+      const agentEnd = handlers['agent_end'];
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+      await beforeAgentStart(
+        { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+        {
+          sessionKey: 'sess-agent-end-settling',
+          channelId: 'webchat',
+          messageProvider: 'webchat',
+          senderId: 'sender-settling',
+          sendMessage,
+        },
+      );
+
+      const runIntent = readLatestPendingLynxCheckRunIntent('sess-agent-end-settling');
+      expect(runIntent).toBeTruthy();
+      expect(readLynxCheckRunResult(runIntent!.requestId)?.status).toBe('not_started');
+
+      setTimeout(() => {
+        writeLynxCheckRunResult(runIntent!.requestId, {
+          status: 'running',
+          sendAttempted: false,
+          sendSucceeded: false,
+          transport: 'skill-running',
+        });
+      }, 10);
+
+      setTimeout(() => {
+        writeLynxCheckRunResult(runIntent!.requestId, {
+          status: 'completed',
+          sendAttempted: true,
+          sendSucceeded: true,
+          transport: 'skill-shared-sender',
+        });
+      }, 60);
+
+      const agentEndPromise = agentEnd(
+        {
+          messages: [
+            { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+          ],
+        },
+        {
+          sessionKey: 'sess-agent-end-settling',
+          sendMessage,
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(300);
+      await agentEndPromise;
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(readLynxCheckRunResult(runIntent!.requestId)?.status).toBe('completed');
+      expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('agent_end should fallback-send and complete the run when status remains running after bounded wait', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-04-11T00:00:00.000Z'));
+      setup(mockApi);
+      const agentEnd = handlers['agent_end'];
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      const runIntent = createLynxCheckRunIntent({
+        requestId: 'run-result-stays-running',
+        source: 'manual',
+        trigger: 'lynx_command',
+        preferredTargetKind: 'current',
+        sessionKey: 'sess-agent-end-running-timeout',
+        createdAtMs: 1712793600000,
+      });
+
+      writeLynxCheckRunResult(runIntent.requestId, {
+        status: 'running',
+        sendAttempted: true,
+        sendSucceeded: false,
+        transport: 'skill-running',
+      });
+
+      const agentEndPromise = agentEnd(
+        {
+          messages: [
+            { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+          ],
+        },
+        {
+          sessionKey: 'sess-agent-end-running-timeout',
+          sendMessage,
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(300);
+      await agentEndPromise;
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(readLynxCheckRunIntent(runIntent.requestId)?.status).toBe('completed');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('should bypass native /check and only claim /lynx-check plus keywords', async () => {
@@ -1352,11 +1676,7 @@ describe('Plugin Setup', () => {
 
     expect(discovery.discoverOpenClaw).toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(result).toEqual(
-      expect.objectContaining({
-        block: true,
-      }),
-    );
+    expect(result).toBeUndefined();
   });
 
   it('should not capture unrelated recheck shipping phrase', async () => {

@@ -18,7 +18,7 @@ This capability owns the OpenClaw discovery execution surface.
 This skill may be used in two ways:
 
 - standalone discovery requests;
-- orchestrated `/lynx-check` dispatch from `lynx-guardian-daily-lynx-check`.
+- orchestrated `/lynx-check` dispatch from `lynx-guardian-check-orchestrator`.
 
 When dispatched by the orchestrator, keep the output focused on discovery facts so it can be merged into one report.
 
@@ -39,4 +39,4 @@ Return:
 ## Coordination Notes
 
 - `SX-security-audit` covers audit findings; do not duplicate that work here.
-- `lynx-guardian-daily-lynx-check` aggregates your output into the final composite report.
+- `lynx-guardian-check-orchestrator` aggregates your output into the final composite report.

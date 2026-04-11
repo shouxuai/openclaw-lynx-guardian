@@ -15,7 +15,7 @@ This capability owns the audit portion of Lynx Guardian checks.
 
 ## When dispatched by the orchestrator
 
-If `lynx-guardian-daily-lynx-check` calls this skill during Execution Dispatch Mode:
+If `lynx-guardian-check-orchestrator` calls this skill during Execution Dispatch Mode:
 
 1. return the audit findings only;
 2. keep the output easy to merge into one composite report;
@@ -31,4 +31,4 @@ If `lynx-guardian-daily-lynx-check` calls this skill during Execution Dispatch M
 ## Coordination Notes
 
 - `SX-openclaw-discovery` owns discovery execution and endpoint findings.
-- `lynx-guardian-daily-lynx-check` owns orchestration, report assembly, and send-result recording.
+- `lynx-guardian-check-orchestrator` owns orchestration, report assembly, and send-result recording.

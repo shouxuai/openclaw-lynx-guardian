@@ -1,6 +1,6 @@
 import { join } from "path";
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "./src/types.js";
 import {
   ensureUserRegistered,
   readRecentContext,
@@ -95,6 +95,7 @@ import {
   readLatestPendingLynxCheckRunIntent,
   readLynxCheckRunResult,
   updateLynxCheckRunIntentStatus,
+  waitForLynxCheckRunResultSettled,
 } from "./src/runtime/lynx-check-run-store.js";
 import {
   buildLynxCheckExecutionPrompt,
@@ -170,6 +171,21 @@ export default function setup(api: OpenClawPluginApi) {
     }
 
     return "unknown-payload";
+  }
+
+  async function sendHookFeedback(ctx: any, content: string): Promise<void> {
+    if (typeof ctx?.sendMessage !== "function" || content.trim().length === 0) {
+      return;
+    }
+
+    try {
+      await ctx.sendMessage({
+        role: "assistant",
+        content,
+      });
+    } catch (err: any) {
+      log.warn(`[lynx-guardian] Failed to send hook feedback: ${err.message}`);
+    }
   }
 
   async function sendAssistantMessageWithRetry(options: {
@@ -457,6 +473,8 @@ export default function setup(api: OpenClawPluginApi) {
 
         log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received pending: ${JSON.stringify(pending)}`);
         if (!pending) {
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待确认操作。");
+          return;
           return {
             block: true,
             blockReason: "[Lynx Guardian] 当前没有可放行的待确认操作",
@@ -467,6 +485,11 @@ export default function setup(api: OpenClawPluginApi) {
         const windowMs = riskPolicyConfig.workflowAuthWindowMs;
         grantWorkflowAuth(allKeys, pending.matchedModules, windowMs, /* scopeAll */ true);
         const windowSec = Math.round(windowMs / 1000);
+        await sendHookFeedback(
+          ctx,
+          `[Lynx Guardian] 已开启工作流授权窗口（${windowSec}s）。相关操作会在窗口期内自动放行。`,
+        );
+        return;
         return {
           block: true,
           blockReason: `[Lynx Guardian] 已确认，工作流授权已开放（时间窗口${windowSec}s）。此窗口内的相关操作将自动放行，工作流结束后将自动收回并汇报操作记录。`,
@@ -503,6 +526,7 @@ export default function setup(api: OpenClawPluginApi) {
             content: discoverySummary,
           });
         }
+        return;
         return {
           block: true,
           blockReason: discoverySummary,
@@ -519,6 +543,8 @@ export default function setup(api: OpenClawPluginApi) {
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn("[lynx-guardian] Sensitive data detected in message");
         await pushRecord(userId, text, 1);
+        await sendHookFeedback(ctx, "Sensitive data detected");
+        return;
         return {
           block: true,
           blockReason: "Sensitive data detected",
@@ -549,6 +575,14 @@ export default function setup(api: OpenClawPluginApi) {
               matchedModules: decision.riskAssessment.modules,
               sourceKeys: resolveOverrideKeys(ctx),
             });
+            await sendHookFeedback(
+              ctx,
+              buildOverridePrompt(
+                decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+                policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
+              ),
+            );
+            return;
             return {
               block: true,
               blockReason: buildOverridePrompt(
@@ -557,6 +591,8 @@ export default function setup(api: OpenClawPluginApi) {
               ),
             };
           }
+          await sendHookFeedback(ctx, decision.blockReason!);
+          return;
           return {
             block: true,
             blockReason: decision.blockReason!,
@@ -618,7 +654,7 @@ export default function setup(api: OpenClawPluginApi) {
           requestId: runIntent.requestId,
           source: runIntent.source,
           preferredTargetKind: runIntent.preferredTargetKind,
-          skillPath: "skills/lynx-guardian-daily-lynx-check/SKILL.md",
+          skillPath: "skills/lynx-guardian-check-orchestrator/SKILL.md",
         })}\n`;
       }
 
@@ -834,11 +870,17 @@ export default function setup(api: OpenClawPluginApi) {
 
       const activeRunIntent = readLatestPendingLynxCheckRunIntent(ctx.sessionKey);
       if (activeRunIntent) {
-        const runResult = readLynxCheckRunResult(activeRunIntent.requestId);
+        let runResult = readLynxCheckRunResult(activeRunIntent.requestId);
+        if (!runResult || runResult.status === "not_started" || runResult.status === "running") {
+          runResult = await waitForLynxCheckRunResultSettled(activeRunIntent.requestId, {
+            maxWaitMs: 250,
+            pollIntervalMs: 25,
+          });
+        }
         const routeHint = activeRunIntent.routeHint ?? null;
         const routeTarget = resolveManagedLynxCheckFallbackTarget(routeHint);
 
-        if (runResult?.sendSucceeded) {
+        if (runResult?.status === "completed" && runResult.sendSucceeded) {
           markLynxCheckRunCompleted(activeRunIntent.requestId);
         } else {
           const fallbackContent = runResult?.reportPath && existsSync(runResult.reportPath)
@@ -1025,7 +1067,14 @@ export default function setup(api: OpenClawPluginApi) {
     const approvedToolOverride = consumeApprovedOverrideFull(ctx, toolFingerprint);
     if (selfSafetyGuardConfig.toolGuard !== false) {
       try {
-        const guardContext = buildGuardContext(config, event, ctx);
+        const sessionKey = normalizeString(ctx.sessionKey);
+        const activeManagedLynxCheckRun = sessionKey
+          ? readLatestPendingLynxCheckRunIntent(sessionKey)
+          : null;
+        const guardContext = buildGuardContext(config, event, {
+          ...ctx,
+          managedLynxCheckRun: Boolean(activeManagedLynxCheckRun),
+        });
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
         execBlacklistContext = decision.contextHints;
         log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Tool call risk detected: ${JSON.stringify(decision)}`);

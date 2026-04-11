@@ -10,7 +10,7 @@ This directory is the execution-heavy discovery capability used by Lynx Guardian
 
 ## How it is used now
 
-`lynx-guardian-daily-lynx-check` is responsible for scheduling and dispatch.
+`lynx-guardian-check-orchestrator` is responsible for scheduling and dispatch.
 
 When a managed `/lynx-check` run starts, the orchestrator should:
 

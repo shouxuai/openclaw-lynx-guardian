@@ -95,3 +95,6 @@ test-results/
 /test-temp
 /docs/**
 .worktrees/
+/scripts-dev
+/AGENTS.md
+/CLAUDE.md

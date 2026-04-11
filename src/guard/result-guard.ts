@@ -13,7 +13,7 @@ function containsProtectedResult(text: string): boolean {
   return PROTECTED_RESULT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-export function guardToolResultPersistence(toolName: string, message: any): {
+export function guardToolResultPersistence(toolName: string | undefined, message: any): {
   block: boolean;
   message: any;
 } {
@@ -30,7 +30,7 @@ export function guardToolResultPersistence(toolName: string, message: any): {
     block: true,
     message: createReplacementMessage(
       message,
-      `[Lynx Guardian] tool result replaced by security guard: ${toolName} returned protected content`,
+      `[Lynx Guardian] tool result replaced by security guard: ${toolName ?? "tool"} returned protected content`,
     ),
   };
 }

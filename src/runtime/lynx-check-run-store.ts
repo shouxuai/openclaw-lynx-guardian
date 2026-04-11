@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join, resolve } from "path";
+import { dirname, isAbsolute, join, resolve } from "path";
 import type { RecentActiveDeliverySnapshot } from "./recent-active-delivery.js";
 import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
@@ -27,6 +27,11 @@ export interface LynxCheckRunResult {
 
 interface LynxCheckRunStoreOptions {
   rootDir?: string;
+}
+
+interface WaitForLynxCheckRunResultOptions extends LynxCheckRunStoreOptions {
+  maxWaitMs?: number;
+  pollIntervalMs?: number;
 }
 
 type CreateLynxCheckRunIntentInput = Omit<LynxCheckRunIntent, "requestId" | "createdAtMs" | "status"> & {
@@ -59,6 +64,10 @@ function buildIntentPath(requestId: string, options?: LynxCheckRunStoreOptions):
 
 function buildResultPath(requestId: string, options?: LynxCheckRunStoreOptions): string {
   return join(resolveRootDir(options?.rootDir), `${requestId}.result.json`);
+}
+
+export function getLynxCheckRunResultPath(requestId: string, options?: LynxCheckRunStoreOptions): string {
+  return buildResultPath(requestId, options);
 }
 
 export function getLynxCheckRunReportPath(requestId: string, options?: LynxCheckRunStoreOptions): string {
@@ -137,21 +146,65 @@ function normalizeIntent(value: unknown): LynxCheckRunIntent | null {
   };
 }
 
-function normalizeResult(value: unknown): LynxCheckRunResult | null {
+function isPathWithinRoot(candidatePath: string, rootDir: string): boolean {
+  const resolvedCandidate = resolve(candidatePath);
+  const resolvedRoot = resolve(rootDir);
+  const normalizeForCompare = (value: string) => (process.platform === "win32" ? value.toLowerCase() : value);
+  const candidateComparable = normalizeForCompare(resolvedCandidate);
+  const rootComparable = normalizeForCompare(resolvedRoot);
+
+  return candidateComparable === rootComparable || candidateComparable.startsWith(`${rootComparable}\\`) || candidateComparable.startsWith(`${rootComparable}/`);
+}
+
+function normalizeResultPath(value: unknown, options?: LynxCheckRunStoreOptions): string | undefined {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  const rootDir = resolveRootDir(options?.rootDir);
+  let resolvedPath: string;
+
+  if (normalized.startsWith("~")) {
+    resolvedPath = resolve(normalized.replace(/^~(?=$|[\\/])/, resolveRuntimeHomeDir()));
+  } else if (normalized.startsWith(".openclaw") || normalized.startsWith(".\\openclaw") || normalized.startsWith("./.openclaw")) {
+    resolvedPath = resolve(resolveRuntimeHomeDir(), normalized);
+  } else if (isAbsolute(normalized)) {
+    resolvedPath = resolve(normalized);
+  } else {
+    resolvedPath = resolve(rootDir, normalized);
+  }
+
+  if (!isPathWithinRoot(resolvedPath, rootDir)) {
+    return undefined;
+  }
+  return resolvedPath;
+}
+
+function normalizeResult(
+  value: unknown,
+  options?: { coerceUnsupportedStatus?: boolean; rootDir?: string },
+): LynxCheckRunResult | null {
   if (!value || typeof value !== "object") {
     return null;
   }
 
   const parsed = value as Record<string, unknown>;
   const requestId = normalizeString(parsed.requestId);
-  const status = parsed.status;
+  const rawStatus = normalizeString(parsed.status);
   const transport = normalizeString(parsed.transport);
   const completedAtMs = parsed.completedAtMs;
+  let status: LynxCheckRunResult["status"] | null = null;
+  let statusErrorMessage: string | undefined;
 
   if (!requestId) {
     return null;
   }
-  if (status !== "not_started" && status !== "running" && status !== "completed" && status !== "failed") {
+  if (rawStatus === "not_started" || rawStatus === "running" || rawStatus === "completed" || rawStatus === "failed") {
+    status = rawStatus;
+  } else if (options?.coerceUnsupportedStatus && rawStatus) {
+    status = "failed";
+    statusErrorMessage = `Unsupported run result status: ${rawStatus}`;
+  } else {
     return null;
   }
   if (typeof parsed.sendAttempted !== "boolean" || typeof parsed.sendSucceeded !== "boolean") {
@@ -170,8 +223,8 @@ function normalizeResult(value: unknown): LynxCheckRunResult | null {
     sendAttempted: parsed.sendAttempted,
     sendSucceeded: parsed.sendSucceeded,
     transport,
-    reportPath: normalizeString(parsed.reportPath) || undefined,
-    errorMessage: normalizeString(parsed.errorMessage) || undefined,
+    reportPath: normalizeResultPath(parsed.reportPath, { rootDir: options?.rootDir }),
+    errorMessage: statusErrorMessage ?? (normalizeString(parsed.errorMessage) || undefined),
     completedAtMs,
   };
 }
@@ -304,7 +357,7 @@ export function writeLynxCheckRunResult(
     ...input,
     requestId,
     completedAtMs,
-  });
+  }, { coerceUnsupportedStatus: false, rootDir: options?.rootDir });
 
   if (!result) {
     throw new Error("Invalid LynxCheckRunResult");
@@ -324,8 +377,42 @@ export function readLynxCheckRunResult(
   }
 
   try {
-    return normalizeResult(JSON.parse(readFileSync(filePath, "utf8")));
+    return normalizeResult(JSON.parse(readFileSync(filePath, "utf8")), {
+      coerceUnsupportedStatus: true,
+      rootDir: options?.rootDir,
+    });
   } catch {
     return null;
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
+}
+
+export async function waitForLynxCheckRunResultSettled(
+  requestId: string,
+  options?: WaitForLynxCheckRunResultOptions,
+): Promise<LynxCheckRunResult | null> {
+  const maxWaitMs = Math.max(0, Math.floor(options?.maxWaitMs ?? 250));
+  const pollIntervalMs = Math.max(1, Math.floor(options?.pollIntervalMs ?? 25));
+  const deadlineMs = Date.now() + maxWaitMs;
+
+  let latest = readLynxCheckRunResult(requestId, options);
+  while (Date.now() < deadlineMs) {
+    if (latest && (latest.status === "completed" || latest.status === "failed")) {
+      return latest;
+    }
+    if (latest && latest.status !== "not_started" && latest.status !== "running") {
+      return latest;
+    }
+
+    const remainingMs = Math.max(0, deadlineMs - Date.now());
+    await delay(Math.min(pollIntervalMs, remainingMs));
+    latest = readLynxCheckRunResult(requestId, options);
+  }
+
+  return latest;
 }

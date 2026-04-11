@@ -42,12 +42,11 @@ const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [
   /[\\/]\.openclaw[\\/]workspace[\\/]memory[\\/]\d{4}-\d{2}-\d{2}\.md$/i,
 ];
 
-function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
-  const subsystem = normalizeString(ctx?.subsystem).toLowerCase();
-  if (subsystem !== "plugins") {
-    return false;
-  }
+const TRUSTED_MANAGED_LYNX_CHECK_PROTECTED_READ_PATTERNS = [
+  /[\\/]skills[\\/]lynx-guardian-check-orchestrator[\\/]SKILL\.md$/i,
+];
 
+function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
   const toolName = normalizeString(event?.toolName).toLowerCase();
   if (toolName !== "read") {
     return false;
@@ -59,6 +58,19 @@ function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
   }
 
   const canonicalPath = canonicalizePath(rawPath);
+  const isManagedLynxCheckRun = ctx?.managedLynxCheckRun === true;
+  if (
+    isManagedLynxCheckRun
+    && TRUSTED_MANAGED_LYNX_CHECK_PROTECTED_READ_PATTERNS.some((pattern) => pattern.test(canonicalPath))
+  ) {
+    return true;
+  }
+
+  const subsystem = normalizeString(ctx?.subsystem).toLowerCase();
+  if (subsystem !== "plugins") {
+    return false;
+  }
+
   return TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS.some((pattern) => pattern.test(canonicalPath));
 }
 
