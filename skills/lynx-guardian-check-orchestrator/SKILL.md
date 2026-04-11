@@ -59,18 +59,22 @@ The result file must include:
 ### Execution Steps
 
 1. Read the current `requestId`, `source`, and `preferredTargetKind`.
-2. Dispatch the audit portion to `SX-security-audit`.
-3. Dispatch the discovery portion to `SX-openclaw-discovery`.
-4. Assemble one composite markdown report.
-5. Save that report to `.openclaw/lynx/check-runs/<requestId>.report.md`.
-6. Attempt to send the report as a new message.
-7. Record the send outcome in `.result.json`.
+2. Use the exact audit skill file at `skills/lynx-guardian-lesson/SX-security-audit/SKILL.md`.
+3. Use the exact discovery skill file at `skills/lynx-guardian-lesson/SX-openclaw-discovery/SKILL.md`.
+4. Dispatch the audit portion to `SX-security-audit`.
+5. Dispatch the discovery portion to `SX-openclaw-discovery`.
+6. Assemble one composite markdown report.
+7. Save that report to `.openclaw/lynx/check-runs/<requestId>.report.md`.
+8. Attempt to send the report as a new message.
+9. Record the send outcome in `.result.json`.
 
 ### Delivery Rules
 
 - Manual runs prefer the current session.
 - Scheduled runs prefer the recent-active remembered session.
 - Use the channel's shared message sender / resolved target semantics when available.
+- Do not scan for alternate skill locations with `exec`, `find`, `ls`, or glob patterns when the exact skill paths are already known.
+- When sending the report in chat, send the full report body and do not tell the user to inspect local files or report paths.
 - If sending fails, do not pretend it succeeded.
 - If sending fails after the report is ready, keep the report on disk so the plugin can fallback-deliver it.
 

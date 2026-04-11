@@ -44,6 +44,40 @@ const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [
 
 const TRUSTED_MANAGED_LYNX_CHECK_PROTECTED_READ_PATTERNS = [
   /[\\/]skills[\\/]lynx-guardian-check-orchestrator[\\/]SKILL\.md$/i,
+  /[\\/]skills[\\/]lynx-guardian-lesson[\\/]SX-security-audit[\\/]SKILL\.md$/i,
+  /[\\/]skills[\\/]lynx-guardian-lesson[\\/]SX-openclaw-discovery[\\/]SKILL\.md$/i,
+  /[\\/]\.openclaw[\\/]openclaw\.json$/i,
+];
+
+const TRUSTED_MANAGED_LYNX_CHECK_EXEC_PREFIXES = [
+  /^find\b/i,
+  /^ls\b/i,
+  /^stat\b/i,
+  /^cat\b/i,
+  /^test\b/i,
+  /^pwd\b/i,
+  /^mkdir\s+-p\b/i,
+];
+
+const TRUSTED_MANAGED_LYNX_CHECK_EXEC_TARGET_PATTERNS = [
+  /[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/ ]|$)/i,
+  /[\\/]\.openclaw[\\/]lynx[\\/]check-runs(?:[\\/ ]|$)/i,
+  /[\\/]\.openclaw[\\/]openclaw\.json(?:\s|$)/i,
+];
+
+const TRUSTED_MANAGED_LYNX_CHECK_EXEC_DENY_PATTERNS = [
+  /\brm\b/i,
+  /\bmv\b/i,
+  /\bchmod\b/i,
+  /\bchown\b/i,
+  /\bcurl\b/i,
+  /\bwget\b/i,
+  /\bssh\b/i,
+  /\bscp\b/i,
+  /\bsudo\b/i,
+  /\bnode\s+-e\b/i,
+  /\bpython(?:3)?\s+-c\b/i,
+  /\bbash\s+-c\b/i,
 ];
 
 function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
@@ -72,6 +106,32 @@ function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
   }
 
   return TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS.some((pattern) => pattern.test(canonicalPath));
+}
+
+function isTrustedManagedLynxCheckToolCall(event: any, ctx: any): boolean {
+  if (ctx?.managedLynxCheckRun !== true) {
+    return false;
+  }
+
+  const toolName = normalizeString(event?.toolName).toLowerCase();
+  if (toolName !== "exec") {
+    return false;
+  }
+
+  const command = normalizeString(event?.params?.command);
+  if (!command) {
+    return false;
+  }
+
+  if (!TRUSTED_MANAGED_LYNX_CHECK_EXEC_PREFIXES.some((pattern) => pattern.test(command))) {
+    return false;
+  }
+
+  if (TRUSTED_MANAGED_LYNX_CHECK_EXEC_DENY_PATTERNS.some((pattern) => pattern.test(command))) {
+    return false;
+  }
+
+  return TRUSTED_MANAGED_LYNX_CHECK_EXEC_TARGET_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 export function buildGuardContext(config: any, event: any, ctx: any): GuardContext {
@@ -108,6 +168,7 @@ export function buildGuardContext(config: any, event: any, ctx: any): GuardConte
     requesterId,
     channel,
     trustedInternalProtectedRead: isTrustedInternalProtectedRead(event, ctx),
+    trustedManagedLynxCheckToolCall: isTrustedManagedLynxCheckToolCall(event, ctx),
   };
 }
 

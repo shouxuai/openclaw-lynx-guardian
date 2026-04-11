@@ -5,6 +5,8 @@ export interface BuildLynxCheckExecutionPromptOptions {
   source: "manual" | "scheduled";
   preferredTargetKind: "current" | "recent";
   skillPath: string;
+  auditSkillPath: string;
+  discoverySkillPath: string;
 }
 
 export function buildLynxCheckExecutionPrompt(
@@ -21,10 +23,15 @@ export function buildLynxCheckExecutionPrompt(
     `skillEntry: ${options.skillPath}`,
     "You must route execution through lynx-guardian-check-orchestrator and treat it as the primary orchestrator entrypoint.",
     "Legacy references to lynx-guardian-daily-lynx-check still follow the same contract.",
+    `Use the exact audit skill file at ${options.auditSkillPath}.`,
+    `Use the exact discovery skill file at ${options.discoverySkillPath}.`,
     "Dispatch the audit work to SX-security-audit.",
     "Dispatch the discovery work to SX-openclaw-discovery.",
+    "Do not scan for alternate skill locations with exec, find, ls, or glob patterns.",
     `Assemble one markdown report and write it to ${reportPath}.`,
     "Attempt to send that report as a new message using the current channel binding / shared message sender semantics when available.",
+    "Do not tell the user to inspect local files or report paths.",
+    "If you send a message yourself, send the full report body in chat.",
     `After the send attempt, write ${resultPath} with requestId, status, sendAttempted, sendSucceeded, transport, reportPath, errorMessage, and completedAtMs.`,
     "status must be one of: not_started, running, completed, failed.",
     "Do not claim the report was sent unless the send actually succeeded.",
@@ -36,6 +43,6 @@ export function buildLynxCheckFallbackFailureNotice(requestId: string): string {
   return [
     "Lynx Guardian /lynx-check 已完成执行，但报告未能由技能直接送达。",
     `requestId: ${requestId}`,
-    "插件已尝试补发；若仍未看到完整报告，请检查 .openclaw/lynx/check-runs 下的结果文件。",
+    "插件已尝试在当前会话补发完整结果；如果这条消息仍不是完整报告，请直接重新发送 /lynx-check 以再次回传。",
   ].join("\n");
 }

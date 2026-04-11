@@ -108,6 +108,7 @@ export interface EventContext {
   resolveMessageTarget?: (hint: Partial<ResolvedMessageTarget>) => Promise<ResolvedMessageTarget | null>;
   sharedMessageSender?: SharedMessageSender;
   terminateSession?: (options: { reason: string; silent: boolean }) => Promise<void>;
+  managedLynxCheckRun?: boolean;
   [key: string]: any;
 }
 

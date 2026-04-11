@@ -1,5 +1,6 @@
 import { join } from "path";
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
+import { fileURLToPath } from "url";
 import type { OpenClawPluginApi } from "./src/types.js";
 import {
   ensureUserRegistered,
@@ -91,11 +92,13 @@ import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from ".
 import { deliverLynxReport } from "./src/runtime/lynx-message-delivery.js";
 import {
   createLynxCheckRunIntent,
+  getLynxCheckRunReportPath,
   markLynxCheckRunCompleted,
   readLatestPendingLynxCheckRunIntent,
   readLynxCheckRunResult,
   updateLynxCheckRunIntentStatus,
   waitForLynxCheckRunResultSettled,
+  writeLynxCheckRunResult,
 } from "./src/runtime/lynx-check-run-store.js";
 import {
   buildLynxCheckExecutionPrompt,
@@ -105,6 +108,16 @@ import {
 function isConfirmationPhrase(text: string, phrase: string): boolean {
   return text.includes(phrase.trim());
 }
+
+const LYNX_CHECK_ORCHESTRATOR_SKILL_PATH = fileURLToPath(
+  new URL("./skills/lynx-guardian-check-orchestrator/SKILL.md", import.meta.url),
+);
+const LYNX_CHECK_SECURITY_AUDIT_SKILL_PATH = fileURLToPath(
+  new URL("./skills/lynx-guardian-lesson/SX-security-audit/SKILL.md", import.meta.url),
+);
+const LYNX_CHECK_DISCOVERY_SKILL_PATH = fileURLToPath(
+  new URL("./skills/lynx-guardian-lesson/SX-openclaw-discovery/SKILL.md", import.meta.url),
+);
 
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
@@ -654,7 +667,9 @@ export default function setup(api: OpenClawPluginApi) {
           requestId: runIntent.requestId,
           source: runIntent.source,
           preferredTargetKind: runIntent.preferredTargetKind,
-          skillPath: "skills/lynx-guardian-check-orchestrator/SKILL.md",
+          skillPath: LYNX_CHECK_ORCHESTRATOR_SKILL_PATH,
+          auditSkillPath: LYNX_CHECK_SECURITY_AUDIT_SKILL_PATH,
+          discoverySkillPath: LYNX_CHECK_DISCOVERY_SKILL_PATH,
         })}\n`;
       }
 
@@ -879,12 +894,13 @@ export default function setup(api: OpenClawPluginApi) {
         }
         const routeHint = activeRunIntent.routeHint ?? null;
         const routeTarget = resolveManagedLynxCheckFallbackTarget(routeHint);
+        const reportPath = runResult?.reportPath ?? getLynxCheckRunReportPath(activeRunIntent.requestId);
 
         if (runResult?.status === "completed" && runResult.sendSucceeded) {
           markLynxCheckRunCompleted(activeRunIntent.requestId);
         } else {
-          const fallbackContent = runResult?.reportPath && existsSync(runResult.reportPath)
-            ? readFileSync(runResult.reportPath, "utf8")
+          const fallbackContent = existsSync(reportPath)
+            ? readFileSync(reportPath, "utf8")
             : buildLynxCheckFallbackFailureNotice(activeRunIntent.requestId);
           const sendResult = await sendAssistantMessageWithRetry({
             ctx,
@@ -897,6 +913,17 @@ export default function setup(api: OpenClawPluginApi) {
               role: "assistant",
               content: fallbackContent,
             },
+          });
+
+          writeLynxCheckRunResult(activeRunIntent.requestId, {
+            status: sendResult.delivered ? "completed" : "failed",
+            sendAttempted: true,
+            sendSucceeded: sendResult.delivered,
+            transport: sendResult.transport,
+            reportPath: existsSync(reportPath) ? reportPath : undefined,
+            errorMessage: sendResult.delivered
+              ? undefined
+              : `Fallback delivery failed (transport=${sendResult.transport})`,
           });
 
           if (sendResult.delivered) {
@@ -1056,6 +1083,7 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
     let execBlacklistContext: CheckExecBlacklistContext | undefined;
+    let trustedManagedLynxCheckToolCall = false;
     const toolFingerprint = buildOperationFingerprint({
       sessionKey: ctx.sessionKey,
       actionType: "tool",
@@ -1071,10 +1099,12 @@ export default function setup(api: OpenClawPluginApi) {
         const activeManagedLynxCheckRun = sessionKey
           ? readLatestPendingLynxCheckRunIntent(sessionKey)
           : null;
-        const guardContext = buildGuardContext(config, event, {
+        const managedGuardContext = {
           ...ctx,
           managedLynxCheckRun: Boolean(activeManagedLynxCheckRun),
-        });
+        };
+        const guardContext = buildGuardContext(config, event, managedGuardContext);
+        trustedManagedLynxCheckToolCall = guardContext.trustedManagedLynxCheckToolCall === true;
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
         execBlacklistContext = decision.contextHints;
         log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Tool call risk detected: ${JSON.stringify(decision)}`);
@@ -1143,6 +1173,11 @@ export default function setup(api: OpenClawPluginApi) {
       } catch (err: any) {
         log.error(`[lynx-guardian] Self-safety-guard tool check error: ${err.message}`);
       }
+    }
+
+    if (trustedManagedLynxCheckToolCall) {
+      log.info(`[lynx-guardian] Managed /lynx-check trusted tool passthrough: ${toolName}`);
+      return;
     }
 
     if (skillGuardConfig.enabled !== false && skillGuardConfig.blockMalicious !== false) {
@@ -1353,6 +1388,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("session_start", async (event, ctx) => {
     appendLifecycleProbe("session_start", event, ctx);
+    rememberRecentActiveDeliveryTarget(ctx);
   });
 
   api.on("session_end", async (event, ctx) => {
