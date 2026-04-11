@@ -89,6 +89,17 @@ import {
 import { getHookCapabilityReport, getOpenClawRuntimeVersion } from "./src/runtime/hook-capabilities.js";
 import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from "./src/runtime/recent-active-delivery.js";
 import { deliverLynxReport } from "./src/runtime/lynx-message-delivery.js";
+import {
+  createLynxCheckRunIntent,
+  markLynxCheckRunCompleted,
+  readLatestPendingLynxCheckRunIntent,
+  readLynxCheckRunResult,
+  updateLynxCheckRunIntentStatus,
+} from "./src/runtime/lynx-check-run-store.js";
+import {
+  buildLynxCheckExecutionPrompt,
+  buildLynxCheckFallbackFailureNotice,
+} from "./src/runtime/lynx-check-orchestrator.js";
 
 function isConfirmationPhrase(text: string, phrase: string): boolean {
   return text.includes(phrase.trim());
@@ -229,6 +240,40 @@ export default function setup(api: OpenClawPluginApi) {
       delivered: false,
       transport: "none",
     };
+  }
+
+  function isPluginSubsystem(ctx: any): boolean {
+    return normalizeString(ctx?.subsystem).toLowerCase() === "plugins";
+  }
+
+  function resolveManagedLynxCheckSource(ctx: any): "manual" | "scheduled" {
+    return isPluginSubsystem(ctx) ? "scheduled" : "manual";
+  }
+
+  function resolveManagedLynxCheckRouteHint(
+    ctx: any,
+    source: "manual" | "scheduled",
+  ): RecentActiveDeliverySnapshot | null {
+    if (source === "manual") {
+      return rememberRecentActiveDeliveryTarget(ctx) ?? readRecentActiveDeliverySnapshot();
+    }
+
+    return readRecentActiveDeliverySnapshot();
+  }
+
+  function resolveManagedLynxCheckFallbackTarget(
+    routeHint?: RecentActiveDeliverySnapshot | null,
+  ): RecentActiveDeliveryTarget | null {
+    const recentTarget = getRecentActiveDeliveryTarget();
+    if (!recentTarget) {
+      return null;
+    }
+
+    if (!routeHint) {
+      return recentTarget;
+    }
+
+    return recentTarget.targetKey === routeHint.targetKey ? recentTarget : null;
   }
 
   try {
@@ -434,40 +479,8 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       if (lynxCheckTrigger.kind === "lynx_command") {
-        log.info(`[lynx-guardian] 收到手动 /lynx-check 指令: ${text}`);
-        await sendAssistantMessageWithRetry({
-          ctx,
-          tag: "manual-/lynx-check-start",
-          attempts: 1,
-          message: {
-            role: "assistant",
-            content: "Lynx Guardian /lynx-check 已启动，正在整理综合检测报告，请稍候。",
-          },
-        });
-        const ipInfo = await baseIpInfo();
-        const compositeReport = await buildManualLynxCheckReport({
-          log,
-          userId,
-          ipInfo,
-          discoveryConfig: openClawDiscoveryConfig,
-          discoveryRuntimePath: discoveryRuntime.path,
-        });
-        const sendResult = await sendAssistantMessageWithRetry({
-          ctx,
-          tag: "manual-/lynx-check-report",
-          attempts: 3,
-          message: {
-            role: "assistant",
-            content: compositeReport,
-          },
-        });
-        if (!sendResult.delivered) {
-          log.warn("[lynx-guardian] Manual /lynx-check will fall back to blockReason report");
-        }
-        return {
-          block: true,
-          blockReason: compositeReport,
-        };
+        log.info(`[lynx-guardian] 收到手动 /lynx-check 指令，将在 before_agent_start 中走 skill-first 调度: ${text}`);
+        return;
       }
 
       if (lynxCheckTrigger.kind === "keyword_request") {
@@ -586,9 +599,32 @@ export default function setup(api: OpenClawPluginApi) {
       });
       const approvedAgentStartOverride = consumeApprovedOverrideFull(ctx, agentStartFingerprint);
       const userInput = extractContentAfterDate(promptText);
-      const prependContextBeforeDiscoveryPrompt = prependContext;
 
       if (isManualCompositeLynxCheckRequest(userInput)) {
+        const source = resolveManagedLynxCheckSource(ctx);
+        const routeHint = resolveManagedLynxCheckRouteHint(ctx, source) ?? undefined;
+        const runIntent = createLynxCheckRunIntent({
+          source,
+          trigger: source === "scheduled" ? "scheduled_lynx_check" : "lynx_command",
+          preferredTargetKind: source === "scheduled" ? "recent" : "current",
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          routeHint,
+        });
+
+        log.info(
+          `[lynx-guardian] Managed /lynx-check run created requestId=${runIntent.requestId} source=${runIntent.source} target=${runIntent.preferredTargetKind}`,
+        );
+        prependContext += `${buildLynxCheckExecutionPrompt({
+          requestId: runIntent.requestId,
+          source: runIntent.source,
+          preferredTargetKind: runIntent.preferredTargetKind,
+          skillPath: "skills/lynx-guardian-daily-lynx-check/SKILL.md",
+        })}\n`;
+      }
+
+      const prependContextBeforeDiscoveryPrompt = prependContext;
+
+      if (false && isManualCompositeLynxCheckRequest(userInput)) {
         discoveryPrependBase = prependContext;
         discoveryInstruction = "[系统指令] 安全插件已完成 OpenClaw 服务检测，完整报告将由插件主动发送为单独消息。\n";
         log.info(`[lynx-guardian] 收到手动 OpenClaw 服务检测指令 ${userInput}`);
@@ -795,6 +831,39 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       if (!event.messages || event.messages.length === 0) return;
+
+      const activeRunIntent = readLatestPendingLynxCheckRunIntent(ctx.sessionKey);
+      if (activeRunIntent) {
+        const runResult = readLynxCheckRunResult(activeRunIntent.requestId);
+        const routeHint = activeRunIntent.routeHint ?? null;
+        const routeTarget = resolveManagedLynxCheckFallbackTarget(routeHint);
+
+        if (runResult?.sendSucceeded) {
+          markLynxCheckRunCompleted(activeRunIntent.requestId);
+        } else {
+          const fallbackContent = runResult?.reportPath && existsSync(runResult.reportPath)
+            ? readFileSync(runResult.reportPath, "utf8")
+            : buildLynxCheckFallbackFailureNotice(activeRunIntent.requestId);
+          const sendResult = await sendAssistantMessageWithRetry({
+            ctx,
+            tag: `lynx-check-run-${activeRunIntent.requestId}`,
+            attempts: 3,
+            routeHint,
+            routeHintSendMessage: routeTarget?.sendMessage,
+            allowSameSessionFallback: activeRunIntent.preferredTargetKind === "current",
+            message: {
+              role: "assistant",
+              content: fallbackContent,
+            },
+          });
+
+          if (sendResult.delivered) {
+            markLynxCheckRunCompleted(activeRunIntent.requestId);
+          } else {
+            updateLynxCheckRunIntentStatus(activeRunIntent.requestId, "failed");
+          }
+        }
+      }
 
       const isDiscoveryResponse = existsSync(DISCOVERY_RESULT_PATH) || existsSync(DISCOVERY_RESULT_CONSUMED_PATH);
       const shouldAttachDiscoveryReport = shouldAttachPendingDiscoveryReport(DISCOVERY_REQUEST_PATH, ctx.sessionKey)

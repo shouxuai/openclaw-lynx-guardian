@@ -13,6 +13,14 @@ import * as safetyGuard from '../src/guard/safety-guard.js';
 import * as blacklist from '../src/blacklist.js';
 import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js';
 import { deliverLynxReport } from '../src/runtime/lynx-message-delivery.js';
+import {
+  createLynxCheckRunIntent,
+  getLynxCheckRunReportPath,
+  readLatestPendingLynxCheckRunIntent,
+  readLynxCheckRunIntent,
+  readLynxCheckRunResult,
+  writeLynxCheckRunResult,
+} from '../src/runtime/lynx-check-run-store.js';
 import * as tokenOptimizerRunner from '../src/runtime/token-optimizer-runner.js';
 
 vi.mock('../src/utils.js');
@@ -68,6 +76,7 @@ describe('Plugin Setup', () => {
   const hookProbeLogPath = join(openclawHome, '.openclaw', 'lynx', 'hook-probe.log');
   const scheduledCronStorePath = join(process.cwd(), 'test-temp', 'plugin-scheduled-lynx-check', 'jobs.json');
   const recentActiveDeliveryPath = join(openclawHome, '.openclaw', 'lynx', 'recent-active-delivery.json');
+  const lynxCheckRunsPath = join(openclawHome, '.openclaw', 'lynx', 'check-runs');
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -89,6 +98,9 @@ describe('Plugin Setup', () => {
     }
     if (existsSync(recentActiveDeliveryPath)) {
       rmSync(recentActiveDeliveryPath, { force: true });
+    }
+    if (existsSync(lynxCheckRunsPath)) {
+      rmSync(lynxCheckRunsPath, { recursive: true, force: true });
     }
     recentActiveDelivery.resetRecentActiveDeliveryTargets(recentActiveDeliveryPath);
     if (existsSync(scheduledCronStorePath)) {
@@ -599,18 +611,24 @@ describe('Plugin Setup', () => {
     expect(existsSync(consumedDiscoveryPath)).toBe(false);
   });
 
-  it('should keep before_message_write as decoration-only even after a matching manual discovery request', async () => {
+  it('should keep before_message_write as decoration-only after managed /lynx-check orchestration injection', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const beforeMessageWrite = handlers['before_message_write'];
 
     await beforeAgentStart(
       { prompt: '[2026-03-30 14:00:00] /lynx-check' },
-      { sessionKey: 'sess-discovery-append' },
+      {
+        sessionKey: 'sess-discovery-append',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-before-write',
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+      },
     );
 
-    expect(existsSync(pendingDiscoveryPath)).toBe(true);
-    expect(existsSync(pendingDiscoveryRequestPath)).toBe(true);
+    expect(existsSync(pendingDiscoveryPath)).toBe(false);
+    expect(existsSync(pendingDiscoveryRequestPath)).toBe(false);
 
     const firstResult = await beforeMessageWrite(
       { message: { role: 'assistant', content: 'check completed' } },
@@ -618,9 +636,9 @@ describe('Plugin Setup', () => {
     );
 
     expect(firstResult).toBeUndefined();
-    expect(existsSync(pendingDiscoveryPath)).toBe(true);
+    expect(existsSync(pendingDiscoveryPath)).toBe(false);
     expect(existsSync(consumedDiscoveryPath)).toBe(false);
-    expect(existsSync(pendingDiscoveryRequestPath)).toBe(true);
+    expect(existsSync(pendingDiscoveryRequestPath)).toBe(false);
     expect(mockApi.logger.info).not.toHaveBeenCalledWith(
       expect.stringContaining('Discovery report appended in before_message_write'),
     );
@@ -698,36 +716,64 @@ describe('Plugin Setup', () => {
     expect(log).toContain('sess-after-tool');
   });
 
-  it('should persist a composite /lynx-check report with discovery last', async () => {
+  it('should create a run intent and prepend execution-dispatch instructions for /lynx-check instead of persisting a composite report', async () => {
     setup(mockApi);
     const handler = handlers['before_agent_start'];
 
     const result = await handler(
       { prompt: '[2026-03-30 14:00:00] /lynx-check' },
-      { sessionKey: 'sess-composite-check' },
+      {
+        sessionKey: 'sess-composite-check',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-composite',
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+      },
     );
 
     expect(mockApi.logger.error).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({
-        prependContext: expect.stringContaining('完整报告将由插件主动发送'),
+        prependContext: expect.stringContaining('Execution Dispatch Mode'),
       }),
     );
-    expect(existsSync(pendingDiscoveryPath)).toBe(true);
+    expect((result as any).prependContext).toContain('lynx-guardian-daily-lynx-check');
+    expect((result as any).prependContext).toContain('SX-security-audit');
+    expect((result as any).prependContext).toContain('SX-openclaw-discovery');
+    expect(existsSync(pendingDiscoveryPath)).toBe(false);
+    expect(existsSync(pendingDiscoveryRequestPath)).toBe(false);
 
-    const report = readFileSync(pendingDiscoveryPath, 'utf8');
-    expect(report).toContain('公网暴露检测');
-    expect(report).toContain('Skill');
-    expect(report).toContain('OpenClaw');
-    expect(report.lastIndexOf('OpenClaw')).toBeGreaterThan(report.lastIndexOf('Skill'));
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-composite-check');
+    expect(runIntent).toEqual(
+      expect.objectContaining({
+        source: 'manual',
+        trigger: 'lynx_command',
+        preferredTargetKind: 'current',
+        sessionKey: 'sess-composite-check',
+      }),
+    );
+    expect(runIntent?.routeHint).toEqual(
+      expect.objectContaining({
+        sessionKey: 'sess-composite-check',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+      }),
+    );
+    expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
+      expect.objectContaining({
+        requestId: runIntent!.requestId,
+        status: 'not_started',
+        sendSucceeded: false,
+        reportPath: getLynxCheckRunReportPath(runIntent!.requestId),
+      }),
+    );
   });
 
-  it('should route scheduled /lynx-check report to the most recent webchat session', async () => {
+  it('should fallback-send scheduled /lynx-check report to the most recent webchat session when skill delivery fails', async () => {
     setup(mockApi);
     const messageHandler = handlers['message_received'];
     const beforeAgentStart = handlers['before_agent_start'];
     const agentEnd = handlers['agent_end'];
-    const currentPluginSendMessage = vi.fn().mockResolvedValue(undefined);
     const recentWebchatSendMessage = vi.fn().mockResolvedValue(undefined);
 
     await messageHandler(
@@ -745,9 +791,20 @@ describe('Plugin Setup', () => {
       {
         sessionKey: 'sess-scheduled-recent-webchat',
         subsystem: 'plugins',
-        sendMessage: currentPluginSendMessage,
       },
     );
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-scheduled-recent-webchat');
+    const reportPath = getLynxCheckRunReportPath(runIntent!.requestId);
+    writeFileSync(reportPath, '# scheduled report\n\nLynx Guardian OpenClaw', 'utf8');
+    writeLynxCheckRunResult(runIntent!.requestId, {
+      status: 'completed',
+      sendAttempted: true,
+      sendSucceeded: false,
+      transport: 'skill-send-failed',
+      reportPath,
+      errorMessage: 'webchat send failed',
+    });
 
     await agentEnd(
       {
@@ -764,20 +821,18 @@ describe('Plugin Setup', () => {
     expect(recentWebchatSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         role: 'assistant',
-        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+        content: expect.stringContaining('scheduled report'),
       }),
     );
-    expect(currentPluginSendMessage).not.toHaveBeenCalled();
-    expect(existsSync(pendingDiscoveryPath)).toBe(false);
+    expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
     expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('sender-execution-plane'));
   });
 
-  it('should route scheduled /lynx-check report to the most recent Feishu session', async () => {
+  it('should fallback-send scheduled /lynx-check report to the most recent Feishu session when skill delivery fails', async () => {
     setup(mockApi);
     const messageHandler = handlers['message_received'];
     const beforeAgentStart = handlers['before_agent_start'];
     const agentEnd = handlers['agent_end'];
-    const currentPluginSendMessage = vi.fn().mockResolvedValue(undefined);
     const recentFeishuSendMessage = vi.fn().mockResolvedValue(undefined);
 
     await messageHandler(
@@ -795,9 +850,20 @@ describe('Plugin Setup', () => {
       {
         sessionKey: 'sess-scheduled-recent-feishu',
         subsystem: 'plugins',
-        sendMessage: currentPluginSendMessage,
       },
     );
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-scheduled-recent-feishu');
+    const reportPath = getLynxCheckRunReportPath(runIntent!.requestId);
+    writeFileSync(reportPath, '# scheduled report\n\nLynx Guardian OpenClaw', 'utf8');
+    writeLynxCheckRunResult(runIntent!.requestId, {
+      status: 'completed',
+      sendAttempted: true,
+      sendSucceeded: false,
+      transport: 'skill-send-failed',
+      reportPath,
+      errorMessage: 'feishu send failed',
+    });
 
     await agentEnd(
       {
@@ -814,28 +880,40 @@ describe('Plugin Setup', () => {
     expect(recentFeishuSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         role: 'assistant',
-        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+        content: expect.stringContaining('scheduled report'),
       }),
     );
-    expect(currentPluginSendMessage).not.toHaveBeenCalled();
-    expect(existsSync(pendingDiscoveryPath)).toBe(false);
+    expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
   });
 
-  it('should use same-session fallback for non-plugin agent_end delivery and clear pending files on success', async () => {
+  it('should fallback-send manual /lynx-check report to the current session when skill delivery fails', async () => {
     setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
     const agentEnd = handlers['agent_end'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
 
-    mkdirSync(join(openclawHome, '.openclaw'), { recursive: true });
-    writeFileSync(pendingDiscoveryPath, 'scan result: 127.0.0.1:18789', 'utf8');
-    writeFileSync(
-      pendingDiscoveryRequestPath,
-      JSON.stringify({
+    await beforeAgentStart(
+      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+      {
         sessionKey: 'sess-agent-end-current',
-        userInput: 'help me check the lynx ip process',
-      }),
-      'utf8',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-current',
+        sendMessage,
+      },
     );
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-agent-end-current');
+    const reportPath = getLynxCheckRunReportPath(runIntent!.requestId);
+    writeFileSync(reportPath, '# manual report\n\nLynx Guardian OpenClaw', 'utf8');
+    writeLynxCheckRunResult(runIntent!.requestId, {
+      status: 'completed',
+      sendAttempted: true,
+      sendSucceeded: false,
+      transport: 'skill-send-failed',
+      reportPath,
+      errorMessage: 'manual send failed',
+    });
 
     await agentEnd(
       {
@@ -852,11 +930,10 @@ describe('Plugin Setup', () => {
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         role: 'assistant',
-        content: expect.stringContaining('Lynx Guardian OpenClaw'),
+        content: expect.stringContaining('manual report'),
       }),
     );
-    expect(existsSync(pendingDiscoveryPath)).toBe(false);
-    expect(existsSync(pendingDiscoveryRequestPath)).toBe(false);
+    expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
   });
 
   it('should prefer resolved target + shared sender before legacy or same-session fallbacks', async () => {
@@ -1041,7 +1118,7 @@ describe('Plugin Setup', () => {
     expect(fallbackSendMessage).not.toHaveBeenCalled();
   });
 
-  it('should actively send manual /lynx-check report through sender execution plane in current session with visible send logs', async () => {
+  it('should leave manual /lynx-check for before_agent_start orchestration instead of sending inline from message_received', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -1069,98 +1146,102 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
-    expect(resolveMessageTarget).toHaveBeenCalled();
-    expect(sharedSend).toHaveBeenCalledTimes(2);
-    expect(sharedSend).toHaveBeenNthCalledWith(
-      2,
+    expect(result).toBeUndefined();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
+    expect(resolveMessageTarget).not.toHaveBeenCalled();
+    expect(sharedSend).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should prepend execution-dispatch instructions and create a current-session run intent for manual /lynx-check', async () => {
+    setup(mockApi);
+    const handler = handlers['before_agent_start'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handler(
+      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-manual-lynx-check-retry',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-manual',
+        sendMessage,
+      },
+    );
+
+    expect(result).toEqual(
       expect.objectContaining({
-        message: expect.objectContaining({
-          role: 'assistant',
-          content: expect.stringContaining('Skill'),
-        }),
+        prependContext: expect.stringContaining('Execution Dispatch Mode'),
       }),
     );
-    expect(sharedSend).toHaveBeenNthCalledWith(
-      2,
+    expect((result as any).prependContext).toContain('requestId');
+    expect((result as any).prependContext).toContain('lynx-guardian-daily-lynx-check');
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-manual-lynx-check-retry');
+    expect(runIntent).toEqual(
       expect.objectContaining({
-        message: expect.objectContaining({
-          content: expect.stringContaining('OpenClaw'),
-        }),
+        source: 'manual',
+        preferredTargetKind: 'current',
+        sessionKey: 'sess-manual-lynx-check-retry',
+      }),
+    );
+    expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
+      expect.objectContaining({
+        requestId: runIntent!.requestId,
+        status: 'not_started',
       }),
     );
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('sender-execution-plane success'));
-    expect(result).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('OpenClaw'),
-    });
   });
 
-  it('should retry manual /lynx-check active send until the report message succeeds', async () => {
+  it('should not fallback-send when the orchestrator skill already delivered the report', async () => {
     setup(mockApi);
-    const handler = handlers['message_received'];
-    const sendMessage = vi.fn()
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error('webchat temporarily unavailable'))
-      .mockResolvedValueOnce(undefined);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const recentWebchatSendMessage = vi.fn().mockResolvedValue(undefined);
 
-    const result = await handler(
-      { content: '/lynx-check' },
-      { sessionKey: 'sess-manual-lynx-check-retry', sendMessage },
+    await handlers['message_received'](
+      { content: 'keep this webchat session active' },
+      {
+        sessionKey: 'sess-recent-sent',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        sendMessage: recentWebchatSendMessage,
+      },
     );
 
-    expect(sendMessage).toHaveBeenCalledTimes(3);
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        role: 'assistant',
-      }),
+    await beforeAgentStart(
+      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
+      {
+        sessionKey: 'sess-manual-lynx-check-fallback',
+        subsystem: 'plugins',
+      },
     );
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        role: 'assistant',
-        content: expect.stringContaining('OpenClaw'),
-      }),
-    );
-    expect(mockApi.logger.warn).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
-    expect(result).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('OpenClaw'),
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-manual-lynx-check-fallback');
+    const reportPath = getLynxCheckRunReportPath(runIntent!.requestId);
+    writeFileSync(reportPath, '# delivered by skill', 'utf8');
+    writeLynxCheckRunResult(runIntent!.requestId, {
+      status: 'completed',
+      sendAttempted: true,
+      sendSucceeded: true,
+      transport: 'skill-shared-sender',
+      reportPath,
     });
-  });
 
-  it('should fall back to blockReason when manual /lynx-check report delivery exhausts all attempts', async () => {
-    setup(mockApi);
-    const handler = handlers['message_received'];
-    const sendMessage = vi.fn()
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValue(new Error('webchat unavailable'));
-
-    const result = await handler(
-      { content: '/lynx-check' },
-      { sessionKey: 'sess-manual-lynx-check-fallback', sendMessage },
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-manual-lynx-check-fallback',
+        subsystem: 'plugins',
+      },
     );
 
-    expect(sendMessage).toHaveBeenCalledTimes(4);
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      4,
-      expect.objectContaining({
-        role: 'assistant',
-        content: expect.stringContaining('OpenClaw'),
-      }),
-    );
-    expect(mockApi.logger.error).toHaveBeenCalledWith(expect.stringContaining('【我要发消息】'));
-    expect(mockApi.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('Manual /lynx-check will fall back to blockReason report'),
-    );
-    expect(result).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('OpenClaw'),
-    });
+    expect(recentWebchatSendMessage).not.toHaveBeenCalled();
+    expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
   });
 
   it('should bypass native /check and only claim /lynx-check plus keywords', async () => {
@@ -1209,8 +1290,9 @@ describe('Plugin Setup', () => {
         },
       },
     );
-    expect(sharedSend).toHaveBeenCalled();
+    expect(sharedSend).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
   });
 
   it('should bypass native /check and avoid sending discovery messages', async () => {

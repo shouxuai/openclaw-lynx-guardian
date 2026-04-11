@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
-import { createRequire } from "module";
+import { createRequire } from "node:module";
 
 export const TESTED_MIN_OPENCLAW_VERSION = "2026.2.26";
 

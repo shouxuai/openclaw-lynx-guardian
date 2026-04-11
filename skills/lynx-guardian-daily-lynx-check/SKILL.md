@@ -1,31 +1,26 @@
 ---
 name: lynx-guardian-daily-lynx-check
-description: Use when OpenClaw should create, inspect, or update an automated daily Lynx Guardian check that runs `/lynx-check` on a schedule and returns the report without manual prompting.
+description: Use when Lynx Guardian should manage `/lynx-check` scheduling or execute a managed `/lynx-check` run through the orchestrator flow.
 ---
 
-# Lynx Guardian Daily `/lynx-check`
+# Lynx Guardian Check Orchestrator
 
-Prefer the plugin's `scheduledLynxCheck` config block, which keeps one native OpenClaw cron job in sync automatically.
+`lynx-guardian-daily-lynx-check` is now the compatibility entrypoint for the Lynx check orchestrator.
 
-## Choose the scheduler
+It has two internal modes:
 
-- Use `cron` when the check should run exactly once per day, at a clear local time, and deliver a report immediately.
-- Use heartbeat only when the user explicitly wants approximate timing or wants this check batched with other heartbeat work.
+- `Scheduler Mode`: maintain the native `scheduledLynxCheck` cron configuration.
+- `Execution Dispatch Mode`: execute one managed `/lynx-check` run using the orchestrator contract.
 
-## Default workflow
+## Scheduler Mode
 
-1. Edit the plugin config instead of hand-maintaining cron jobs when Lynx Guardian is installed.
-2. Set `scheduledLynxCheck.enabled` to `true`.
-3. Set `scheduledLynxCheck.cron` to the exact schedule needed.
-4. Keep the managed job message as the exact text `/lynx-check`.
-
-## Recommended config
+Prefer the plugin config instead of hand-maintained jobs.
 
 ```json
 {
   "scheduledLynxCheck": {
     "enabled": true,
-    "cron": "0 9 * * *",
+    "cron": "37 8 * * *",
     "timezone": "Asia/Shanghai",
     "jobName": "Lynx Guardian Daily Check",
     "announce": true,
@@ -34,33 +29,69 @@ Prefer the plugin's `scheduledLynxCheck` config block, which keeps one native Op
 }
 ```
 
-Common `cron` values:
+Rules:
 
-- `37 8 * * *` -> 08:37 every day
-- `*/5 * * * *` -> every 5 minutes for testing
-- `* * * * *` -> every minute for testing
+1. Keep the managed job message as the exact text `/lynx-check`.
+2. Use `deliveryMode: "recent-active"` when the report should follow the most recently active chat session.
+3. Use heartbeat only when the user explicitly wants approximate cadence instead of exact cron timing.
 
-## Why this shape
+## Execution Dispatch Mode
 
-- The plugin writes one managed native cron job, so there are no duplicate daily checks.
-- The exact message `/lynx-check` reuses Lynx Guardian's existing manual detection path.
-- `deliveryMode: "recent-active"` routes the produced report back to the most recently active supported chat session.
-- If the most recently active session is `webchat`, the report goes back to `webchat`; if the most recent session is Feishu, the report goes back to Feishu.
-- `announce` remains the fallback path when no recent active chat target can be reused.
+When the plugin injects a managed `/lynx-check` run, treat this skill as the orchestrator entrypoint.
 
-## Heartbeat fallback
+### Run Contract
 
-Use heartbeat only when the user explicitly prefers one shared periodic loop over exact timing. In that case:
+- Read `.openclaw/lynx/check-runs/<requestId>.intent.json`.
+- Write `.openclaw/lynx/check-runs/<requestId>.report.md`.
+- Write `.openclaw/lynx/check-runs/<requestId>.result.json`.
 
-- keep the heartbeat instructions minimal;
-- store a "last run date" marker in workspace memory;
-- only emit `/lynx-check` once per calendar day;
-- tell the user this is approximate and may drift with heartbeat cadence or quiet hours.
+The result file must include:
+
+- `requestId`
+- `status`
+- `sendAttempted`
+- `sendSucceeded`
+- `transport`
+- `reportPath`
+- `errorMessage`
+- `completedAtMs`
+
+### Execution Steps
+
+1. Read the current `requestId`, `source`, and `preferredTargetKind`.
+2. Dispatch the audit portion to `SX-security-audit`.
+3. Dispatch the discovery portion to `SX-openclaw-discovery`.
+4. Assemble one composite markdown report.
+5. Save that report to `.openclaw/lynx/check-runs/<requestId>.report.md`.
+6. Attempt to send the report as a new message.
+7. Record the send outcome in `.result.json`.
+
+### Delivery Rules
+
+- Manual runs prefer the current session.
+- Scheduled runs prefer the recent-active remembered session.
+- Use the channel's shared message sender / resolved target semantics when available.
+- If sending fails, do not pretend it succeeded.
+- If sending fails after the report is ready, keep the report on disk so the plugin can fallback-deliver it.
+
+### Output Shape
+
+The composite report should keep the public `/lynx-check` structure readable in chat:
+
+1. Executive summary
+2. Security audit findings from `SX-security-audit`
+3. OpenClaw discovery findings from `SX-openclaw-discovery`
+4. A short appendix or raw summary when needed for debugging
+
+## Capability Boundaries
+
+- `SX-security-audit` owns the audit procedure and security findings.
+- `SX-openclaw-discovery` owns the execution-heavy `references/` and `scripts/` assets for discovery.
+- This orchestrator owns scheduling, dispatch, aggregation, and delivery coordination only.
 
 ## Avoid
 
-- Do not build a second timer inside the plugin.
-- Do not rely on natural-language paraphrases for the scheduled command when exact `/lynx-check` is available.
-- Do not create both heartbeat and cron schedules for the same daily check unless the user explicitly asks for both.
-- Do not hand-edit the managed cron job if changing plugin config is available.
-- Do not assume isolated cron sessions can find `webchat` automatically without the plugin remembering a recent active target.
+- Do not hardcode the `/lynx-check` composite report inside the plugin.
+- Do not claim delivery success without a real send result.
+- Do not duplicate discovery scripts back into this skill.
+- Do not bypass `SX-security-audit` or `SX-openclaw-discovery` when a managed orchestrator run is active.
