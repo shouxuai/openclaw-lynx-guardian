@@ -46,6 +46,9 @@ export interface GuardContext {
   requesterId?: string;
   channel?: string;
   trustedInternalProtectedRead?: boolean;
+  trustedManagedLynxCheckToolCall?: boolean;
+  trustedManagedLynxCheckOutput?: boolean;
+  trustedManagedLynxCheckPersistence?: boolean;
 }
 
 interface IdentityDetectionResult {
@@ -967,7 +970,20 @@ function detectSecretsInOutput(text: string): string[] {
 
 // ── Public API: Output Guard ───────────────────────────────────────
 
-export function guardOutput(output: string, sessionKey?: string): GuardDecision {
+export function guardOutput(output: string, sessionKey?: string, context?: GuardContext): GuardDecision {
+  if (context?.trustedManagedLynxCheckOutput === true) {
+    return {
+      block: false,
+      riskAssessment: {
+        level: "L0",
+        score: 0,
+        modules: [],
+        description: "trusted managed lynx-check audit output",
+        action: "allow",
+      },
+    };
+  }
+
   const modules: string[] = [];
   const accum = createAccumulators();
   let leakDirectScore = 0;
@@ -1070,6 +1086,7 @@ export function guardToolCall(
 ): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
   const trustedInternalProtectedRead = context?.trustedInternalProtectedRead === true;
+  const trustedManagedLynxCheckToolCall = context?.trustedManagedLynxCheckToolCall === true;
 
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
@@ -1128,7 +1145,11 @@ export function guardToolCall(
   }
 
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
-  if (protectedAccess.matchedFiles.length > 0 && !trustedInternalProtectedRead) {
+  if (
+    protectedAccess.matchedFiles.length > 0
+    && !trustedInternalProtectedRead
+    && !trustedManagedLynxCheckToolCall
+  ) {
     modules.push("M2:protected_file_access");
     pushDim(accum, "harm", 2);
     pushDim(accum, "rev", protectedAccess.operation === "write" ? 2 : 1);
@@ -1164,7 +1185,7 @@ export function guardToolCall(
   }
 
   // M7: 路径混淆 via tool（command / file_path 参数）
-  if (detectPathObfuscation(combined)) {
+  if (!trustedManagedLynxCheckToolCall && detectPathObfuscation(combined)) {
     modules.push("M7:wildcard_obfuscation");
     pushDim(accum, "pattern", 1);
     pushDim(accum, "clarity", 1);
@@ -1172,7 +1193,7 @@ export function guardToolCall(
 
   // M7: 管道执行 via tool（command 参数中包含 | bash 等）
   const toolPipeExec = detectPipeExecution(command);
-  if (toolPipeExec.detected) {
+  if (!trustedManagedLynxCheckToolCall && toolPipeExec.detected) {
     modules.push("M7:pipe_execution");
     pushDim(accum, "harm", toolPipeExec.shellExec ? 2 : 1);
     pushDim(accum, "pattern", 1);

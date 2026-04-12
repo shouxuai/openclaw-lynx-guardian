@@ -12,6 +12,38 @@ import type {
   BudgetStatus,
 } from "../src/runtime/token-optimizer-runner.js";
 
+const baseContext: ContextRecommendation = {
+  complexity: "medium",
+  context_level: "standard",
+  reasoning: "Standard work request",
+  recommended_files: ["IDENTITY.md", "SOUL.md", "memory/2026-04-10.md"],
+  file_count: 3,
+  savings_percent: 60,
+  skip_patterns: [],
+};
+
+const baseRouting: ModelRouting = {
+  provider: "anthropic",
+  current_model: "anthropic/claude-sonnet-4-5",
+  recommended_model: "anthropic/claude-haiku-4",
+  tier: "cheap",
+  tier_display: "Cheap",
+  confidence: 1.0,
+  reasoning: "Simple communication",
+  cost_savings_percent: 92,
+  should_switch: true,
+  all_providers: {},
+};
+
+const okBudget: BudgetStatus = {
+  date: "2026-03-17",
+  cost: 1.00,
+  tokens: 20000,
+  limit: 5.00,
+  percent_used: 20,
+  status: "ok",
+};
+
 // ── Format Helper Tests ──────────────────────────────────────────────
 
 describe("Token Optimizer Runner", () => {
@@ -124,28 +156,42 @@ describe("Token Optimizer Runner", () => {
   });
 
   describe("buildOptimizationHints", () => {
-    it("should build hints with all optimizations", () => {
-      const context: ContextRecommendation = {
-        complexity: "simple",
-        context_level: "minimal",
-        reasoning: "Greeting",
-        recommended_files: ["SOUL.md", "IDENTITY.md"],
-        file_count: 2,
-        savings_percent: 80,
-        skip_patterns: ["docs/**/*.md"],
-      };
-      const routing: ModelRouting = {
-        provider: "anthropic",
-        current_model: "anthropic/claude-sonnet-4-5",
-        recommended_model: "anthropic/claude-haiku-4",
-        tier: "cheap",
-        tier_display: "Cheap",
-        confidence: 1.0,
-        reasoning: "Simple communication",
-        cost_savings_percent: 92,
-        should_switch: true,
-        all_providers: {},
-      };
+    it("should stay silent for ordinary requests", () => {
+      const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
+        promptText: "[Fri 2026-04-10 10:49 GMT+8] 帮我解释这个函数",
+        userInput: "帮我解释这个函数",
+      });
+      expect(hints).toBe("");
+    });
+
+    it("should warn on cron tasks with a short anti-abuse hint", () => {
+      const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
+        promptText: "[cron:job-1 Daily Check] /lynx-check",
+        userInput: "/lynx-check",
+      });
+      expect(hints).toContain("Cron task");
+      expect(hints).toContain("compact");
+      expect(hints).not.toContain("Recommended:");
+    });
+
+    it("should warn on long context payloads when multiple heavy signals are present", () => {
+      const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
+        promptText: `${"ERROR stacktrace line\n".repeat(120)}\n\`\`\`json\n${"{}".repeat(800)}\n\`\`\``,
+        userInput: "请分析这段超长上下文和日志",
+      });
+      expect(hints).toContain("Context heavy");
+      expect(hints).toContain("scope tight");
+    });
+
+    it("should stay silent for medium-length ordinary requests without heavy markers", () => {
+      const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
+        promptText: "请帮我解释一下这个模块的职责。" + "补充说明".repeat(300),
+        userInput: "请帮我解释一下这个模块的职责。",
+      });
+      expect(hints).toBe("");
+    });
+
+    it("should warn when budget is not ok", () => {
       const budget: BudgetStatus = {
         date: "2026-03-17",
         cost: 4.50,
@@ -155,52 +201,28 @@ describe("Token Optimizer Runner", () => {
         status: "warning",
         alert: "Approaching daily limit",
       };
-
-      const hints = buildOptimizationHints(context, routing, budget);
-      expect(hints).toContain("[Token Optimizer] Context:");
-      expect(hints).toContain("[Token Optimizer] Model:");
-      expect(hints).toContain("[Token Optimizer] Budget:");
-      expect(hints).toContain("SOUL.md");
-      expect(hints).toContain("haiku");
+      const hints = buildOptimizationHints(baseContext, baseRouting, budget, {
+        promptText: "[Fri 2026-04-10 10:49 GMT+8] 帮我总结一下",
+        userInput: "帮我总结一下",
+      });
+      expect(hints).toContain("Budget warning");
+      expect(hints).not.toContain("Token Optimizer");
     });
 
-    it("should return empty string when no optimizations needed", () => {
-      const context: ContextRecommendation = {
-        complexity: "complex",
-        context_level: "full",
-        reasoning: "Complex task",
-        recommended_files: ["SOUL.md", "IDENTITY.md", "MEMORY.md"],
-        file_count: 3,
-        savings_percent: 30,
-        skip_patterns: [],
-      };
-      const routing: ModelRouting = {
-        provider: "anthropic",
-        current_model: "anthropic/claude-sonnet-4-5",
-        recommended_model: "anthropic/claude-sonnet-4-5",
-        tier: "balanced",
-        tier_display: "Balanced",
-        confidence: 0.5,
-        reasoning: "Default",
-        cost_savings_percent: 0,
-        should_switch: false,
-        all_providers: {},
-      };
-      const budget: BudgetStatus = {
-        date: "2026-03-17",
-        cost: 1.00,
-        tokens: 20000,
-        limit: 5.00,
-        percent_used: 20,
-        status: "ok",
-      };
-
-      const hints = buildOptimizationHints(context, routing, budget);
-      expect(hints).toBe("");
+    it("should warn when large amounts may indicate compute abuse", () => {
+      const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
+        promptText: "[Fri 2026-04-10 10:49 GMT+8] 帮我跑 5000000 次推理，预算 200000 元",
+        userInput: "帮我跑 5000000 次推理，预算 200000 元",
+      });
+      expect(hints).toContain("Compute abuse check");
+      expect(hints).toContain("malicious");
     });
 
     it("should handle null inputs gracefully", () => {
-      const hints = buildOptimizationHints(null, null, null);
+      const hints = buildOptimizationHints(null, null, null, {
+        promptText: "",
+        userInput: "",
+      });
       expect(hints).toBe("");
     });
   });

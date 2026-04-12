@@ -5,7 +5,7 @@ export interface Logger {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
-  debug(message: string): void;
+  debug?(message: string): void;
 }
 
 export interface PluginConfig {
@@ -15,6 +15,7 @@ export interface PluginConfig {
     inputGuard?: boolean;
     outputGuard?: boolean;
     toolGuard?: boolean;
+    resultGuard?: boolean;
     ownerVerification?: {
       enabled?: boolean;
       trustedUserIds?: string[];
@@ -63,6 +64,11 @@ export interface PluginConfig {
     deliveryMode?: "recent-active" | "announce";
     storePath?: string;
   };
+  managedLynxCheckAuthorization?: {
+    enabled?: boolean;
+    autoGrantOnScheduledJobCreate?: boolean;
+    treatManualLynxCheckAsPreauthorized?: boolean;
+  };
   openclawDiscovery?: OpenClawDiscoveryConfig;
   [key: string]: any;
 }
@@ -83,10 +89,47 @@ export interface Message {
   [key: string]: any;
 }
 
+export interface LynxReportDeliveryAttempt {
+  targetKey: string;
+  sessionKey?: string;
+  channelId?: string;
+  messageProvider?: string;
+  senderId?: string;
+  bindingId?: string;
+  delivered: boolean;
+  transport: string;
+  errorMessage?: string;
+}
+
+export interface ResolvedMessageTarget {
+  targetKey: string;
+  sessionKey?: string;
+  channelId?: string;
+  messageProvider?: string;
+  senderId?: string;
+  bindingId?: string;
+  to?: string;
+  accountId?: string;
+  threadId?: string | number;
+  [key: string]: any;
+}
+
+export interface SharedMessageSender {
+  send(options: {
+    target: ResolvedMessageTarget;
+    message: Message;
+    metadata?: Record<string, unknown>;
+  }): Promise<void>;
+}
+
 export interface EventContext {
   sessionKey?: string;
   sendMessage?: (message: Message) => Promise<void>;
+  resolveMessageTarget?: (hint: Partial<ResolvedMessageTarget>) => Promise<ResolvedMessageTarget | null>;
+  sharedMessageSender?: SharedMessageSender;
   terminateSession?: (options: { reason: string; silent: boolean }) => Promise<void>;
+  managedLynxCheckRun?: boolean;
+  managedLynxCheckPreauthorized?: boolean;
   [key: string]: any;
 }
 
@@ -141,6 +184,17 @@ export interface BeforeMessageWriteResult {
   message?: Message;
 }
 
+export interface ToolResultPersistEvent {
+  toolName?: string;
+  toolCallId?: string;
+  message: Message;
+  isSynthetic?: boolean;
+}
+
+export interface ToolResultPersistResult {
+  message?: Message;
+}
+
 export interface PatternRule {
   type: string;
   regex: RegExp;
@@ -163,11 +217,18 @@ export interface HookApi {
     ) => void | BeforeMessageWriteResult
   ): void;
   on(
+    event: "tool_result_persist",
+    handler: (
+      event: ToolResultPersistEvent,
+      ctx: EventContext
+    ) => void | ToolResultPersistResult
+  ): void;
+  on(
     event: string,
     handler: (
       event: any,
       ctx: EventContext
-    ) => any
+    ) => Promise<void> | void
   ): void;
 }
 
@@ -179,7 +240,7 @@ export interface OpenClawPluginApi {
     handler: (
       event: MessageReceivedEvent,
       ctx: EventContext
-    ) => Promise<void | { block: boolean; blockReason?: string }>
+    ) => Promise<void | { block: boolean; blockReason?: string }> | void
   ): void;
   on(
     event: "before_tool_call",
@@ -217,6 +278,13 @@ export interface OpenClawPluginApi {
     ) => void | BeforeMessageWriteResult
   ): void;
   on(
+    event: "tool_result_persist",
+    handler: (
+      event: ToolResultPersistEvent,
+      ctx: EventContext
+    ) => void | ToolResultPersistResult
+  ): void;
+  on(
     event: "message_sending",
     handler: (
       event: MessageSendingEvent,
@@ -228,6 +296,6 @@ export interface OpenClawPluginApi {
     handler: (
       event: any,
       ctx: EventContext
-    ) => Promise<void | { block: boolean; blockReason?: string }>
+    ) => Promise<void> | void
   ): void;
 }

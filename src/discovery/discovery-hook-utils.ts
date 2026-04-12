@@ -1,45 +1,14 @@
 import { baseIpInfo, listLocalSubnetCidrs } from "../utils.js";
 import { discoverOpenClaw, formatDiscoverySummary } from "./openclaw-discovery.js";
 import { normalizeStringList } from "../runtime/plugin-runtime-helpers.js";
+import { classifyLynxCheckTrigger } from "./lynx-check-trigger.js";
 
-function hasKeyword(text: string, keywords: string[]): boolean {
-  return keywords.some((keyword) => text.includes(keyword));
+export function isManualCompositeLynxCheckRequest(text: string): boolean {
+  return classifyLynxCheckTrigger(text).kind === "lynx_command";
 }
 
 export function isManualDiscoveryRequest(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  const exactCommands = [
-    "check",
-    "/check",
-    "lynx-check",
-    "/lynx-check",
-    "openclaw-check",
-    "/openclaw-check",
-  ];
-
-  // 检查原始文本及去除 "发送者: " 前缀后的文本（Feishu 会在消息前拼接 "名字: "）
-  const colonIdx = normalized.indexOf(": ");
-  const afterSenderPrefix = colonIdx >= 0 ? normalized.slice(colonIdx + 2).trim() : normalized;
-  const candidates = colonIdx >= 0 ? [normalized, afterSenderPrefix] : [normalized];
-
-  if (candidates.some((text) =>
-    exactCommands.some((command) => text === command || text.startsWith(`${command} `)),
-  )) {
-    return true;
-  }
-
-  const compact = normalized.replace(/\s+/g, "");
-  const actionKeywords = ["检查", "检测", "扫描", "探测", "排查", "check"];
-  const targetKeywords = ["openclaw", "龙虾", "lynx"];
-  const signalKeywords = ["服务", "进程", "网关", "ip", "端口", "地址",];
-
-  return hasKeyword(compact, actionKeywords)
-    && hasKeyword(compact, targetKeywords)
-    && hasKeyword(compact, signalKeywords);
+  return classifyLynxCheckTrigger(text).kind === "keyword_request";
 }
 
 export async function resolveDiscoveryTargets(config: any): Promise<string[]> {
@@ -76,20 +45,20 @@ export async function runDiscoveryAndNotify(
   discoveryConfig: any,
   discoveryRuntimePath: string,
 ): Promise<string> {
-  let fallbackReply = "OpenClaw 服务检测已执行，请查看日志明细。";
+  let fallbackReply = "OpenClaw service discovery has completed. Please check logs for details.";
   try {
     const targets = await resolveDiscoveryTargets(discoveryConfig);
     if (targets.length === 0) {
-      fallbackReply = "OpenClaw 服务检测已跳过：未能解析到可检测的目标。";
+      fallbackReply = "OpenClaw service discovery skipped: no discoverable targets resolved.";
       return fallbackReply;
     }
 
-    const scanMode = discoveryConfig.fullScan === true ? "全端口扫描" : "候选端口扫描";
-    const startReply = `OpenClaw 服务检测已启动，模式: ${scanMode}\n配置文件: ${discoveryRuntimePath}\n目标: ${targets.join(", ")}`;
+    const scanMode = discoveryConfig.fullScan === true ? "full-port scan" : "candidate-port scan";
+    const startReply = `OpenClaw service discovery started, mode: ${scanMode}\nconfig: ${discoveryRuntimePath}\ntargets: ${targets.join(", ")}`;
     fallbackReply = startReply;
 
     log.info(
-      `[lynx-guardian] 手动触发 OpenClaw 服务检测，模式: ${scanMode}，配置文件: ${discoveryRuntimePath}，目标: ${targets.join(", ")}`,
+      `[lynx-guardian] Manual OpenClaw discovery triggered, mode=${scanMode}, config=${discoveryRuntimePath}, targets=${targets.join(", ")}`,
     );
 
     const report = await discoverOpenClaw({
@@ -102,8 +71,8 @@ export async function runDiscoveryAndNotify(
     log.info(fallbackReply);
     return fallbackReply;
   } catch (err: any) {
-    log.error(`[lynx-guardian] 手动 OpenClaw 服务检测失败: ${err.message}`);
-    fallbackReply = `OpenClaw 服务检测失败: ${err.message}`;
+    log.error(`[lynx-guardian] Manual OpenClaw discovery failed: ${err.message}`);
+    fallbackReply = `OpenClaw service discovery failed: ${err.message}`;
     return fallbackReply;
   }
 }

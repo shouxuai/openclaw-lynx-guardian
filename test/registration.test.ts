@@ -46,7 +46,10 @@ describe('User Registration (utils.ts)', () => {
     
     expect(id).toMatch(/^LYNX00\d{12}$/);
     // Should create directory
-    expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('.openclaw/lynx'), { recursive: true });
+    expect(fs.mkdirSync).toHaveBeenCalledWith(
+      expect.stringMatching(/[\\/]?mock[\\/]home[\\/]\.openclaw[\\/]lynx$/),
+      { recursive: true },
+    );
     // Should write file
     expect(fs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('user_id'),

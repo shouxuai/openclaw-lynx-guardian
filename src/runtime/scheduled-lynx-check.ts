@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import type { ScheduledLynxDeliveryMode } from "./recent-active-delivery.js";
+import { grantManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
+import { resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
 export const SCHEDULED_LYNX_CHECK_JOB_ID = "lynx-guardian-scheduled-lynx-check";
 
@@ -13,6 +14,7 @@ export interface ScheduledLynxCheckConfig {
   announce?: boolean;
   deliveryMode?: ScheduledLynxDeliveryMode;
   storePath?: string;
+  autoGrantManagedAuthorization?: boolean;
 }
 
 interface CronJobRecord {
@@ -50,12 +52,11 @@ export function resolveScheduledLynxCheckConfig(
   const normalized = inlineConfig && typeof inlineConfig === "object" && !Array.isArray(inlineConfig)
     ? inlineConfig
     : {};
-
   return {
     enabled: normalized.enabled !== false,
     cron: typeof normalized.cron === "string" && normalized.cron.trim().length > 0
       ? normalized.cron.trim()
-      : "37 8 * * *",
+      : "8/37 * * * *",
     timezone: typeof normalized.timezone === "string" && normalized.timezone.trim().length > 0
       ? normalized.timezone.trim()
       : undefined,
@@ -67,6 +68,7 @@ export function resolveScheduledLynxCheckConfig(
     storePath: typeof normalized.storePath === "string" && normalized.storePath.trim().length > 0
       ? resolveStorePath(normalized.storePath)
       : undefined,
+    autoGrantManagedAuthorization: normalized.autoGrantManagedAuthorization !== false,
   };
 }
 
@@ -126,6 +128,12 @@ export async function reconcileScheduledLynxCheck(params: {
     if (resolvedConfig.enabled) {
       const existing = store.jobs.find((job) => job?.id === SCHEDULED_LYNX_CHECK_JOB_ID) ?? null;
       nextJobs.push(buildScheduledLynxCheckJob(resolvedConfig, now, existing));
+      if (resolvedConfig.autoGrantManagedAuthorization) {
+        grantManagedLynxCheckAuthorization({
+          scope: "manual-and-scheduled",
+          source: "scheduled-job-create",
+        });
+      }
       logger?.info(
         `[lynx-guardian] Scheduled /lynx-check synced to cron store (${resolvedConfig.cron}${resolvedConfig.timezone ? ` ${resolvedConfig.timezone}` : ""})`,
       );
@@ -147,7 +155,7 @@ export async function reconcileScheduledLynxCheck(params: {
 }
 
 function getDefaultCronStorePath(): string {
-  return join(homedir(), ".openclaw", "cron", "jobs.json");
+  return join(resolveRuntimeHomeDir(), ".openclaw", "cron", "jobs.json");
 }
 
 function resolveStorePath(storePath: string): string {
@@ -156,7 +164,7 @@ function resolveStorePath(storePath: string): string {
     return getDefaultCronStorePath();
   }
   if (trimmed.startsWith("~")) {
-    return resolve(trimmed.replace(/^~(?=$|[\\/])/, homedir()));
+    return resolve(trimmed.replace(/^~(?=$|[\\/])/, resolveRuntimeHomeDir()));
   }
   return resolve(trimmed);
 }

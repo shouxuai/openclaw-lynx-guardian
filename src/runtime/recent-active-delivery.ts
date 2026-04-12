@@ -1,28 +1,64 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import type { EventContext, Message } from "../types.js";
-import { normalizeString } from "./plugin-runtime-helpers.js";
+import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
 export type ScheduledLynxDeliveryMode = "recent-active" | "announce";
 
-export interface RecentActiveDeliverySnapshot {
+export interface RecentActiveRouteHint {
   targetKey: string;
   sessionKey?: string;
   channelId?: string;
   messageProvider?: string;
   senderId?: string;
+  bindingId?: string;
+  to?: string;
+  accountId?: string;
+  threadId?: string | number;
   updatedAtMs: number;
 }
 
-export interface RecentActiveDeliveryTarget extends RecentActiveDeliverySnapshot {
+export interface RecentActiveDeliverySnapshot extends RecentActiveRouteHint {}
+
+export interface RecentActiveDeliveryTarget extends RecentActiveRouteHint {
   sendMessage: (message: Message) => Promise<void>;
 }
 
+interface RecentActiveDeliveryState {
+  version: 2;
+  targets: RecentActiveDeliverySnapshot[];
+}
+
+interface SessionStoreEntryOrigin {
+  provider?: unknown;
+  surface?: unknown;
+  from?: unknown;
+  to?: unknown;
+  accountId?: unknown;
+  threadId?: unknown;
+}
+
+interface SessionStoreEntryDeliveryContext {
+  channel?: unknown;
+  to?: unknown;
+  accountId?: unknown;
+  threadId?: unknown;
+}
+
+interface SessionStoreEntry {
+  updatedAt?: unknown;
+  origin?: SessionStoreEntryOrigin;
+  deliveryContext?: SessionStoreEntryDeliveryContext;
+}
+
 const liveTargets = new Map<string, RecentActiveDeliveryTarget["sendMessage"]>();
+const DEFAULT_SESSION_STORE_RELATIVE_PATHS = [
+  [".openclaw", "docker-state", "agents", "main", "sessions", "sessions.json"],
+  [".openclaw", "agents", "main", "sessions", "sessions.json"],
+];
 
 function getDefaultRecentActiveDeliveryPath(): string {
-  return join(homedir(), ".openclaw", "lynx", "recent-active-delivery.json");
+  return join(resolveRuntimeHomeDir(), ".openclaw", "lynx", "recent-active-delivery.json");
 }
 
 function resolveRecentActiveDeliveryPath(customPath?: string): string {
@@ -31,9 +67,14 @@ function resolveRecentActiveDeliveryPath(customPath?: string): string {
     return getDefaultRecentActiveDeliveryPath();
   }
   if (trimmed.startsWith("~")) {
-    return resolve(trimmed.replace(/^~(?=$|[\\/])/, homedir()));
+    return resolve(trimmed.replace(/^~(?=$|[\\/])/, resolveRuntimeHomeDir()));
   }
   return resolve(trimmed);
+}
+
+function resolveSessionStorePaths(): string[] {
+  const homeDir = resolveRuntimeHomeDir();
+  return DEFAULT_SESSION_STORE_RELATIVE_PATHS.map((parts) => join(homeDir, ...parts));
 }
 
 function buildTargetKey(parts: {
@@ -52,8 +93,155 @@ function buildTargetKey(parts: {
     .join(":");
 }
 
-function buildSnapshot(ctx: EventContext, now: number): RecentActiveDeliverySnapshot | null {
-  if (!ctx || typeof ctx.sendMessage !== "function") {
+function normalizeSnapshot(value: unknown): RecentActiveDeliverySnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const parsed = value as Record<string, unknown>;
+  const targetKey = normalizeString(parsed.targetKey);
+  if (!targetKey) {
+    return null;
+  }
+
+  return {
+    targetKey,
+    sessionKey: normalizeString(parsed.sessionKey) || undefined,
+    channelId: normalizeString(parsed.channelId) || undefined,
+    messageProvider: normalizeString(parsed.messageProvider) || undefined,
+    senderId: normalizeString(parsed.senderId) || undefined,
+    bindingId: normalizeString(parsed.bindingId) || undefined,
+    to: normalizeString(parsed.to) || undefined,
+    accountId: normalizeString(parsed.accountId) || undefined,
+    threadId:
+      typeof parsed.threadId === "number" && Number.isFinite(parsed.threadId)
+        ? parsed.threadId
+        : normalizeString(parsed.threadId) || undefined,
+    updatedAtMs: typeof parsed.updatedAtMs === "number" ? parsed.updatedAtMs : 0,
+  };
+}
+
+function normalizeSessionStoreSnapshot(
+  sessionKey: string,
+  value: unknown,
+): RecentActiveDeliverySnapshot | null {
+  const normalizedSessionKey = normalizeString(sessionKey);
+  if (!normalizedSessionKey || normalizedSessionKey.includes(":cron:")) {
+    return null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as SessionStoreEntry;
+  const origin = entry.origin;
+  const deliveryContext = entry.deliveryContext;
+  const messageProvider = normalizeString(origin?.provider) || normalizeString(origin?.surface) || undefined;
+  const channelId = normalizeString(origin?.surface) || normalizeString(origin?.provider) || undefined;
+  const senderId = normalizeString(origin?.from) || normalizeString(origin?.to) || undefined;
+  const normalizedDeliveryChannel = normalizeString(deliveryContext?.channel) || undefined;
+  const deliveryMatchesOrigin =
+    normalizedDeliveryChannel != null
+    && [messageProvider, channelId]
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .some((candidate) => candidate === normalizedDeliveryChannel);
+  const to = deliveryMatchesOrigin
+    ? normalizeString(deliveryContext?.to) || normalizeString(origin?.to) || undefined
+    : normalizeString(origin?.to) || undefined;
+  const accountId = deliveryMatchesOrigin
+    ? normalizeString(deliveryContext?.accountId) || normalizeString(origin?.accountId) || undefined
+    : normalizeString(origin?.accountId) || undefined;
+  const threadId = deliveryMatchesOrigin
+    ? (
+      typeof deliveryContext?.threadId === "number" && Number.isFinite(deliveryContext.threadId)
+        ? deliveryContext.threadId
+        : normalizeString(deliveryContext?.threadId)
+          || (
+            typeof origin?.threadId === "number" && Number.isFinite(origin.threadId)
+              ? String(origin.threadId)
+              : normalizeString(origin?.threadId)
+          )
+          || undefined
+    )
+    : (
+      typeof origin?.threadId === "number" && Number.isFinite(origin.threadId)
+        ? origin.threadId
+        : normalizeString(origin?.threadId) || undefined
+    );
+  if (!messageProvider && !channelId && !senderId) {
+    return null;
+  }
+
+  return {
+    targetKey: normalizedSessionKey,
+    sessionKey: normalizedSessionKey,
+    channelId,
+    messageProvider,
+    senderId,
+    to,
+    accountId,
+    threadId,
+    updatedAtMs: typeof entry.updatedAt === "number" ? entry.updatedAt : 0,
+  };
+}
+
+function sortSnapshots(snapshots: RecentActiveDeliverySnapshot[]): RecentActiveDeliverySnapshot[] {
+  return [...snapshots].sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+}
+
+function buildLiveTargetSender(
+  ctx: EventContext,
+  snapshot: RecentActiveRouteHint,
+): ((message: Message) => Promise<void>) | undefined {
+  if (typeof ctx.sendMessage === "function") {
+    return ctx.sendMessage;
+  }
+
+  const resolveMessageTarget = ctx.resolveMessageTarget;
+  const sharedSend = ctx.sharedMessageSender?.send;
+  if (typeof resolveMessageTarget !== "function" || typeof sharedSend !== "function") {
+    return undefined;
+  }
+
+  return async (message: Message) => {
+    const resolvedTarget = await resolveMessageTarget({
+      targetKey: snapshot.targetKey,
+      sessionKey: snapshot.sessionKey,
+    channelId: snapshot.channelId,
+    messageProvider: snapshot.messageProvider,
+    senderId: snapshot.senderId,
+    bindingId: snapshot.bindingId,
+    to: snapshot.to,
+    accountId: snapshot.accountId,
+    threadId: snapshot.threadId,
+  });
+    if (!resolvedTarget) {
+      throw new Error(`No delivery transport resolved for target ${snapshot.targetKey}`);
+    }
+
+    await sharedSend({
+      target: resolvedTarget,
+      message,
+      metadata: {
+        source: "lynx-guardian",
+        transport: "remembered-shared-target",
+        deliveryTargetKey: snapshot.targetKey,
+      },
+    });
+  };
+}
+
+function buildSnapshot(ctx: EventContext, now: number): RecentActiveRouteHint | null {
+  return buildSnapshotWithOptions(ctx, now, false);
+}
+
+function buildSnapshotWithOptions(
+  ctx: EventContext,
+  now: number,
+  allowRouteOnly: boolean,
+): RecentActiveRouteHint | null {
+  if (!ctx) {
     return null;
   }
 
@@ -61,11 +249,20 @@ function buildSnapshot(ctx: EventContext, now: number): RecentActiveDeliverySnap
     return null;
   }
 
-  const snapshot: RecentActiveDeliverySnapshot = {
+  const snapshot: RecentActiveRouteHint = {
     sessionKey: normalizeString(ctx.sessionKey) || undefined,
     channelId: normalizeString((ctx as any).channelId ?? (ctx as any).channel) || undefined,
     messageProvider: normalizeString((ctx as any).messageProvider ?? (ctx as any).source) || undefined,
     senderId: normalizeString((ctx as any).senderId ?? (ctx as any).userId) || undefined,
+    bindingId: normalizeString((ctx as any).bindingId) || undefined,
+    to: normalizeString((ctx as any).to ?? (ctx as any).recipientId) || undefined,
+    accountId: normalizeString((ctx as any).accountId) || undefined,
+    threadId:
+      typeof (ctx as any).messageThreadId === "number" && Number.isFinite((ctx as any).messageThreadId)
+        ? (ctx as any).messageThreadId
+        : typeof (ctx as any).threadId === "number" && Number.isFinite((ctx as any).threadId)
+          ? (ctx as any).threadId
+          : normalizeString((ctx as any).messageThreadId ?? (ctx as any).threadId) || undefined,
     updatedAtMs: now,
     targetKey: "",
   };
@@ -75,84 +272,129 @@ function buildSnapshot(ctx: EventContext, now: number): RecentActiveDeliverySnap
     return null;
   }
 
+  if (!allowRouteOnly && !buildLiveTargetSender(ctx, snapshot)) {
+    return null;
+  }
+
   return snapshot;
 }
 
-function writeSnapshot(filePath: string, snapshot: RecentActiveDeliverySnapshot): void {
+function writeSnapshots(filePath: string, snapshots: RecentActiveDeliverySnapshot[]): void {
   mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, JSON.stringify(snapshot), "utf8");
+  const state: RecentActiveDeliveryState = {
+    version: 2,
+    targets: sortSnapshots(snapshots),
+  };
+  writeFileSync(filePath, JSON.stringify(state, null, 2), "utf8");
 }
 
-export function readRecentActiveDeliverySnapshot(customPath?: string): RecentActiveDeliverySnapshot | null {
+export function readRecentActiveDeliverySnapshots(customPath?: string): RecentActiveDeliverySnapshot[] {
   const filePath = resolveRecentActiveDeliveryPath(customPath);
   if (!existsSync(filePath)) {
-    return null;
+    return [];
   }
 
   try {
     const raw = readFileSync(filePath, "utf8");
     if (!raw) {
-      return null;
+      return [];
     }
 
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") {
-      return null;
+    if (parsed && typeof parsed === "object" && Array.isArray((parsed as any).targets)) {
+      return sortSnapshots(
+        (parsed as any).targets
+          .map((item: unknown) => normalizeSnapshot(item))
+          .filter((item: RecentActiveDeliverySnapshot | null): item is RecentActiveDeliverySnapshot => Boolean(item)),
+      );
     }
 
-    const snapshot: RecentActiveDeliverySnapshot = {
-      targetKey: normalizeString((parsed as any).targetKey),
-      sessionKey: normalizeString((parsed as any).sessionKey) || undefined,
-      channelId: normalizeString((parsed as any).channelId) || undefined,
-      messageProvider: normalizeString((parsed as any).messageProvider) || undefined,
-      senderId: normalizeString((parsed as any).senderId) || undefined,
-      updatedAtMs: typeof (parsed as any).updatedAtMs === "number" ? (parsed as any).updatedAtMs : 0,
-    };
-
-    if (!snapshot.targetKey) {
-      return null;
-    }
-
-    return snapshot;
+    const legacySnapshot = normalizeSnapshot(parsed);
+    return legacySnapshot ? [legacySnapshot] : [];
   } catch {
-    return null;
+    return [];
   }
+}
+
+export function readSessionStoreDeliverySnapshots(): RecentActiveDeliverySnapshot[] {
+  for (const sessionStorePath of resolveSessionStorePaths()) {
+    if (!existsSync(sessionStorePath)) {
+      continue;
+    }
+
+    try {
+      const raw = readFileSync(sessionStorePath, "utf8");
+      if (!raw) {
+        continue;
+      }
+
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        continue;
+      }
+
+      return sortSnapshots(
+        Object.entries(parsed as Record<string, unknown>)
+          .map(([sessionKey, entry]) => normalizeSessionStoreSnapshot(sessionKey, entry))
+          .filter((snapshot: RecentActiveDeliverySnapshot | null): snapshot is RecentActiveDeliverySnapshot => Boolean(snapshot)),
+      );
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
+export function readRecentActiveDeliverySnapshot(customPath?: string): RecentActiveDeliverySnapshot | null {
+  return readRecentActiveDeliverySnapshots(customPath)[0] ?? null;
 }
 
 export function rememberRecentActiveDeliveryTarget(
   ctx: EventContext,
-  options?: { path?: string; now?: number },
+  options?: { path?: string; now?: number; allowRouteOnly?: boolean },
 ): RecentActiveDeliverySnapshot | null {
   const now = typeof options?.now === "number" ? options.now : Date.now();
-  const snapshot = buildSnapshot(ctx, now);
+  const snapshot = options?.allowRouteOnly === true
+    ? buildSnapshotWithOptions(ctx, now, true)
+    : buildSnapshot(ctx, now);
   if (!snapshot) {
     return null;
   }
 
-  liveTargets.set(snapshot.targetKey, ctx.sendMessage!);
-  writeSnapshot(resolveRecentActiveDeliveryPath(options?.path), snapshot);
+  const liveTargetSender = buildLiveTargetSender(ctx, snapshot);
+  if (liveTargetSender) {
+    liveTargets.set(snapshot.targetKey, liveTargetSender);
+  }
+
+  const nextSnapshots = readRecentActiveDeliverySnapshots(options?.path)
+    .filter((item) => item.targetKey !== snapshot.targetKey);
+  nextSnapshots.push(snapshot);
+  writeSnapshots(resolveRecentActiveDeliveryPath(options?.path), nextSnapshots);
   return snapshot;
 }
 
+export function getRecentActiveDeliveryTargets(customPath?: string): RecentActiveDeliveryTarget[] {
+  return readRecentActiveDeliverySnapshots(customPath)
+    .map((snapshot) => {
+      const sendMessage = liveTargets.get(snapshot.targetKey);
+      if (typeof sendMessage !== "function") {
+        return null;
+      }
+
+      return {
+        ...snapshot,
+        sendMessage,
+      };
+    })
+    .filter((target: RecentActiveDeliveryTarget | null): target is RecentActiveDeliveryTarget => Boolean(target));
+}
+
 export function getRecentActiveDeliveryTarget(customPath?: string): RecentActiveDeliveryTarget | null {
-  const snapshot = readRecentActiveDeliverySnapshot(customPath);
-  if (!snapshot) {
-    return null;
-  }
-
-  const sendMessage = liveTargets.get(snapshot.targetKey);
-  if (typeof sendMessage !== "function") {
-    return null;
-  }
-
-  return {
-    ...snapshot,
-    sendMessage,
-  };
+  return getRecentActiveDeliveryTargets(customPath)[0] ?? null;
 }
 
 export function clearRecentActiveDeliveryTargetForContext(ctx: EventContext, customPath?: string): void {
-  const current = readRecentActiveDeliverySnapshot(customPath);
   const candidates = new Set<string>();
 
   const sessionKey = normalizeString(ctx?.sessionKey);
@@ -172,21 +414,30 @@ export function clearRecentActiveDeliveryTargetForContext(ctx: EventContext, cus
     liveTargets.delete(candidate);
   }
 
-  if (!current) {
+  const currentSnapshots = readRecentActiveDeliverySnapshots(customPath);
+  if (currentSnapshots.length === 0) {
     return;
   }
 
-  const matchesCurrent = candidates.has(current.targetKey)
-    || (sessionKey.length > 0 && current.sessionKey === sessionKey);
-
-  if (!matchesCurrent) {
-    return;
-  }
+  const nextSnapshots = currentSnapshots.filter((snapshot) => {
+    if (candidates.has(snapshot.targetKey)) {
+      return false;
+    }
+    if (sessionKey.length > 0 && snapshot.sessionKey === sessionKey) {
+      return false;
+    }
+    return true;
+  });
 
   const filePath = resolveRecentActiveDeliveryPath(customPath);
-  if (existsSync(filePath)) {
-    unlinkSync(filePath);
+  if (nextSnapshots.length === 0) {
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+    }
+    return;
   }
+
+  writeSnapshots(filePath, nextSnapshots);
 }
 
 export function shouldPreferRecentActiveDelivery(

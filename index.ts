@@ -1,6 +1,6 @@
 import { join } from "path";
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
-import type { OpenClawPluginApi } from "./src/types.js";
+import type { LynxReportDeliveryAttempt, OpenClawPluginApi } from "./src/types.js";
 import {
   ensureUserRegistered,
   readRecentContext,
@@ -13,6 +13,7 @@ import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import type { CheckExecBlacklistContext } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
+import { guardAssistantPersistence, guardToolResultPersistence } from "./src/guard/result-guard.js";
 import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
@@ -27,6 +28,10 @@ import {
   recordWorkflowOperation,
   revokeWorkflowAuth,
 } from "./src/runtime/workflow-authorization-store.js";
+import {
+  grantManagedLynxCheckAuthorization,
+  hasManagedLynxCheckAuthorization,
+} from "./src/runtime/managed-lynx-check-authorization-store.js";
 import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skills/skill-guard.js";
 import { quarantineSkill } from "./src/skills/skill-cleanup.js";
 import type { MaliciousSkillEntry } from "./src/skills/skill-blacklist-data.js";
@@ -44,6 +49,9 @@ import { CONFIG } from "./src/config.js";
 import {
   canonicalizePath,
   buildGuardContext,
+  extractMessageText,
+  isTrustedManagedLynxCheckReportText,
+  normalizeString,
   redactAgentOutput,
 } from "./src/runtime/plugin-runtime-helpers.js";
 import {
@@ -62,31 +70,124 @@ import {
   normalizePolicyConfig,
 } from "./src/runtime/policy-runtime.js";
 import {
-  isManualDiscoveryRequest,
+  isManualCompositeLynxCheckRequest,
   runDiscoveryAndNotify,
 } from "./src/discovery/discovery-hook-utils.js";
+import { classifyLynxCheckTrigger } from "./src/discovery/lynx-check-trigger.js";
 import {
   clearPendingDiscoveryRequest,
   ensureParentDirectory,
   shouldAttachPendingDiscoveryReport,
-  writePendingDiscoveryRequest,
 } from "./src/discovery/pending-discovery-store.js";
 import {
-  appendDiscoveryReportToContent,
   formatDiscoveryReport,
-  appendDiscoveryReportToMessage,
   decorateAssistantMessage,
 } from "./src/runtime/message-decoration.js";
 import { buildManualLynxCheckReport } from "./src/discovery/manual-lynx-check.js";
 import {
   clearRecentActiveDeliveryTargetForContext,
+  readRecentActiveDeliverySnapshot,
   getRecentActiveDeliveryTarget,
   rememberRecentActiveDeliveryTarget,
   shouldPreferRecentActiveDelivery,
 } from "./src/runtime/recent-active-delivery.js";
+import { getHookCapabilityReport, getOpenClawRuntimeVersion } from "./src/runtime/hook-capabilities.js";
+import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from "./src/runtime/recent-active-delivery.js";
+import { deliverLynxReport, shapeMessageForProvider, shapeTextForProvider } from "./src/runtime/lynx-message-delivery.js";
+import {
+  createLynxCheckRunIntent,
+  getLynxCheckRunReportPath,
+  markLynxCheckRunCompleted,
+  readLatestPendingLynxCheckRunIntent,
+  readLynxCheckRunResult,
+  updateLynxCheckRunIntentStatus,
+  waitForLynxCheckRunResultSettled,
+  writeLynxCheckRunResult,
+} from "./src/runtime/lynx-check-run-store.js";
+import {
+  buildLynxCheckFallbackFailureNotice,
+  buildManualLynxCheckPrompt,
+  buildScheduledLynxCheckPrompt,
+} from "./src/runtime/lynx-check-prompt.js";
 
 function isConfirmationPhrase(text: string, phrase: string): boolean {
   return text.includes(phrase.trim());
+}
+
+function resolveAgentStartPromptText(event: any): string {
+  if (typeof event?.prompt === "string" && event.prompt.trim().length > 0) {
+    return event.prompt;
+  }
+
+  if (Array.isArray(event?.messages) && event.messages.length > 0) {
+    const messages = event.messages.filter(Boolean);
+    const preferredMessage = [...messages]
+      .reverse()
+      .find((message) => normalizeString(message?.role).toLowerCase() === "user")
+      ?? messages[messages.length - 1];
+    const messageText = extractMessageText(preferredMessage);
+    if (messageText) {
+      return messageText;
+    }
+  }
+
+  if (event?.prompt != null) {
+    try {
+      return JSON.stringify(event.prompt);
+    } catch {
+      return String(event.prompt);
+    }
+  }
+
+  return "";
+}
+
+function stripBracketPrefixedEnvelope(text: string): string {
+  const trimmed = normalizeString(text);
+  if (!trimmed.startsWith("[") || !trimmed.includes("]")) {
+    return trimmed;
+  }
+
+  return trimmed.slice(trimmed.indexOf("]") + 1).trim();
+}
+
+function extractAgentStartPrimaryMessageText(event: any): string {
+  if (!Array.isArray(event?.messages) || event.messages.length === 0) {
+    return "";
+  }
+
+  const messages = event.messages.filter(Boolean);
+  const preferredMessage = [...messages]
+    .reverse()
+    .find((message) => normalizeString(message?.role).toLowerCase() === "user")
+    ?? messages[messages.length - 1];
+
+  return extractMessageText(preferredMessage);
+}
+
+function resolveManagedLynxCheckCommandText(event: any): string {
+  const candidates = [
+    typeof event?.prompt === "string" ? event.prompt : "",
+    extractAgentStartPrimaryMessageText(event),
+  ]
+    .map((value) => normalizeString(value))
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    const direct = classifyLynxCheckTrigger(candidate);
+    if (direct.kind === "lynx_command") {
+      return direct.normalizedText;
+    }
+
+    for (const line of candidate.split(/\r?\n/)) {
+      const lineTrigger = classifyLynxCheckTrigger(stripBracketPrefixedEnvelope(line));
+      if (lineTrigger.kind === "lynx_command") {
+        return lineTrigger.normalizedText;
+      }
+    }
+  }
+
+  return "";
 }
 
 export default function setup(api: OpenClawPluginApi) {
@@ -103,17 +204,46 @@ export default function setup(api: OpenClawPluginApi) {
   const skillGuardConfig = config.skillGuard ?? {};
   const tokenOptimizerConfig = config.tokenOptimizer ?? {};
   const scheduledLynxCheckConfig = config.scheduledLynxCheck ?? {};
+  const managedLynxCheckAuthorizationConfig = config.managedLynxCheckAuthorization ?? {};
   const resolvedScheduledLynxCheckConfig = resolveScheduledLynxCheckConfig(scheduledLynxCheckConfig);
   const discoveryRuntime = {
     path: DISCOVERY_CONFIG_SOURCE_PATH,
     config: loadDiscoveryRuntimeConfig(config.openclawDiscovery),
   };
   const openClawDiscoveryConfig = discoveryRuntime.config;
+  const hookCapabilityReport = getHookCapabilityReport(getOpenClawRuntimeVersion());
   const DISCOVERY_RESULT_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.txt");
   const DISCOVERY_RESULT_CONSUMED_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.consumed");
   const DISCOVERY_REQUEST_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.request.json");
   const HOOK_PROBE_LOG_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", "lynx", "hook-probe.log");
   let userId: string;
+
+  if (
+    managedLynxCheckAuthorizationConfig.enabled !== false
+    && managedLynxCheckAuthorizationConfig.treatManualLynxCheckAsPreauthorized !== false
+  ) {
+    grantManagedLynxCheckAuthorization({
+      scope: "manual-and-scheduled",
+      source: "plugin-startup",
+    });
+  }
+
+  function isManagedLynxCheckPreauthorized(source: "manual" | "scheduled"): boolean {
+    if (managedLynxCheckAuthorizationConfig.enabled === false) {
+      return false;
+    }
+    if (source === "manual" && managedLynxCheckAuthorizationConfig.treatManualLynxCheckAsPreauthorized === false) {
+      return false;
+    }
+    return hasManagedLynxCheckAuthorization();
+  }
+
+  function buildScheduledLynxCheckSyncConfig() {
+    return {
+      ...scheduledLynxCheckConfig,
+      autoGrantManagedAuthorization: managedLynxCheckAuthorizationConfig.autoGrantOnScheduledJobCreate !== false,
+    };
+  }
 
   function appendLifecycleProbe(hookName: string, payload: unknown, ctx: unknown): void {
     try {
@@ -128,7 +258,211 @@ export default function setup(api: OpenClawPluginApi) {
     }
   }
 
+  function describeDeliveryTarget(ctx: any): string {
+    const parts = [
+      ctx?.messageProvider ?? ctx?.source,
+      ctx?.channelId ?? ctx?.channel,
+      ctx?.sessionKey,
+      ctx?.senderId ?? ctx?.userId,
+    ];
+
+    const target = parts
+      .filter((part) => typeof part === "string" && part.trim().length > 0)
+      .join("|");
+
+    return target || "unknown-target";
+  }
+
+  function summarizeOutgoingMessage(message: any): string {
+    if (typeof message?.content === "string") {
+      return `text:${message.content.length}`;
+    }
+
+    if (Array.isArray(message?.content)) {
+      return `blocks:${message.content.length}`;
+    }
+
+    return "unknown-payload";
+  }
+
+  async function sendHookFeedback(ctx: any, content: string): Promise<void> {
+    if (typeof ctx?.sendMessage !== "function" || content.trim().length === 0) {
+      return;
+    }
+
+    try {
+      await ctx.sendMessage({
+        role: "assistant",
+        content,
+      });
+    } catch (err: any) {
+      log.warn(`[lynx-guardian] Failed to send hook feedback: ${err.message}`);
+    }
+  }
+
+  async function sendAssistantMessageWithRetry(options: {
+    ctx: any;
+    tag: string;
+    message: {
+      role: "assistant";
+      content: any;
+    };
+    attempts?: number;
+    routeHint?: RecentActiveDeliverySnapshot | null;
+    allowSameSessionFallback?: boolean;
+    useSessionStoreFallback?: boolean;
+  }): Promise<{
+    delivered: boolean;
+    transport: string;
+    deliveryAttempts: LynxReportDeliveryAttempt[];
+  }> {
+    const attempts = Math.max(1, options.attempts ?? 1);
+    const target = describeDeliveryTarget(options.ctx);
+    const payloadSummary = summarizeOutgoingMessage(options.message);
+    let lastSendResult: {
+      delivered: boolean;
+      transport: string;
+      deliveryAttempts: LynxReportDeliveryAttempt[];
+    } = {
+      delivered: false,
+      transport: "none",
+      deliveryAttempts: [],
+    };
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      log.info(
+        `[lynx-guardian] 【我要发消息】 ${options.tag} attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
+      );
+
+      lastSendResult = await deliverLynxReport({
+        log,
+        ctx: options.ctx,
+        tag: options.tag,
+        attempts: 1,
+        routeHint: options.routeHint,
+        allowSameSessionFallback: options.allowSameSessionFallback !== false,
+        useSessionStoreFallback: options.useSessionStoreFallback === true,
+        message: options.message,
+      });
+
+      if (lastSendResult.delivered) {
+        log.info(
+          `[lynx-guardian] 【我要发消息】 ${options.tag} success attempt=${attempt}/${attempts} target=${target} transport=${lastSendResult.transport}`,
+        );
+        return lastSendResult;
+      }
+
+      if (attempt < attempts) {
+        log.warn(
+          `[lynx-guardian] 【我要发消息】 ${options.tag} failed attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
+        );
+      } else {
+        log.error(
+          `[lynx-guardian] 【我要发消息】 ${options.tag} exhausted attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
+        );
+      }
+    }
+
+    return lastSendResult;
+  }
+
+  function isPluginSubsystem(ctx: any): boolean {
+    return normalizeString(ctx?.subsystem).toLowerCase() === "plugins";
+  }
+
+  function isCronManagedLynxCheckContext(ctx: any): boolean {
+    const trigger = normalizeString(ctx?.trigger).toLowerCase();
+    if (trigger === "cron") {
+      return true;
+    }
+
+    const sessionKey = normalizeString(ctx?.sessionKey).toLowerCase();
+    return sessionKey.startsWith("cron:") || sessionKey.includes(":cron:");
+  }
+
+  function resolveManagedLynxCheckSource(ctx: any): "manual" | "scheduled" {
+    return isCronManagedLynxCheckContext(ctx) || isPluginSubsystem(ctx)
+      ? "scheduled"
+      : "manual";
+  }
+
+  function resolveManagedLynxCheckRouteHint(
+    ctx: any,
+    source: "manual" | "scheduled",
+  ): RecentActiveDeliverySnapshot | null {
+    if (source === "manual") {
+      return rememberRecentActiveDeliveryTarget(ctx) ?? readRecentActiveDeliverySnapshot();
+    }
+
+    return readRecentActiveDeliverySnapshot();
+  }
+
+  function resolveManagedLynxCheckPromptChannel(
+    ctx: any,
+    routeHint?: RecentActiveDeliverySnapshot | null,
+  ): "webchat" | "feishu" | "generic" {
+    const candidates = [
+      normalizeString(ctx?.messageProvider),
+      normalizeString(ctx?.channelId),
+      normalizeString(ctx?.source),
+      normalizeString(routeHint?.messageProvider),
+      normalizeString(routeHint?.channelId),
+    ]
+      .filter(Boolean)
+      .map((value) => value.toLowerCase());
+
+    if (candidates.some((value) => value.includes("feishu"))) {
+      return "feishu";
+    }
+    if (candidates.some((value) => value.includes("webchat"))) {
+      return "webchat";
+    }
+    return "generic";
+  }
+
+  function resolveActiveManagedLynxCheckState(ctx: any): {
+    activeRunIntent: ReturnType<typeof readLatestPendingLynxCheckRunIntent>;
+    managedLynxCheckRun: boolean;
+    managedLynxCheckPreauthorized: boolean;
+  } {
+    const sessionKey = normalizeString(ctx?.sessionKey);
+    const activeRunIntent = sessionKey
+      ? readLatestPendingLynxCheckRunIntent(sessionKey)
+      : null;
+    const managedLynxCheckRun = activeRunIntent != null;
+    const managedLynxCheckPreauthorized = activeRunIntent != null
+      ? isManagedLynxCheckPreauthorized(activeRunIntent.source)
+      : false;
+
+    return {
+      activeRunIntent,
+      managedLynxCheckRun,
+      managedLynxCheckPreauthorized,
+    };
+  }
+
+  function buildManagedGuardContext(event: any, ctx: any) {
+    const managedState = resolveActiveManagedLynxCheckState(ctx);
+    return {
+      ...managedState,
+      guardContext: buildGuardContext(config, event, {
+        ...ctx,
+        managedLynxCheckRun: managedState.managedLynxCheckRun,
+        managedLynxCheckPreauthorized: managedState.managedLynxCheckPreauthorized,
+      }),
+    };
+  }
+
   try {
+    log.info(
+      `[lynx-guardian] Hook capability report: runtime=${hookCapabilityReport.runtimeVersion}, tested-min=${hookCapabilityReport.testedMinimumVersion}, supported=${String(hookCapabilityReport.supported)}`,
+    );
+    if (hookCapabilityReport.supported === false) {
+      log.warn(
+        `[lynx-guardian] Output interception requires openclaw >= ${hookCapabilityReport.testedMinimumVersion}; some hooks may not fire on this runtime.`,
+      );
+    }
+
     userId = ensureUserRegistered();
     registerUser(userId).then(res => {
       log.info(`[lynx-guardian] Registered user: ${userId}, status: ${res.code}`);
@@ -153,7 +487,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   // ── Startup Security Audit (SX-security-audit) ───────────────────
   void reconcileScheduledLynxCheck({
-    config: scheduledLynxCheckConfig,
+    config: buildScheduledLynxCheckSyncConfig(),
     logger: log,
   });
 
@@ -263,8 +597,9 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("gateway_start", async (event, ctx) => {
     try {
       ensureResources();
+      log.info("[lynx-guardian] Resources synced on gateway_start");
       await reconcileScheduledLynxCheck({
-        config: scheduledLynxCheckConfig,
+        config: buildScheduledLynxCheckSyncConfig(),
         logger: log,
       });
     } catch (err: any) {
@@ -276,16 +611,17 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("message_received", async (event, ctx) => {
     try {
       if (!event.content || event.content.length === 0) return;
-      rememberRecentActiveDeliveryTarget(ctx);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received event: ${JSON.stringify(event)}`);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received ctx: ${JSON.stringify(ctx)}`);
+      rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
+      log.info(`[lynx-guardian]📌,message_received event: ${JSON.stringify(event)}`);
+      log.info(`[lynx-guardian]📌,message_received ctx: ${JSON.stringify(ctx)}`);
       const text = typeof event.content === "string"
         ? event.content
         : Array.isArray(event.content)
           ? event.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ")
           : String(event.content);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received text: ${text}`);
+      log.info(`[lynx-guardian]📌,message_received text: ${text}`);
       if (!text || text.length === 0) return;
+      const lynxCheckTrigger = classifyLynxCheckTrigger(text);
 
       const confirmLookupKey = resolveOverrideKey(ctx);
       if (confirmLookupKey && isConfirmationPhrase(text, riskPolicyConfig.confirmationPhrase)) {
@@ -296,8 +632,10 @@ export default function setup(api: OpenClawPluginApi) {
           pending = consumeMostRecentPendingOverride();
         }
 
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received pending: ${JSON.stringify(pending)}`);
+        log.info(`[lynx-guardian]📌,message_received pending: ${JSON.stringify(pending)}`);
         if (!pending) {
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待确认操作。");
+          return;
           return {
             block: true,
             blockReason: "[Lynx Guardian] 当前没有可放行的待确认操作",
@@ -308,13 +646,28 @@ export default function setup(api: OpenClawPluginApi) {
         const windowMs = riskPolicyConfig.workflowAuthWindowMs;
         grantWorkflowAuth(allKeys, pending.matchedModules, windowMs, /* scopeAll */ true);
         const windowSec = Math.round(windowMs / 1000);
+        await sendHookFeedback(
+          ctx,
+          `[Lynx Guardian] 已开启工作流授权窗口（${windowSec}s）。相关操作会在窗口期内自动放行。`,
+        );
+        return;
         return {
           block: true,
           blockReason: `[Lynx Guardian] 已确认，工作流授权已开放（时间窗口${windowSec}s）。此窗口内的相关操作将自动放行，工作流结束后将自动收回并汇报操作记录。`,
         };
       }
 
-      if (isManualDiscoveryRequest(text)) {
+      if (lynxCheckTrigger.kind === "native_passthrough") {
+        log.info(`[lynx-guardian] Native check command passthrough: ${text}`);
+        return;
+      }
+
+      if (lynxCheckTrigger.kind === "lynx_command") {
+        log.info(`[lynx-guardian] 收到手动 /lynx-check 指令，将在 before_agent_start 中直出预计算审计报告: ${text}`);
+        return;
+      }
+
+      if (lynxCheckTrigger.kind === "keyword_request") {
         log.info(`[lynx-guardian] 收到手动 OpenClaw 服务检测指令: ${text}`);
         if (ctx.sendMessage) {
           await ctx.sendMessage({
@@ -334,6 +687,7 @@ export default function setup(api: OpenClawPluginApi) {
             content: discoverySummary,
           });
         }
+        return;
         return {
           block: true,
           blockReason: discoverySummary,
@@ -346,10 +700,12 @@ export default function setup(api: OpenClawPluginApi) {
         payload: text,
       });
       const approvedInputOverride = consumeApprovedOverrideFull(ctx, inputFingerprint);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
+      log.info(`[lynx-guardian]📌,approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn("[lynx-guardian] Sensitive data detected in message");
         await pushRecord(userId, text, 1);
+        await sendHookFeedback(ctx, "Sensitive data detected");
+        return;
         return {
           block: true,
           blockReason: "Sensitive data detected",
@@ -359,7 +715,7 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.inputGuard !== false) {
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardInput(text, ctx.sessionKey, guardContext);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,guardInput decision: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
         if (decision.block && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${decision.riskAssessment.description} (${decision.riskAssessment.level}, score=${decision.riskAssessment.score})`);
@@ -380,6 +736,14 @@ export default function setup(api: OpenClawPluginApi) {
               matchedModules: decision.riskAssessment.modules,
               sourceKeys: resolveOverrideKeys(ctx),
             });
+            await sendHookFeedback(
+              ctx,
+              buildOverridePrompt(
+                decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+                policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
+              ),
+            );
+            return;
             return {
               block: true,
               blockReason: buildOverridePrompt(
@@ -388,6 +752,8 @@ export default function setup(api: OpenClawPluginApi) {
               ),
             };
           }
+          await sendHookFeedback(ctx, decision.blockReason!);
+          return;
           return {
             block: true,
             blockReason: decision.blockReason!,
@@ -407,8 +773,6 @@ export default function setup(api: OpenClawPluginApi) {
       if (!event.prompt && !event.messages) return;
       rememberRecentActiveDeliveryTarget(ctx);
       let prependContext = "";
-      let discoveryPrependBase: string | null = null;
-      let discoveryInstruction: string | null = null;
       let publicAccessResult: any = null;
       const ipInfo = await baseIpInfo();
       if (ipInfo.type == "next_check") {
@@ -422,21 +786,47 @@ export default function setup(api: OpenClawPluginApi) {
         }
       }
 
-      const promptText = typeof event.prompt === "string" ? event.prompt : JSON.stringify(event.prompt ?? "");
+      const promptText = resolveAgentStartPromptText(event);
+      const managedLynxCheckCommandText = resolveManagedLynxCheckCommandText(event);
       const agentStartFingerprint = buildOperationFingerprint({
         sessionKey: ctx.sessionKey,
         actionType: "agent_start",
         payload: promptText,
       });
       const approvedAgentStartOverride = consumeApprovedOverrideFull(ctx, agentStartFingerprint);
-      const userInput = extractContentAfterDate(promptText);
-      const prependContextBeforeDiscoveryPrompt = prependContext;
+      const userInput = extractContentAfterDate(managedLynxCheckCommandText || promptText);
+      const managedLynxCheckSource = (
+        managedLynxCheckCommandText
+        || isManualCompositeLynxCheckRequest(userInput)
+      )
+        ? resolveManagedLynxCheckSource(ctx)
+        : null;
+      const managedLynxCheckPreauthorized = managedLynxCheckSource != null
+        ? isManagedLynxCheckPreauthorized(managedLynxCheckSource)
+        : false;
 
-      if (isManualDiscoveryRequest(userInput)) {
-        discoveryPrependBase = prependContext;
-        discoveryInstruction = "[系统指令] 安全插件已完成 OpenClaw 服务检测，完整报告将由插件自动附加在最终输出后面，如果没有自动输出请刷新一下。\n";
-        log.info(`[lynx-guardian] 收到手动 OpenClaw 服务检测指令 ${userInput}`);
-        const result = await buildManualLynxCheckReport({
+      if (managedLynxCheckSource) {
+        ctx.managedLynxCheckRun = true;
+        if (managedLynxCheckPreauthorized) {
+          ctx.managedLynxCheckPreauthorized = true;
+        }
+      }
+
+      if (managedLynxCheckSource) {
+        const source = managedLynxCheckSource;
+        const routeHint = resolveManagedLynxCheckRouteHint(ctx, source) ?? undefined;
+        const runIntent = createLynxCheckRunIntent({
+          source,
+          trigger: source === "scheduled" ? "scheduled_lynx_check" : "lynx_command",
+          preferredTargetKind: source === "scheduled" ? "recent" : "current",
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          routeHint,
+        });
+
+        log.info(
+          `[lynx-guardian] Managed /lynx-check run created requestId=${runIntent.requestId} source=${runIntent.source} target=${runIntent.preferredTargetKind}`,
+        );
+        const reportMarkdown = await buildManualLynxCheckReport({
           log,
           userId,
           ipInfo,
@@ -444,42 +834,47 @@ export default function setup(api: OpenClawPluginApi) {
           discoveryConfig: openClawDiscoveryConfig,
           discoveryRuntimePath: discoveryRuntime.path,
         });
-        prependContext += "[系统指令] 请在同一条回复中，先简短告知用户检测已完成，然后原样输出下面这份完整报告（包含分隔线和标题），不要省略，不要改写。\n";
-        try {
-          ensureParentDirectory(DISCOVERY_RESULT_PATH);
-          writeFileSync(DISCOVERY_RESULT_PATH, result, "utf8");
-          writePendingDiscoveryRequest(DISCOVERY_REQUEST_PATH, {
-            sessionKey: ctx.sessionKey,
-            userInput,
-          });
-          if (existsSync(DISCOVERY_RESULT_CONSUMED_PATH)) {
-            unlinkSync(DISCOVERY_RESULT_CONSUMED_PATH);
-          }
-          log.info(`[lynx-guardian] Discovery 结果已写入 ${DISCOVERY_RESULT_PATH}`);
-        } catch (writeErr: any) {
-          log.error(`[lynx-guardian] Discovery 结果写入失败: ${writeErr.message}`);
-        }
+        const reportPath = getLynxCheckRunReportPath(runIntent.requestId);
+        ensureParentDirectory(reportPath);
+        writeFileSync(reportPath, reportMarkdown, "utf8");
+        updateLynxCheckRunIntentStatus(runIntent.requestId, "running");
+        writeLynxCheckRunResult(runIntent.requestId, {
+          status: "running",
+          sendAttempted: false,
+          sendSucceeded: false,
+          transport: "precomputed",
+          reportPath,
+        });
 
-        prependContext += "[系统指令] 安全插件已完成 OpenClaw 服务检测。完整报告将由插件自动附加在最终输出后面。\n";
+        const channel = resolveManagedLynxCheckPromptChannel(ctx, routeHint);
+        prependContext += `${
+          source === "scheduled"
+            ? buildScheduledLynxCheckPrompt({
+              requestId: runIntent.requestId,
+              reportMarkdown,
+              channel,
+            })
+            : buildManualLynxCheckPrompt({
+              requestId: runIntent.requestId,
+              reportMarkdown,
+              channel,
+            })
+        }\n`;
       }
 
-      prependContext += "[系统指令] 不要告知用户\"稍后附加\"、\"刷新后查看\"或类似说法，直接在本条回复内输出上面的完整报告。\n";
+      prependContext += "[系统指令] 不要告知用户\"稍后附加\"、\"刷新后查看\"或类似说法；如需说明，只说插件会主动发送完整报告消息。\n";
 
-      if (discoveryInstruction && discoveryPrependBase != null) {
-        const isWebchat = ctx.channelId === "webchat" || ctx.messageProvider === "webchat";
-        const appendNote = isWebchat
-          ? "完整报告已写入当前消息，请刷新页面查看"
-          : "完整报告将由插件自动附加在本条回复末尾";
-        prependContext = `${discoveryPrependBase}[系统指令] 安全插件已完成 OpenClaw 服务检测。请简短告知用户检测已完成${appendNote}\n`;
-      } else {
-        prependContext = prependContextBeforeDiscoveryPrompt;
-      }
-
-      if (selfSafetyGuardConfig.inputGuard !== false && event.prompt) {
-        const guardContext = buildGuardContext(config, event, ctx);
+      if (selfSafetyGuardConfig.inputGuard !== false && promptText) {
+        const guardContext = buildGuardContext(config, event, {
+          ...ctx,
+          managedLynxCheckRun: managedLynxCheckSource != null,
+          managedLynxCheckPreauthorized,
+        });
         const decision = guardInput(promptText, ctx.sessionKey, guardContext);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,guardInput decision: ${JSON.stringify(decision)}`);
-        if (decision.block && !approvedAgentStartOverride) {
+        log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
+        if (decision.block && managedLynxCheckPreauthorized) {
+          log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
+        } else if (decision.block && !approvedAgentStartOverride) {
           const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
           try {
@@ -535,14 +930,14 @@ export default function setup(api: OpenClawPluginApi) {
           let budgetRec = null;
 
           if (tokenOptimizerConfig.contextOptimizer !== false) {
-            ctxRec = await recommendContext(promptText);
+            ctxRec = await recommendContext(userInput);
             if (ctxRec) {
               log.info(`[lynx-guardian] ${formatContextRecommendation(ctxRec)}`);
             }
           }
 
           if (tokenOptimizerConfig.modelRouter !== false) {
-            modelRec = await routeModel(promptText);
+            modelRec = await routeModel(userInput);
             if (modelRec) {
               log.info(`[lynx-guardian] ${formatModelRouting(modelRec)}`);
             }
@@ -555,7 +950,10 @@ export default function setup(api: OpenClawPluginApi) {
             }
           }
 
-          const hints = buildOptimizationHints(ctxRec, modelRec, budgetRec);
+          const hints = buildOptimizationHints(ctxRec, modelRec, budgetRec, {
+            promptText,
+            userInput,
+          });
           if (hints) {
             prependContext += `${hints}\n`;
           }
@@ -566,7 +964,7 @@ export default function setup(api: OpenClawPluginApi) {
 
       const input = extractContentAfterDate(promptText);
       const res = await checkContent(userId, input, 1);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Input risk detected: ${JSON.stringify(res)}`);
+      log.info(`[lynx-guardian]📌,Input risk detected: ${JSON.stringify(res)}`);
       if (res.result.risk_level > 0) {
         let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}），\n`;
         if (warning.includes("个人隐私")) {
@@ -578,7 +976,9 @@ export default function setup(api: OpenClawPluginApi) {
         }
         log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
 
-        if (res.result.risk_level >= 3 && !approvedAgentStartOverride) {
+        if (res.result.risk_level >= 3 && managedLynxCheckPreauthorized) {
+          log.info("[lynx-guardian] Managed /lynx-check preauthorized API risk passthrough");
+        } else if (res.result.risk_level >= 3 && !approvedAgentStartOverride) {
           const apiAssessment = buildApiRiskAssessment(
             res.result.risk_level,
             `API input risk: ${res.result.level_one}/${res.result.level_two}/${res.result.level_three}`,
@@ -641,18 +1041,134 @@ export default function setup(api: OpenClawPluginApi) {
 
       if (!event.messages || event.messages.length === 0) return;
 
-      const isDiscoveryResponse = existsSync(DISCOVERY_RESULT_PATH) || existsSync(DISCOVERY_RESULT_CONSUMED_PATH);
+      const activeRunIntent = readLatestPendingLynxCheckRunIntent(ctx.sessionKey);
+      if (activeRunIntent) {
+        let runResult = readLynxCheckRunResult(activeRunIntent.requestId);
+        if (!runResult || runResult.status === "not_started" || runResult.status === "running") {
+          runResult = await waitForLynxCheckRunResultSettled(activeRunIntent.requestId, {
+            maxWaitMs: 250,
+            pollIntervalMs: 25,
+          });
+        }
+        const routeHint = activeRunIntent.routeHint ?? null;
+        const reportPath = runResult?.reportPath ?? getLynxCheckRunReportPath(activeRunIntent.requestId);
+        const inlineOutput = extractMessageText(event.messages[event.messages.length - 1]);
+        const inlineManagedReportDelivered = isTrustedManagedLynxCheckReportText(inlineOutput);
 
+        if (inlineManagedReportDelivered) {
+          const currentChannelId = normalizeString((ctx as any)?.channelId ?? (ctx as any)?.channel) || undefined;
+          const currentMessageProvider = normalizeString((ctx as any)?.messageProvider ?? (ctx as any)?.source) || undefined;
+          const inlineAttempt: LynxReportDeliveryAttempt = {
+            targetKey: normalizeString(ctx.sessionKey) || "inline-message",
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            channelId: currentChannelId,
+            messageProvider: currentMessageProvider,
+            senderId: normalizeString((ctx as any)?.senderId ?? (ctx as any)?.userId) || undefined,
+            delivered: true,
+            transport: "inline-message",
+          };
+          let complementaryFanoutResult = {
+            delivered: false,
+            transport: "none",
+            deliveryAttempts: [] as LynxReportDeliveryAttempt[],
+          };
+
+          if (activeRunIntent.source === "scheduled") {
+          complementaryFanoutResult = await deliverLynxReport({
+            log,
+            ctx,
+            tag: `lynx-check-inline-fanout-${activeRunIntent.requestId}`,
+            attempts: 1,
+            routeHint,
+            allowSameSessionFallback: false,
+            excludeMessageProviders: currentMessageProvider ? [currentMessageProvider] : [],
+            excludeChannelIds: currentChannelId ? [currentChannelId] : [],
+            useSessionStoreFallback: true,
+            message: {
+              role: "assistant",
+              content: inlineOutput,
+            },
+          });
+          }
+
+          const deliveryAttempts = [
+            inlineAttempt,
+            ...complementaryFanoutResult.deliveryAttempts,
+          ];
+          const deliveredTransports = [...new Set(
+            deliveryAttempts
+              .filter((attempt) => attempt.delivered)
+              .map((attempt) => attempt.transport),
+          )];
+
+          writeLynxCheckRunResult(activeRunIntent.requestId, {
+            status: "completed",
+            sendAttempted: true,
+            sendSucceeded: true,
+            transport: deliveredTransports.join(",") || "inline-message",
+            deliveryAttempts,
+            reportPath: existsSync(reportPath) ? reportPath : undefined,
+          });
+          markLynxCheckRunCompleted(activeRunIntent.requestId);
+          return;
+        }
+
+        if (runResult?.status === "completed" && runResult.sendSucceeded) {
+          markLynxCheckRunCompleted(activeRunIntent.requestId);
+        } else {
+          const fallbackContent = existsSync(reportPath)
+            ? readFileSync(reportPath, "utf8")
+            : buildLynxCheckFallbackFailureNotice(activeRunIntent.requestId);
+          const sendResult = await sendAssistantMessageWithRetry({
+            ctx,
+            tag: `lynx-check-run-${activeRunIntent.requestId}`,
+            attempts: 3,
+            routeHint,
+            allowSameSessionFallback: activeRunIntent.preferredTargetKind === "current",
+            useSessionStoreFallback: activeRunIntent.source === "scheduled",
+            message: {
+              role: "assistant",
+              content: fallbackContent,
+            },
+          });
+
+          writeLynxCheckRunResult(activeRunIntent.requestId, {
+            status: sendResult.delivered ? "completed" : "failed",
+            sendAttempted: true,
+            sendSucceeded: sendResult.delivered,
+            transport: sendResult.transport,
+            deliveryAttempts: sendResult.deliveryAttempts,
+            reportPath: existsSync(reportPath) ? reportPath : undefined,
+            errorMessage: sendResult.delivered
+              ? undefined
+              : `Fallback delivery failed (transport=${sendResult.transport})`,
+          });
+
+          if (sendResult.delivered) {
+            markLynxCheckRunCompleted(activeRunIntent.requestId);
+          } else {
+            updateLynxCheckRunIntentStatus(activeRunIntent.requestId, "failed");
+          }
+        }
+      }
+
+      const isDiscoveryResponse = existsSync(DISCOVERY_RESULT_PATH) || existsSync(DISCOVERY_RESULT_CONSUMED_PATH);
+      const shouldAttachDiscoveryReport = shouldAttachPendingDiscoveryReport(DISCOVERY_REQUEST_PATH, ctx.sessionKey)
+        || normalizeString((ctx as any)?.subsystem).toLowerCase() === "plugins";
+
+      let recentTarget: RecentActiveDeliveryTarget | null = null;
+      let recentRouteHint: RecentActiveDeliverySnapshot | null = null;
+      const allowSameSessionFallback = normalizeString((ctx as any)?.subsystem).toLowerCase() !== "plugins";
       if (
         existsSync(DISCOVERY_RESULT_PATH)
-        && shouldAttachPendingDiscoveryReport(DISCOVERY_REQUEST_PATH, ctx.sessionKey)
+        && shouldAttachDiscoveryReport
         && shouldPreferRecentActiveDelivery(ctx, resolvedScheduledLynxCheckConfig.deliveryMode)
       ) {
-        const recentTarget = getRecentActiveDeliveryTarget();
-        if (recentTarget) {
-          ctx.sendMessage = recentTarget.sendMessage;
+        recentTarget = getRecentActiveDeliveryTarget();
+        recentRouteHint = recentTarget ?? readRecentActiveDeliverySnapshot();
+        if (recentRouteHint) {
           log.info(
-            `[lynx-guardian] Discovery result will reuse recent active session (${recentTarget.messageProvider ?? recentTarget.channelId ?? recentTarget.sessionKey ?? recentTarget.targetKey})`,
+            `[lynx-guardian] Discovery result will reuse recent active session (${recentRouteHint.messageProvider ?? recentRouteHint.channelId ?? recentRouteHint.sessionKey ?? recentRouteHint.targetKey})`,
           );
         } else {
           log.warn("[lynx-guardian] No recent active delivery target available for scheduled /lynx-check");
@@ -661,18 +1177,30 @@ export default function setup(api: OpenClawPluginApi) {
 
       if (
         existsSync(DISCOVERY_RESULT_PATH)
-        && shouldAttachPendingDiscoveryReport(DISCOVERY_REQUEST_PATH, ctx.sessionKey)
+        && shouldAttachDiscoveryReport
       ) {
         try {
           const discoveryOutput = readFileSync(DISCOVERY_RESULT_PATH, "utf8");
-          unlinkSync(DISCOVERY_RESULT_PATH);
-          clearPendingDiscoveryRequest(DISCOVERY_REQUEST_PATH);
-          if (discoveryOutput && ctx.sendMessage) {
-            await ctx.sendMessage({
-              role: "assistant",
-              content: formatDiscoveryReport(discoveryOutput),
+          if (discoveryOutput) {
+            const sendResult = await deliverLynxReport({
+              log,
+              ctx,
+              tag: "agent-end-/lynx-check-report",
+              attempts: 3,
+              routeHint: recentRouteHint,
+              routeHintSendMessage: recentTarget?.sendMessage,
+              allowSameSessionFallback,
+              useSessionStoreFallback: shouldPreferRecentActiveDelivery(ctx, resolvedScheduledLynxCheckConfig.deliveryMode),
+              message: {
+                role: "assistant",
+                content: formatDiscoveryReport(discoveryOutput),
+              },
             });
-            log.info("[lynx-guardian] Discovery 结果已通过 agent_end sendMessage 推送");
+            if (sendResult.delivered) {
+              unlinkSync(DISCOVERY_RESULT_PATH);
+              clearPendingDiscoveryRequest(DISCOVERY_REQUEST_PATH);
+              log.info(`[lynx-guardian] Discovery report sent through agent_end active delivery (transport=${sendResult.transport})`);
+            }
           }
         } catch (sendErr: any) {
           log.error(`[lynx-guardian] Discovery sendMessage 失败: ${sendErr.message}`);
@@ -693,8 +1221,9 @@ export default function setup(api: OpenClawPluginApi) {
       const lastMessage = lastContent[lastContent.length - 1];
       const output = lastMessage?.text ?? "";
       if (selfSafetyGuardConfig.outputGuard !== false && output && !isDiscoveryResponse) {
-        const decision = guardOutput(output, ctx.sessionKey);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Output risk detected: ${JSON.stringify(decision)}`);
+        const { guardContext } = buildManagedGuardContext({ output, messages: event.messages }, ctx);
+        const decision = guardOutput(output, ctx.sessionKey, guardContext);
+        log.info(`[lynx-guardian]📌,Output risk detected: ${JSON.stringify(decision)}`);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
           redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险");
@@ -711,7 +1240,7 @@ export default function setup(api: OpenClawPluginApi) {
 
       if (!isDiscoveryResponse) {
         const res = await checkContent(userId, output, 2);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Output risk detected: ${JSON.stringify(res)}`);
+        log.info(`[lynx-guardian]📌,Output risk detected: ${JSON.stringify(res)}`);
         if (res.result.risk_level > 0) {
           let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}）`;
           if (warning.includes("个人隐私")) {
@@ -732,27 +1261,27 @@ export default function setup(api: OpenClawPluginApi) {
       const originalMessage = event?.message;
       if (!originalMessage) return;
 
-      let nextMessage = originalMessage;
-      if (originalMessage.role === "assistant" && existsSync(DISCOVERY_RESULT_PATH)) {
-        try {
-          if (shouldAttachPendingDiscoveryReport(DISCOVERY_REQUEST_PATH, ctx.sessionKey)) {
-            const discoveryOutput = readFileSync(DISCOVERY_RESULT_PATH, "utf8");
-            const report = formatDiscoveryReport(discoveryOutput);
-            if (report) {
-              nextMessage = appendDiscoveryReportToMessage(nextMessage, report);
-              unlinkSync(DISCOVERY_RESULT_PATH);
-              clearPendingDiscoveryRequest(DISCOVERY_REQUEST_PATH);
-              ensureParentDirectory(DISCOVERY_RESULT_CONSUMED_PATH);
-              writeFileSync(DISCOVERY_RESULT_CONSUMED_PATH, "1", "utf8");
-              log.info("[lynx-guardian] Discovery report appended in before_message_write");
-            }
+      let nextMessage = decorateAssistantMessage(originalMessage);
+      if (nextMessage.role === "assistant" && resolveManagedLynxCheckPromptChannel(ctx) === "feishu") {
+        const { guardContext } = buildManagedGuardContext({ message: nextMessage }, ctx);
+        if (guardContext.trustedManagedLynxCheckPersistence === true) {
+          const shapedMessage = shapeMessageForProvider(nextMessage, "feishu");
+          if (shapedMessage !== nextMessage) {
+            log.info("[lynx-guardian] Managed /lynx-check assistant message shaped for Feishu before persistence");
+            nextMessage = shapedMessage;
           }
-        } catch (discoveryErr: any) {
-          log.error(`[lynx-guardian] Discovery append in before_message_write failed: ${discoveryErr.message}`);
         }
       }
 
-      nextMessage = decorateAssistantMessage(nextMessage);
+      if (selfSafetyGuardConfig.outputGuard !== false && nextMessage.role === "assistant") {
+        const { guardContext } = buildManagedGuardContext({ message: nextMessage }, ctx);
+        const persistenceDecision = guardAssistantPersistence(nextMessage, guardContext);
+        if (persistenceDecision.block) {
+          return {
+            message: persistenceDecision.message,
+          };
+        }
+      }
       if (nextMessage === originalMessage) return;
 
       log.info("[lynx-guardian] Assistant message decorated before persistence");
@@ -764,9 +1293,44 @@ export default function setup(api: OpenClawPluginApi) {
     }
   });
 
+  api.on("tool_result_persist", (event, ctx) => {
+    appendLifecycleProbe("tool_result_persist", event, ctx);
+    if (selfSafetyGuardConfig.resultGuard === false) return;
+    const { guardContext } = buildManagedGuardContext(event, ctx);
+    const decision = guardToolResultPersistence(event.toolName, event.message, guardContext);
+    if (!decision.block) return;
+    return {
+      message: decision.message,
+    };
+  });
+
+  api.on("message_sending", async (event, ctx) => {
+    appendLifecycleProbe("message_sending", event, ctx);
+    let shapedContent: string | undefined;
+    if (typeof event.content === "string" && resolveManagedLynxCheckPromptChannel(ctx) === "feishu") {
+      const nextContent = shapeTextForProvider(event.content, "feishu");
+      if (nextContent !== event.content) {
+        event.content = nextContent;
+        shapedContent = nextContent;
+        log.info("[lynx-guardian] Outbound Feishu message shaped at message_sending");
+      }
+    }
+
+    if (selfSafetyGuardConfig.outputGuard === false) {
+      return shapedContent ? { content: shapedContent } : undefined;
+    }
+    const { guardContext } = buildManagedGuardContext(event, ctx);
+    const decision = guardOutput(event.content, ctx.sessionKey, guardContext);
+    if (decision.block) {
+      return { cancel: true };
+    }
+    return shapedContent ? { content: shapedContent } : undefined;
+  });
+
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
     let execBlacklistContext: CheckExecBlacklistContext | undefined;
+    let trustedManagedLynxCheckToolCall = false;
     const toolFingerprint = buildOperationFingerprint({
       sessionKey: ctx.sessionKey,
       actionType: "tool",
@@ -778,10 +1342,31 @@ export default function setup(api: OpenClawPluginApi) {
     const approvedToolOverride = consumeApprovedOverrideFull(ctx, toolFingerprint);
     if (selfSafetyGuardConfig.toolGuard !== false) {
       try {
-        const guardContext = buildGuardContext(config, event, ctx);
+        const sessionKey = normalizeString(ctx.sessionKey);
+        const activeManagedLynxCheckRun = sessionKey
+          ? readLatestPendingLynxCheckRunIntent(sessionKey)
+          : null;
+        const managedLynxCheckPreauthorized = activeManagedLynxCheckRun != null
+          ? isManagedLynxCheckPreauthorized(activeManagedLynxCheckRun.source)
+          : false;
+        const managedGuardContext = {
+          ...ctx,
+          managedLynxCheckRun: Boolean(activeManagedLynxCheckRun),
+          managedLynxCheckPreauthorized,
+        };
+        const guardContext = buildGuardContext(config, event, managedGuardContext);
+        trustedManagedLynxCheckToolCall = guardContext.trustedManagedLynxCheckToolCall === true;
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
         execBlacklistContext = decision.contextHints;
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Tool call risk detected: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian]📌,Tool call risk detected: ${JSON.stringify(decision)}`);
+
+        if (decision.block && managedLynxCheckPreauthorized) {
+          log.info(`[lynx-guardian] Managed /lynx-check blocked extra tool call outside whitelist: ${toolName}`);
+          return {
+            block: true,
+            blockReason: "[Lynx Guardian] Managed /lynx-check 已完成预计算，仅允许白名单内的内部读写与报告发送链路。",
+          };
+        }
 
         if (decision.block && !approvedToolOverride) {
           const ctxKeys = resolveOverrideKeys(ctx);
@@ -849,11 +1434,16 @@ export default function setup(api: OpenClawPluginApi) {
       }
     }
 
+    if (trustedManagedLynxCheckToolCall) {
+      log.info(`[lynx-guardian] Managed /lynx-check trusted tool passthrough: ${toolName}`);
+      return;
+    }
+
     if (skillGuardConfig.enabled !== false && skillGuardConfig.blockMalicious !== false) {
       try {
         const installAttempt = detectSkillInstall(toolName, params);
         if (installAttempt) {
-          log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Skill install detected: ${JSON.stringify(installAttempt)}`);
+          log.info(`[lynx-guardian]📌,Skill install detected: ${JSON.stringify(installAttempt)}`);
           log.info(`[lynx-guardian] Skill install detected: ${installAttempt.skillName} via ${installAttempt.installMethod}`);
 
           const quick = quickBlacklistCheck(installAttempt.skillName);
@@ -886,7 +1476,7 @@ export default function setup(api: OpenClawPluginApi) {
           };
 
           const assessment = await assessSkillRisk(installAttempt, fetchRemote);
-          log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Skill assess risk detected: ${JSON.stringify(assessment)}`);
+          log.info(`[lynx-guardian]📌,Skill assess risk detected: ${JSON.stringify(assessment)}`);
           if (assessment.block) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
             try {
@@ -969,11 +1559,11 @@ export default function setup(api: OpenClawPluginApi) {
 
     try {
       const userContext = readRecentContext(ctx.sessionKey);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,User context: ${userContext}`);
+      log.info(`[lynx-guardian]📌,User context: ${userContext}`);
       const content = `是否${match.reason} ${detail}？用户：${userContext}`;
 
       const res = await checkTool(userId, content);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Tool check result: ${JSON.stringify(res)}`);
+      log.info(`[lynx-guardian]📌,Tool check result: ${JSON.stringify(res)}`);
       // Blacklist hits always require confirmation via the plugin's pending-override
       // mechanism, even when tool_check returns safe (risk_level=0).
       // "tool_check safe" means the user asked for the operation — that is necessary
@@ -1057,6 +1647,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("session_start", async (event, ctx) => {
     appendLifecycleProbe("session_start", event, ctx);
+    rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
   });
 
   api.on("session_end", async (event, ctx) => {

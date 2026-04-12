@@ -72,6 +72,11 @@ export interface UsageStats {
   recommendation: string;
 }
 
+export interface OptimizationHintOptions {
+  promptText: string;
+  userInput: string;
+}
+
 // ── Script Discovery ─────────────────────────────────────────────────
 
 function findTokenOptimizerScriptsDir(): string | null {
@@ -255,33 +260,97 @@ export function buildOptimizationHints(
   context?: ContextRecommendation | null,
   routing?: ModelRouting | null,
   budget?: BudgetStatus | null,
+  options?: OptimizationHintOptions,
 ): string {
   const hints: string[] = [];
+  const promptText = options?.promptText ?? "";
+  const userInput = options?.userInput ?? "";
+  const normalizedInput = userInput.toLowerCase();
 
-  if (context && context.context_level !== "full") {
-    hints.push(
-      `[Token Optimizer] Context: Load ${context.context_level} context only (${context.file_count} files). ` +
-      `Recommended: ${context.recommended_files.join(", ")}. ` +
-      (context.skip_patterns.length > 0
-        ? `Skip: ${context.skip_patterns.join(", ")}.`
-        : ""),
-    );
+  const isCronTask = promptText.includes("[cron:");
+  const isLongContext = hasHeavyContextSignals(promptText, context);
+  const needsBudgetWarning = budget?.status !== undefined && budget.status !== "ok";
+  const needsComputeAbuseCheck = shouldWarnForComputeAbuse(normalizedInput);
+
+  if (isCronTask) {
+    hints.push("Cron task: keep response compact.");
   }
 
-  if (routing && routing.should_switch) {
-    hints.push(
-      `[Token Optimizer] Model: Suggest ${routing.recommended_model} (${routing.tier_display}, ` +
-      `${routing.cost_savings_percent.toFixed(0)}% cheaper). Reason: ${routing.reasoning}.`,
-    );
+  if (isLongContext) {
+    hints.push("Context heavy: keep scope tight.");
   }
 
-  if (budget && budget.status !== "ok") {
-    hints.push(
-      `[Token Optimizer] Budget: ${budget.alert ?? `${budget.percent_used.toFixed(0)}% of daily limit used`}`,
-    );
+  if (needsBudgetWarning) {
+    hints.push("Budget warning: prefer cheaper path.");
+  }
+
+  if (needsComputeAbuseCheck) {
+    hints.push("Compute abuse check: verify this is not malicious high-cost usage.");
   }
 
   return hints.join("\n");
+}
+
+function shouldWarnForComputeAbuse(userInput: string): boolean {
+  if (!userInput) return false;
+
+  const computeKeywords = [
+    "gpu",
+    "cuda",
+    "训练",
+    "推理",
+    "算力",
+    "tokens",
+    "token",
+    "百万",
+    "千万",
+    "亿",
+    "批量",
+    "并发",
+    "stress",
+    "load test",
+    "benchmark",
+    "mining",
+  ];
+  const amountKeywords = ["元", "万元", "usd", "$", "预算", "cost", "费用"];
+  const largeNumberMatch = userInput.match(/\d[\d,]{4,}/g);
+  const hasLargeNumber = (largeNumberMatch ?? []).some((raw) => {
+    const numeric = Number(raw.replace(/,/g, ""));
+    return Number.isFinite(numeric) && numeric >= 10000;
+  });
+  const hasLargeUnit = /(\d+(?:\.\d+)?)\s*(万|亿|k|m)\b/i.test(userInput);
+  const hasComputeKeyword = computeKeywords.some((keyword) => userInput.includes(keyword));
+  const hasAmountKeyword = amountKeywords.some((keyword) => userInput.includes(keyword));
+
+  return (hasComputeKeyword && (hasLargeNumber || hasLargeUnit || hasAmountKeyword))
+    || (hasAmountKeyword && (hasLargeNumber || hasLargeUnit));
+}
+
+function hasHeavyContextSignals(
+  promptText: string,
+  context?: ContextRecommendation | null,
+): boolean {
+  if (!promptText && !context) return false;
+
+  let signalCount = 0;
+  const fileCount = context?.file_count ?? 0;
+
+  if (promptText.length >= 3000) signalCount += 1;
+  if (fileCount >= 8 || context?.context_level === "full") signalCount += 1;
+
+  const fencedBlocks = (promptText.match(/```/g) ?? []).length / 2;
+  if (fencedBlocks >= 2) signalCount += 1;
+
+  const newlineCount = (promptText.match(/\n/g) ?? []).length;
+  if (newlineCount >= 80) signalCount += 1;
+
+  const logLikeLines = (promptText.match(/^(error|warn|info|debug|trace|exception|stack|at\s)/gim) ?? []).length;
+  if (logLikeLines >= 20) signalCount += 1;
+
+  const structuredDensity = (promptText.match(/[{}[\]:,]/g) ?? []).length;
+  if (structuredDensity >= 600) signalCount += 1;
+
+  return signalCount >= 2;
 }
 
 /**
