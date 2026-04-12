@@ -304,6 +304,68 @@ function flattenMarkdownTablesForFeishu(text: string): string {
   return output.join("\n");
 }
 
+const FEISHU_AUDIT_MAX_CHARS = 4200;
+const FEISHU_AUDIT_HEAD_MAX_CHARS = 2200;
+const FEISHU_AUDIT_REMEDIATION_MAX_CHARS = 1400;
+const FEISHU_AUDIT_MIN_HEAD_CHARS = 1200;
+
+function collapseExcessBlankLines(text: string): string {
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function trimAtLineBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text.trim();
+  }
+
+  const slice = text.slice(0, Math.max(0, maxChars));
+  const lastBreak = slice.lastIndexOf("\n");
+  if (lastBreak >= Math.floor(Math.max(0, maxChars) * 0.6)) {
+    return slice.slice(0, lastBreak).trim();
+  }
+
+  return slice.trim();
+}
+
+function extractFeishuRemediationSection(text: string): string | null {
+  const match = text.match(/(^##\s+(?:八、)?优先级整改建议[\s\S]*$)/m);
+  return match?.[1]?.trim() ?? null;
+}
+
+function shortenFeishuAuditForSafety(text: string): string {
+  if (text.length <= FEISHU_AUDIT_MAX_CHARS) {
+    return text;
+  }
+
+  const notice = "> 飞书安全缩略：正文过长，已保留首屏摘要与整改建议，避免消息卡片超限。";
+  let remediationSection = trimAtLineBoundary(
+    extractFeishuRemediationSection(text) ?? "## 八、优先级整改建议\n1. 立即复核本次审计发现",
+    FEISHU_AUDIT_REMEDIATION_MAX_CHARS,
+  );
+  let headSection = trimAtLineBoundary(text, FEISHU_AUDIT_HEAD_MAX_CHARS);
+
+  let combined = [headSection, notice, remediationSection].join("\n\n");
+  if (combined.length <= FEISHU_AUDIT_MAX_CHARS) {
+    return combined;
+  }
+
+  while (combined.length > FEISHU_AUDIT_MAX_CHARS && remediationSection.length > 600) {
+    remediationSection = trimAtLineBoundary(remediationSection, remediationSection.length - 200);
+    combined = [headSection, notice, remediationSection].join("\n\n");
+  }
+
+  if (combined.length > FEISHU_AUDIT_MAX_CHARS) {
+    const remainingHeadBudget = Math.max(
+      FEISHU_AUDIT_MIN_HEAD_CHARS,
+      FEISHU_AUDIT_MAX_CHARS - notice.length - remediationSection.length - 4,
+    );
+    headSection = trimAtLineBoundary(text, remainingHeadBudget);
+    combined = [headSection, notice, remediationSection].join("\n\n");
+  }
+
+  return combined;
+}
+
 export function shapeTextForProvider(text: string, provider?: string): string {
   if ((provider ?? "").toLowerCase() !== "feishu" || typeof text !== "string" || text.length === 0) {
     return text;
@@ -314,11 +376,12 @@ export function shapeTextForProvider(text: string, provider?: string): string {
     return text;
   }
 
-  const flattenedContent = flattenMarkdownTablesForFeishu(normalizedText);
-  const lead = extractFeishuLead(flattenedContent);
+  const flattenedContent = collapseExcessBlankLines(flattenMarkdownTablesForFeishu(normalizedText));
+  const shortenedContent = shortenFeishuAuditForSafety(flattenedContent);
+  const lead = extractFeishuLead(shortenedContent);
   return lead.length > 0
-    ? `${lead.join("\n")}\n\n${flattenedContent}`
-    : flattenedContent;
+    ? `${lead.join("\n")}\n\n${shortenedContent}`
+    : shortenedContent;
 }
 
 export function shapeMessageForProvider(message: Message, provider?: string): Message {

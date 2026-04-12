@@ -1027,6 +1027,74 @@ describe('Plugin Setup', () => {
     expect(feishuContent).toContain('状态：未发现');
   });
 
+  it('should rewrite feishu audit tables at message_sending', async () => {
+    setup(mockApi);
+    const handler = handlers['message_sending'];
+
+    const result = await handler(
+      {
+        to: 'user:ou_feishu',
+        content: [
+          '# 🛡️ OpenClaw 全方位安全审计报告',
+          '总体评级：中高危',
+          '',
+          '## 一、执行摘要',
+          '| 检查项 | 状态 |',
+          '| --- | --- |',
+          '| 网关暴露 | 未发现 |',
+          '',
+          '## 八、优先级整改建议',
+          '1. 立即整改',
+        ].join('\n'),
+      },
+      {
+        channelId: 'feishu',
+        accountId: 'default',
+      },
+    );
+
+    expect(result).toEqual({
+      content: expect.any(String),
+    });
+    expect(result?.content).toContain('【飞书速览】总体评级：中高危');
+    expect(result?.content).not.toContain('| 检查项 | 状态 |');
+    expect(result?.content).toContain('检查项：网关暴露');
+  });
+
+  it('should shorten oversized feishu audit content at message_sending', async () => {
+    setup(mockApi);
+    const handler = handlers['message_sending'];
+    const oversizedBody = new Array(120).fill('- 证据明细：abcdefghijklmnopqrstuvwxyz0123456789').join('\n');
+
+    const result = await handler(
+      {
+        to: 'user:ou_feishu',
+        content: [
+          '# 🛡️ OpenClaw 全方位安全审计报告',
+          '总体评级：中高危',
+          '',
+          '## 一、执行摘要',
+          oversizedBody,
+          '',
+          '## 八、优先级整改建议',
+          '1. 立即整改',
+        ].join('\n'),
+      },
+      {
+        channelId: 'feishu',
+        accountId: 'default',
+      },
+    );
+
+    expect(result).toEqual({
+      content: expect.any(String),
+    });
+    expect((result?.content as string).length).toBeLessThan(5000);
+    expect(result?.content).toContain('总体评级：中高危');
+    expect(result?.content).toContain('## 八、优先级整改建议');
+    expect(result?.content).toContain('飞书安全缩略');
+  });
+
   it('should allow safe outbound content on message_sending', async () => {
     setup(mockApi);
     const handler = handlers['message_sending'];

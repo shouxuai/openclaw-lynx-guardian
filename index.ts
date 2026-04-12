@@ -93,7 +93,7 @@ import {
 } from "./src/runtime/recent-active-delivery.js";
 import { getHookCapabilityReport, getOpenClawRuntimeVersion } from "./src/runtime/hook-capabilities.js";
 import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from "./src/runtime/recent-active-delivery.js";
-import { deliverLynxReport, shapeMessageForProvider } from "./src/runtime/lynx-message-delivery.js";
+import { deliverLynxReport, shapeMessageForProvider, shapeTextForProvider } from "./src/runtime/lynx-message-delivery.js";
 import {
   createLynxCheckRunIntent,
   getLynxCheckRunReportPath,
@@ -1306,12 +1306,25 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("message_sending", async (event, ctx) => {
     appendLifecycleProbe("message_sending", event, ctx);
-    if (selfSafetyGuardConfig.outputGuard === false) return;
+    let shapedContent: string | undefined;
+    if (typeof event.content === "string" && resolveManagedLynxCheckPromptChannel(ctx) === "feishu") {
+      const nextContent = shapeTextForProvider(event.content, "feishu");
+      if (nextContent !== event.content) {
+        event.content = nextContent;
+        shapedContent = nextContent;
+        log.info("[lynx-guardian] Outbound Feishu message shaped at message_sending");
+      }
+    }
+
+    if (selfSafetyGuardConfig.outputGuard === false) {
+      return shapedContent ? { content: shapedContent } : undefined;
+    }
     const { guardContext } = buildManagedGuardContext(event, ctx);
     const decision = guardOutput(event.content, ctx.sessionKey, guardContext);
     if (decision.block) {
       return { cancel: true };
     }
+    return shapedContent ? { content: shapedContent } : undefined;
   });
 
   api.on("before_tool_call", async (event, ctx) => {
