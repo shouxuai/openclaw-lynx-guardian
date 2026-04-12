@@ -18,9 +18,9 @@ This capability owns the OpenClaw discovery execution surface.
 This skill may be used in two ways:
 
 - standalone discovery requests;
-- orchestrated `/lynx-check` dispatch from `lynx-guardian-check-orchestrator`.
+- managed `/lynx-check` precomputation inside the plugin runtime.
 
-When dispatched by the orchestrator, keep the output focused on discovery facts so it can be merged into one report.
+When used inside managed `/lynx-check`, keep the output focused on discovery facts so it can be merged into one report.
 
 ## Required Output
 
@@ -28,15 +28,15 @@ Return:
 
 1. a short discovery summary;
 2. confirmed or likely endpoints with host / port / scheme / confidence;
-3. any raw appendix the orchestrator may embed or store.
+3. any raw appendix the plugin may embed or store.
 
 ## Asset Ownership
 
 - `references/` contains the moved discovery references.
 - `scripts/` contains the moved discovery helpers.
-- The orchestrator should call into this capability instead of copying those assets elsewhere.
+- the plugin or local audit flow should call into this capability instead of copying those assets elsewhere.
 
 ## Coordination Notes
 
 - `SX-security-audit` covers audit findings; do not duplicate that work here.
-- `lynx-guardian-check-orchestrator` aggregates your output into the final composite report.
+- the plugin-level managed `/lynx-check` flow aggregates your output into the final composite report.

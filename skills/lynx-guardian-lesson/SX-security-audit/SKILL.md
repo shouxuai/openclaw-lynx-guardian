@@ -11,16 +11,16 @@ This capability owns the audit portion of Lynx Guardian checks.
 
 - inspect security-relevant findings;
 - summarize the findings clearly for chat delivery;
-- support both standalone audit usage and orchestrated `/lynx-check` usage.
+- support both standalone audit usage and managed `/lynx-check` precomputation.
 
-## When dispatched by the orchestrator
+## When used by `/lynx-check`
 
-If `lynx-guardian-check-orchestrator` calls this skill during Execution Dispatch Mode:
+If the plugin-level managed `/lynx-check` flow uses this capability during precomputation or internal review:
 
 1. return the audit findings only;
 2. keep the output easy to merge into one composite report;
 3. do not claim the final `/lynx-check` report has been sent;
-4. let the orchestrator handle aggregation and delivery.
+4. let the managed plugin flow handle final assembly and delivery.
 
 ## Recommended Sections
 
@@ -31,4 +31,4 @@ If `lynx-guardian-check-orchestrator` calls this skill during Execution Dispatch
 ## Coordination Notes
 
 - `SX-openclaw-discovery` owns discovery execution and endpoint findings.
-- `lynx-guardian-check-orchestrator` owns orchestration, report assembly, and send-result recording.
+- the plugin-level managed `/lynx-check` flow owns report assembly, channel adaptation, and send-result recording.

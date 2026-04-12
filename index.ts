@@ -93,7 +93,7 @@ import {
 } from "./src/runtime/recent-active-delivery.js";
 import { getHookCapabilityReport, getOpenClawRuntimeVersion } from "./src/runtime/hook-capabilities.js";
 import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from "./src/runtime/recent-active-delivery.js";
-import { deliverLynxReport } from "./src/runtime/lynx-message-delivery.js";
+import { deliverLynxReport, shapeMessageForProvider } from "./src/runtime/lynx-message-delivery.js";
 import {
   createLynxCheckRunIntent,
   getLynxCheckRunReportPath,
@@ -310,6 +310,7 @@ export default function setup(api: OpenClawPluginApi) {
     attempts?: number;
     routeHint?: RecentActiveDeliverySnapshot | null;
     allowSameSessionFallback?: boolean;
+    useSessionStoreFallback?: boolean;
   }): Promise<{
     delivered: boolean;
     transport: string;
@@ -340,6 +341,7 @@ export default function setup(api: OpenClawPluginApi) {
         attempts: 1,
         routeHint: options.routeHint,
         allowSameSessionFallback: options.allowSameSessionFallback !== false,
+        useSessionStoreFallback: options.useSessionStoreFallback === true,
         message: options.message,
       });
 
@@ -609,7 +611,7 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("message_received", async (event, ctx) => {
     try {
       if (!event.content || event.content.length === 0) return;
-      rememberRecentActiveDeliveryTarget(ctx);
+      rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
       log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received event: ${JSON.stringify(event)}`);
       log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received ctx: ${JSON.stringify(ctx)}`);
       const text = typeof event.content === "string"
@@ -1054,22 +1056,57 @@ export default function setup(api: OpenClawPluginApi) {
         const inlineManagedReportDelivered = isTrustedManagedLynxCheckReportText(inlineOutput);
 
         if (inlineManagedReportDelivered) {
+          const currentChannelId = normalizeString((ctx as any)?.channelId ?? (ctx as any)?.channel) || undefined;
+          const currentMessageProvider = normalizeString((ctx as any)?.messageProvider ?? (ctx as any)?.source) || undefined;
+          const inlineAttempt: LynxReportDeliveryAttempt = {
+            targetKey: normalizeString(ctx.sessionKey) || "inline-message",
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            channelId: currentChannelId,
+            messageProvider: currentMessageProvider,
+            senderId: normalizeString((ctx as any)?.senderId ?? (ctx as any)?.userId) || undefined,
+            delivered: true,
+            transport: "inline-message",
+          };
+          let complementaryFanoutResult = {
+            delivered: false,
+            transport: "none",
+            deliveryAttempts: [] as LynxReportDeliveryAttempt[],
+          };
+
+          if (activeRunIntent.source === "scheduled") {
+          complementaryFanoutResult = await deliverLynxReport({
+            log,
+            ctx,
+            tag: `lynx-check-inline-fanout-${activeRunIntent.requestId}`,
+            attempts: 1,
+            routeHint,
+            allowSameSessionFallback: false,
+            excludeMessageProviders: currentMessageProvider ? [currentMessageProvider] : [],
+            excludeChannelIds: currentChannelId ? [currentChannelId] : [],
+            useSessionStoreFallback: true,
+            message: {
+              role: "assistant",
+              content: inlineOutput,
+            },
+          });
+          }
+
+          const deliveryAttempts = [
+            inlineAttempt,
+            ...complementaryFanoutResult.deliveryAttempts,
+          ];
+          const deliveredTransports = [...new Set(
+            deliveryAttempts
+              .filter((attempt) => attempt.delivered)
+              .map((attempt) => attempt.transport),
+          )];
+
           writeLynxCheckRunResult(activeRunIntent.requestId, {
             status: "completed",
             sendAttempted: true,
             sendSucceeded: true,
-            transport: "inline-message",
-            deliveryAttempts: [
-              {
-                targetKey: normalizeString(ctx.sessionKey) || "inline-message",
-                sessionKey: normalizeString(ctx.sessionKey) || undefined,
-                channelId: normalizeString((ctx as any)?.channelId ?? (ctx as any)?.channel) || undefined,
-                messageProvider: normalizeString((ctx as any)?.messageProvider ?? (ctx as any)?.source) || undefined,
-                senderId: normalizeString((ctx as any)?.senderId ?? (ctx as any)?.userId) || undefined,
-                delivered: true,
-                transport: "inline-message",
-              },
-            ],
+            transport: deliveredTransports.join(",") || "inline-message",
+            deliveryAttempts,
             reportPath: existsSync(reportPath) ? reportPath : undefined,
           });
           markLynxCheckRunCompleted(activeRunIntent.requestId);
@@ -1088,6 +1125,7 @@ export default function setup(api: OpenClawPluginApi) {
             attempts: 3,
             routeHint,
             allowSameSessionFallback: activeRunIntent.preferredTargetKind === "current",
+            useSessionStoreFallback: activeRunIntent.source === "scheduled",
             message: {
               role: "assistant",
               content: fallbackContent,
@@ -1152,6 +1190,7 @@ export default function setup(api: OpenClawPluginApi) {
               routeHint: recentRouteHint,
               routeHintSendMessage: recentTarget?.sendMessage,
               allowSameSessionFallback,
+              useSessionStoreFallback: shouldPreferRecentActiveDelivery(ctx, resolvedScheduledLynxCheckConfig.deliveryMode),
               message: {
                 role: "assistant",
                 content: formatDiscoveryReport(discoveryOutput),
@@ -1222,7 +1261,18 @@ export default function setup(api: OpenClawPluginApi) {
       const originalMessage = event?.message;
       if (!originalMessage) return;
 
-      const nextMessage = decorateAssistantMessage(originalMessage);
+      let nextMessage = decorateAssistantMessage(originalMessage);
+      if (nextMessage.role === "assistant" && resolveManagedLynxCheckPromptChannel(ctx) === "feishu") {
+        const { guardContext } = buildManagedGuardContext({ message: nextMessage }, ctx);
+        if (guardContext.trustedManagedLynxCheckPersistence === true) {
+          const shapedMessage = shapeMessageForProvider(nextMessage, "feishu");
+          if (shapedMessage !== nextMessage) {
+            log.info("[lynx-guardian] Managed /lynx-check assistant message shaped for Feishu before persistence");
+            nextMessage = shapedMessage;
+          }
+        }
+      }
+
       if (selfSafetyGuardConfig.outputGuard !== false && nextMessage.role === "assistant") {
         const { guardContext } = buildManagedGuardContext({ message: nextMessage }, ctx);
         const persistenceDecision = guardAssistantPersistence(nextMessage, guardContext);
@@ -1584,7 +1634,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("session_start", async (event, ctx) => {
     appendLifecycleProbe("session_start", event, ctx);
-    rememberRecentActiveDeliveryTarget(ctx);
+    rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
   });
 
   api.on("session_end", async (event, ctx) => {

@@ -12,6 +12,9 @@ export interface RecentActiveRouteHint {
   messageProvider?: string;
   senderId?: string;
   bindingId?: string;
+  to?: string;
+  accountId?: string;
+  threadId?: string | number;
   updatedAtMs: number;
 }
 
@@ -26,7 +29,33 @@ interface RecentActiveDeliveryState {
   targets: RecentActiveDeliverySnapshot[];
 }
 
+interface SessionStoreEntryOrigin {
+  provider?: unknown;
+  surface?: unknown;
+  from?: unknown;
+  to?: unknown;
+  accountId?: unknown;
+  threadId?: unknown;
+}
+
+interface SessionStoreEntryDeliveryContext {
+  channel?: unknown;
+  to?: unknown;
+  accountId?: unknown;
+  threadId?: unknown;
+}
+
+interface SessionStoreEntry {
+  updatedAt?: unknown;
+  origin?: SessionStoreEntryOrigin;
+  deliveryContext?: SessionStoreEntryDeliveryContext;
+}
+
 const liveTargets = new Map<string, RecentActiveDeliveryTarget["sendMessage"]>();
+const DEFAULT_SESSION_STORE_RELATIVE_PATHS = [
+  [".openclaw", "docker-state", "agents", "main", "sessions", "sessions.json"],
+  [".openclaw", "agents", "main", "sessions", "sessions.json"],
+];
 
 function getDefaultRecentActiveDeliveryPath(): string {
   return join(resolveRuntimeHomeDir(), ".openclaw", "lynx", "recent-active-delivery.json");
@@ -41,6 +70,11 @@ function resolveRecentActiveDeliveryPath(customPath?: string): string {
     return resolve(trimmed.replace(/^~(?=$|[\\/])/, resolveRuntimeHomeDir()));
   }
   return resolve(trimmed);
+}
+
+function resolveSessionStorePaths(): string[] {
+  const homeDir = resolveRuntimeHomeDir();
+  return DEFAULT_SESSION_STORE_RELATIVE_PATHS.map((parts) => join(homeDir, ...parts));
 }
 
 function buildTargetKey(parts: {
@@ -77,7 +111,78 @@ function normalizeSnapshot(value: unknown): RecentActiveDeliverySnapshot | null 
     messageProvider: normalizeString(parsed.messageProvider) || undefined,
     senderId: normalizeString(parsed.senderId) || undefined,
     bindingId: normalizeString(parsed.bindingId) || undefined,
+    to: normalizeString(parsed.to) || undefined,
+    accountId: normalizeString(parsed.accountId) || undefined,
+    threadId:
+      typeof parsed.threadId === "number" && Number.isFinite(parsed.threadId)
+        ? parsed.threadId
+        : normalizeString(parsed.threadId) || undefined,
     updatedAtMs: typeof parsed.updatedAtMs === "number" ? parsed.updatedAtMs : 0,
+  };
+}
+
+function normalizeSessionStoreSnapshot(
+  sessionKey: string,
+  value: unknown,
+): RecentActiveDeliverySnapshot | null {
+  const normalizedSessionKey = normalizeString(sessionKey);
+  if (!normalizedSessionKey || normalizedSessionKey.includes(":cron:")) {
+    return null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as SessionStoreEntry;
+  const origin = entry.origin;
+  const deliveryContext = entry.deliveryContext;
+  const messageProvider = normalizeString(origin?.provider) || normalizeString(origin?.surface) || undefined;
+  const channelId = normalizeString(origin?.surface) || normalizeString(origin?.provider) || undefined;
+  const senderId = normalizeString(origin?.from) || normalizeString(origin?.to) || undefined;
+  const normalizedDeliveryChannel = normalizeString(deliveryContext?.channel) || undefined;
+  const deliveryMatchesOrigin =
+    normalizedDeliveryChannel != null
+    && [messageProvider, channelId]
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .some((candidate) => candidate === normalizedDeliveryChannel);
+  const to = deliveryMatchesOrigin
+    ? normalizeString(deliveryContext?.to) || normalizeString(origin?.to) || undefined
+    : normalizeString(origin?.to) || undefined;
+  const accountId = deliveryMatchesOrigin
+    ? normalizeString(deliveryContext?.accountId) || normalizeString(origin?.accountId) || undefined
+    : normalizeString(origin?.accountId) || undefined;
+  const threadId = deliveryMatchesOrigin
+    ? (
+      typeof deliveryContext?.threadId === "number" && Number.isFinite(deliveryContext.threadId)
+        ? deliveryContext.threadId
+        : normalizeString(deliveryContext?.threadId)
+          || (
+            typeof origin?.threadId === "number" && Number.isFinite(origin.threadId)
+              ? String(origin.threadId)
+              : normalizeString(origin?.threadId)
+          )
+          || undefined
+    )
+    : (
+      typeof origin?.threadId === "number" && Number.isFinite(origin.threadId)
+        ? origin.threadId
+        : normalizeString(origin?.threadId) || undefined
+    );
+  if (!messageProvider && !channelId && !senderId) {
+    return null;
+  }
+
+  return {
+    targetKey: normalizedSessionKey,
+    sessionKey: normalizedSessionKey,
+    channelId,
+    messageProvider,
+    senderId,
+    to,
+    accountId,
+    threadId,
+    updatedAtMs: typeof entry.updatedAt === "number" ? entry.updatedAt : 0,
   };
 }
 
@@ -85,8 +190,58 @@ function sortSnapshots(snapshots: RecentActiveDeliverySnapshot[]): RecentActiveD
   return [...snapshots].sort((left, right) => right.updatedAtMs - left.updatedAtMs);
 }
 
+function buildLiveTargetSender(
+  ctx: EventContext,
+  snapshot: RecentActiveRouteHint,
+): ((message: Message) => Promise<void>) | undefined {
+  if (typeof ctx.sendMessage === "function") {
+    return ctx.sendMessage;
+  }
+
+  const resolveMessageTarget = ctx.resolveMessageTarget;
+  const sharedSend = ctx.sharedMessageSender?.send;
+  if (typeof resolveMessageTarget !== "function" || typeof sharedSend !== "function") {
+    return undefined;
+  }
+
+  return async (message: Message) => {
+    const resolvedTarget = await resolveMessageTarget({
+      targetKey: snapshot.targetKey,
+      sessionKey: snapshot.sessionKey,
+    channelId: snapshot.channelId,
+    messageProvider: snapshot.messageProvider,
+    senderId: snapshot.senderId,
+    bindingId: snapshot.bindingId,
+    to: snapshot.to,
+    accountId: snapshot.accountId,
+    threadId: snapshot.threadId,
+  });
+    if (!resolvedTarget) {
+      throw new Error(`No delivery transport resolved for target ${snapshot.targetKey}`);
+    }
+
+    await sharedSend({
+      target: resolvedTarget,
+      message,
+      metadata: {
+        source: "lynx-guardian",
+        transport: "remembered-shared-target",
+        deliveryTargetKey: snapshot.targetKey,
+      },
+    });
+  };
+}
+
 function buildSnapshot(ctx: EventContext, now: number): RecentActiveRouteHint | null {
-  if (!ctx || typeof ctx.sendMessage !== "function") {
+  return buildSnapshotWithOptions(ctx, now, false);
+}
+
+function buildSnapshotWithOptions(
+  ctx: EventContext,
+  now: number,
+  allowRouteOnly: boolean,
+): RecentActiveRouteHint | null {
+  if (!ctx) {
     return null;
   }
 
@@ -100,12 +255,24 @@ function buildSnapshot(ctx: EventContext, now: number): RecentActiveRouteHint | 
     messageProvider: normalizeString((ctx as any).messageProvider ?? (ctx as any).source) || undefined,
     senderId: normalizeString((ctx as any).senderId ?? (ctx as any).userId) || undefined,
     bindingId: normalizeString((ctx as any).bindingId) || undefined,
+    to: normalizeString((ctx as any).to ?? (ctx as any).recipientId) || undefined,
+    accountId: normalizeString((ctx as any).accountId) || undefined,
+    threadId:
+      typeof (ctx as any).messageThreadId === "number" && Number.isFinite((ctx as any).messageThreadId)
+        ? (ctx as any).messageThreadId
+        : typeof (ctx as any).threadId === "number" && Number.isFinite((ctx as any).threadId)
+          ? (ctx as any).threadId
+          : normalizeString((ctx as any).messageThreadId ?? (ctx as any).threadId) || undefined,
     updatedAtMs: now,
     targetKey: "",
   };
 
   snapshot.targetKey = buildTargetKey(snapshot);
   if (!snapshot.targetKey) {
+    return null;
+  }
+
+  if (!allowRouteOnly && !buildLiveTargetSender(ctx, snapshot)) {
     return null;
   }
 
@@ -149,21 +316,56 @@ export function readRecentActiveDeliverySnapshots(customPath?: string): RecentAc
   }
 }
 
+export function readSessionStoreDeliverySnapshots(): RecentActiveDeliverySnapshot[] {
+  for (const sessionStorePath of resolveSessionStorePaths()) {
+    if (!existsSync(sessionStorePath)) {
+      continue;
+    }
+
+    try {
+      const raw = readFileSync(sessionStorePath, "utf8");
+      if (!raw) {
+        continue;
+      }
+
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        continue;
+      }
+
+      return sortSnapshots(
+        Object.entries(parsed as Record<string, unknown>)
+          .map(([sessionKey, entry]) => normalizeSessionStoreSnapshot(sessionKey, entry))
+          .filter((snapshot: RecentActiveDeliverySnapshot | null): snapshot is RecentActiveDeliverySnapshot => Boolean(snapshot)),
+      );
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
 export function readRecentActiveDeliverySnapshot(customPath?: string): RecentActiveDeliverySnapshot | null {
   return readRecentActiveDeliverySnapshots(customPath)[0] ?? null;
 }
 
 export function rememberRecentActiveDeliveryTarget(
   ctx: EventContext,
-  options?: { path?: string; now?: number },
+  options?: { path?: string; now?: number; allowRouteOnly?: boolean },
 ): RecentActiveDeliverySnapshot | null {
   const now = typeof options?.now === "number" ? options.now : Date.now();
-  const snapshot = buildSnapshot(ctx, now);
+  const snapshot = options?.allowRouteOnly === true
+    ? buildSnapshotWithOptions(ctx, now, true)
+    : buildSnapshot(ctx, now);
   if (!snapshot) {
     return null;
   }
 
-  liveTargets.set(snapshot.targetKey, ctx.sendMessage!);
+  const liveTargetSender = buildLiveTargetSender(ctx, snapshot);
+  if (liveTargetSender) {
+    liveTargets.set(snapshot.targetKey, liveTargetSender);
+  }
 
   const nextSnapshots = readRecentActiveDeliverySnapshots(options?.path)
     .filter((item) => item.targetKey !== snapshot.targetKey);

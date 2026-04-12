@@ -70,7 +70,7 @@ describe("hook helper modules", () => {
   });
 
   it("detects manual discovery requests", () => {
-    expect(isManualDiscoveryRequest("/check")).toBe(true);
+    expect(isManualDiscoveryRequest("/check")).toBe(false);
     expect(isManualDiscoveryRequest("帮我检测 openclaw 网关 ip 端口")).toBe(true);
     expect(isManualDiscoveryRequest("普通聊天")).toBe(false);
   });
@@ -97,6 +97,9 @@ describe("hook helper modules", () => {
       requesterId: "owner-1",
       channel: "private-room",
       trustedInternalProtectedRead: false,
+      trustedManagedLynxCheckToolCall: false,
+      trustedManagedLynxCheckOutput: false,
+      trustedManagedLynxCheckPersistence: false,
     });
   });
 

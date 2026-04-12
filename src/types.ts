@@ -108,6 +108,9 @@ export interface ResolvedMessageTarget {
   messageProvider?: string;
   senderId?: string;
   bindingId?: string;
+  to?: string;
+  accountId?: string;
+  threadId?: string | number;
   [key: string]: any;
 }
 

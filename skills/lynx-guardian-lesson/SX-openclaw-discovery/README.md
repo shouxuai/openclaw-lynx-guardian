@@ -6,13 +6,13 @@ This directory is the execution-heavy discovery capability used by Lynx Guardian
 
 - discovery-focused `references/`
 - discovery-focused `scripts/`
-- the capability contract consumed by the Lynx check orchestrator
+- the capability contract consumed by the managed Lynx `/lynx-check` flow
 
 ## How it is used now
 
-`lynx-guardian-check-orchestrator` is responsible for scheduling and dispatch.
+The plugin-level managed `/lynx-check` flow is responsible for precomputation, report assembly, and delivery.
 
-When a managed `/lynx-check` run starts, the orchestrator should:
+When a managed `/lynx-check` run starts, the plugin should:
 
 1. call `SX-security-audit` for the audit section;
 2. call `SX-openclaw-discovery` for the discovery section;
@@ -27,4 +27,4 @@ Preferred validation paths:
 - local API: `http://127.0.0.1:18789/v1/chat/completions`
 - OpenClaw TUI
 
-The goal is to validate the real orchestrated `/lynx-check` path, not only isolated unit behavior.
+The goal is to validate the real managed `/lynx-check` path, not only isolated unit behavior.
