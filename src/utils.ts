@@ -1,7 +1,7 @@
 
 import { homedir, platform, networkInterfaces } from "os";
 import { join, resolve, dirname } from "path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, lstatSync, copyFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, lstatSync, copyFileSync, rmSync } from "fs";
 import path from "path";
 import { execSync, execFileSync, spawnSync } from "child_process";
 import { fileURLToPath, URL } from "url";
@@ -139,6 +139,15 @@ function copyFolderRecursiveSync(source: string, target: string) {
   }
 }
 
+function findStalePluginManagedDirectories(sourceNames: string[], targetNames: string[]): string[] {
+  const sourceNameSet = new Set(sourceNames.map((name) => name.trim()).filter(Boolean));
+
+  return targetNames
+    .map((name) => name.trim())
+    .filter((name) => name.startsWith("lynx-guardian-") && !sourceNameSet.has(name))
+    .sort();
+}
+
 function syncNamedDirectories(sourceRoot: string, targetRoot: string) {
   if (!existsSync(sourceRoot) || !statSync(sourceRoot).isDirectory()) {
     return;
@@ -149,12 +158,24 @@ function syncNamedDirectories(sourceRoot: string, targetRoot: string) {
   }
 
   const entries = readdirSync(sourceRoot, { withFileTypes: true });
+  const sourceDirectoryNames = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  const targetDirectoryNames = readdirSync(targetRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+
+  for (const staleDirectoryName of findStalePluginManagedDirectories(sourceDirectoryNames, targetDirectoryNames)) {
+    rmSync(join(targetRoot, staleDirectoryName), { recursive: true, force: true });
+  }
+
   for (const entry of entries) {
     if (!entry.isDirectory()) {
       continue;
     }
     const sourcePath = join(sourceRoot, entry.name);
     const targetPath = join(targetRoot, entry.name);
+    rmSync(targetPath, { recursive: true, force: true });
     copyFolderRecursiveSync(sourcePath, targetPath);
   }
 }

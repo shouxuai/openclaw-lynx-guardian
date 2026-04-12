@@ -47,6 +47,8 @@ export interface GuardContext {
   channel?: string;
   trustedInternalProtectedRead?: boolean;
   trustedManagedLynxCheckToolCall?: boolean;
+  trustedManagedLynxCheckOutput?: boolean;
+  trustedManagedLynxCheckPersistence?: boolean;
 }
 
 interface IdentityDetectionResult {
@@ -968,7 +970,20 @@ function detectSecretsInOutput(text: string): string[] {
 
 // ── Public API: Output Guard ───────────────────────────────────────
 
-export function guardOutput(output: string, sessionKey?: string): GuardDecision {
+export function guardOutput(output: string, sessionKey?: string, context?: GuardContext): GuardDecision {
+  if (context?.trustedManagedLynxCheckOutput === true) {
+    return {
+      block: false,
+      riskAssessment: {
+        level: "L0",
+        score: 0,
+        modules: [],
+        description: "trusted managed lynx-check audit output",
+        action: "allow",
+      },
+    };
+  }
+
   const modules: string[] = [];
   const accum = createAccumulators();
   let leakDirectScore = 0;

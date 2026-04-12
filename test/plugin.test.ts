@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { fileURLToPath } from 'url';
 import setup from '../index.ts';
 import * as utils from '../src/utils.js';
 import * as api from '../src/api.js';
@@ -15,6 +14,11 @@ import * as blacklist from '../src/blacklist.js';
 import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js';
 import { deliverLynxReport } from '../src/runtime/lynx-message-delivery.js';
 import {
+  clearManagedLynxCheckAuthorization,
+  grantManagedLynxCheckAuthorization,
+  hasManagedLynxCheckAuthorization,
+} from '../src/runtime/managed-lynx-check-authorization-store.js';
+import {
   createLynxCheckRunIntent,
   getLynxCheckRunResultPath,
   getLynxCheckRunReportPath,
@@ -24,9 +28,10 @@ import {
   writeLynxCheckRunResult,
 } from '../src/runtime/lynx-check-run-store.js';
 import {
-  buildLynxCheckExecutionPrompt,
   buildLynxCheckFallbackFailureNotice,
-} from '../src/runtime/lynx-check-orchestrator.js';
+  buildManualLynxCheckPrompt,
+  buildScheduledLynxCheckPrompt,
+} from '../src/runtime/lynx-check-prompt.js';
 import * as tokenOptimizerRunner from '../src/runtime/token-optimizer-runner.js';
 
 vi.mock('../src/utils.js');
@@ -108,6 +113,7 @@ describe('Plugin Setup', () => {
     if (existsSync(lynxCheckRunsPath)) {
       rmSync(lynxCheckRunsPath, { recursive: true, force: true });
     }
+    clearManagedLynxCheckAuthorization();
     recentActiveDelivery.resetRecentActiveDeliveryTargets(recentActiveDeliveryPath);
     if (existsSync(scheduledCronStorePath)) {
       rmSync(scheduledCronStorePath, { force: true });
@@ -390,7 +396,7 @@ describe('Plugin Setup', () => {
     expect(dailyMemoryRead).toBeUndefined();
   });
 
-  it('should allow orchestrator skill protected reads only during managed /lynx-check runs', async () => {
+  it('should not whitelist removed orchestrator skill reads during managed /lynx-check runs', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
@@ -414,10 +420,10 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(orchestratorSkillRead).toBeUndefined();
+    expect(orchestratorSkillRead).toEqual(expect.objectContaining({ block: true }));
   });
 
-  it('should allow orchestrator skill protected reads during managed /lynx-check runs without subsystem marker', async () => {
+  it('should keep removed orchestrator skill reads blocked even without subsystem marker', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
@@ -440,10 +446,10 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(orchestratorSkillRead).toBeUndefined();
+    expect(orchestratorSkillRead).toEqual(expect.objectContaining({ block: true }));
   });
 
-  it('should whitelist managed /lynx-check config reads instead of self-blocking runtime inspection', async () => {
+  it('should keep a narrow managed /lynx-check config read whitelist for runtime inspection only', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
@@ -470,7 +476,7 @@ describe('Plugin Setup', () => {
     expect(managedConfigRead).toBeUndefined();
   });
 
-  it('should whitelist managed /lynx-check worker skill reads during orchestrator dispatch', async () => {
+  it('should block removed worker skill reads now that direct audit prompts replace orchestrator dispatch', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
@@ -504,11 +510,11 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(securityAuditSkillRead).toBeUndefined();
-    expect(discoverySkillRead).toBeUndefined();
+    expect(securityAuditSkillRead).toEqual(expect.objectContaining({ block: true }));
+    expect(discoverySkillRead).toEqual(expect.objectContaining({ block: true }));
   });
 
-  it('should allow managed /lynx-check exec-based skill tree inspection without self-blocking', async () => {
+  it('should block managed /lynx-check exec-based skill tree inspection after removing the old dispatch path', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
@@ -534,7 +540,7 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(managedSkillScan).toBeUndefined();
+    expect(managedSkillScan).toEqual(expect.objectContaining({ block: true }));
   });
 
   it('should not treat tool calls without sessionKey as managed runs even when another session has a pending run', async () => {
@@ -567,7 +573,7 @@ describe('Plugin Setup', () => {
     );
   });
 
-  it('should orchestrator-flow still block unrelated protected reads during managed /lynx-check runs', async () => {
+  it('should direct-report flow still block unrelated protected reads during managed /lynx-check runs', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
@@ -880,6 +886,59 @@ describe('Plugin Setup', () => {
     });
   });
 
+  it('should not let managed /lynx-check final audit reports get replaced or cancelled by self guards', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const beforeMessageWrite = handlers['before_message_write'];
+    const toolResultPersist = handlers['tool_result_persist'];
+    const messageSending = handlers['message_sending'];
+
+    await beforeAgentStart(
+      { prompt: '[2026-04-12 10:30:00] /lynx-check' },
+      {
+        sessionKey: 'sess-trusted-audit',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+      },
+    );
+
+    const report = '# 🛡️ OpenClaw 全方位安全审计报告\n\n## 一、执行摘要\n- ok\n\n## 八、优先级整改建议\n1. fix';
+
+    const persisted = beforeMessageWrite(
+      {
+        message: {
+          role: 'assistant',
+          content: report,
+        },
+      },
+      { sessionKey: 'sess-trusted-audit' },
+    );
+
+    expect(persisted).toBeUndefined();
+
+    const toolPersisted = toolResultPersist(
+      {
+        toolName: 'read',
+        toolCallId: 'call-trusted',
+        message: {
+          role: 'tool',
+          content: report,
+        },
+      },
+      { sessionKey: 'sess-trusted-audit' },
+    );
+
+    expect(toolPersisted).toBeUndefined();
+
+    const outbound = await messageSending(
+      { to: 'webchat', content: report },
+      { sessionKey: 'sess-trusted-audit' },
+    );
+
+    expect(outbound).toBeUndefined();
+  });
+
   it('should allow safe outbound content on message_sending', async () => {
     setup(mockApi);
     const handler = handlers['message_sending'];
@@ -924,7 +983,7 @@ describe('Plugin Setup', () => {
     expect(log).toContain('sess-after-tool');
   });
 
-  it('should create a run intent and prepend execution-dispatch instructions for /lynx-check instead of persisting a composite report', async () => {
+  it('should create a run intent and prepend direct Chinese audit instructions for /lynx-check', async () => {
     setup(mockApi);
     const handler = handlers['before_agent_start'];
 
@@ -942,12 +1001,12 @@ describe('Plugin Setup', () => {
     expect(mockApi.logger.error).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({
-        prependContext: expect.stringContaining('Execution Dispatch Mode'),
+        prependContext: expect.stringContaining('请直接使用中文回复完整审计报告'),
       }),
     );
-    expect((result as any).prependContext).toContain('lynx-guardian-check-orchestrator');
-    expect((result as any).prependContext).toContain('SX-security-audit');
-    expect((result as any).prependContext).toContain('SX-openclaw-discovery');
+    expect((result as any).prependContext).toContain('不要调度 lynx-guardian-check-orchestrator');
+    expect((result as any).prependContext).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
+    expect((result as any).prependContext).not.toContain('Execution Dispatch Mode');
     expect(existsSync(pendingDiscoveryPath)).toBe(false);
     expect(existsSync(pendingDiscoveryRequestPath)).toBe(false);
 
@@ -970,11 +1029,112 @@ describe('Plugin Setup', () => {
     expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
       expect.objectContaining({
         requestId: runIntent!.requestId,
-        status: 'not_started',
+        status: 'running',
         sendSucceeded: false,
+        transport: 'precomputed',
         reportPath: getLynxCheckRunReportPath(runIntent!.requestId),
       }),
     );
+    expect(readFileSync(getLynxCheckRunReportPath(runIntent!.requestId), 'utf8')).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
+  });
+
+  it('should create a scheduled run intent when cron /lynx-check arrives through agent messages', async () => {
+    setup(mockApi);
+    const handler = handlers['before_agent_start'];
+
+    const result = await handler(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: '[2026-04-12 13:30:00] /lynx-check',
+          },
+        ],
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        subsystem: 'plugins',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+      },
+    );
+
+    expect(mockApi.logger.error).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        prependContext: expect.stringContaining('这是定时触发的 /lynx-check'),
+      }),
+    );
+    expect((result as any).prependContext).toContain('不要输出 BLOCKED、Approve with、allow-once、allow-always');
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('agent:main:cron:lynx-guardian-scheduled-lynx-check');
+    expect(runIntent).toEqual(
+      expect.objectContaining({
+        source: 'scheduled',
+        trigger: 'scheduled_lynx_check',
+        preferredTargetKind: 'recent',
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+      }),
+    );
+    expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
+      expect.objectContaining({
+        requestId: runIntent!.requestId,
+        status: 'running',
+        sendSucceeded: false,
+        transport: 'precomputed',
+        reportPath: getLynxCheckRunReportPath(runIntent!.requestId),
+      }),
+    );
+    expect(readFileSync(getLynxCheckRunReportPath(runIntent!.requestId), 'utf8')).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
+  });
+
+  it('should detect the real cron-wrapped /lynx-check prompt and classify it as scheduled without subsystem markers', async () => {
+    setup(mockApi);
+    const handler = handlers['before_agent_start'];
+
+    const result = await handler(
+      {
+        prompt: [
+          '[cron:lynx-guardian-scheduled-lynx-check Lynx Guardian Daily Check] /lynx-check',
+          'Current time: Sunday, April 12th, 2026 – 1:40 PM (Asia/Shanghai) / 2026-04-12 05:40 UTC',
+          'Return your summary as plain text; it will be delivered automatically.',
+        ].join('\n'),
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        trigger: 'cron',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+      },
+    );
+
+    expect(mockApi.logger.error).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        prependContext: expect.stringContaining('这是定时触发的 /lynx-check'),
+      }),
+    );
+    expect((result as any).prependContext).toContain('不要输出 BLOCKED、Approve with、allow-once、allow-always');
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('agent:main:cron:lynx-guardian-scheduled-lynx-check');
+    expect(runIntent).toEqual(
+      expect.objectContaining({
+        source: 'scheduled',
+        trigger: 'scheduled_lynx_check',
+        preferredTargetKind: 'recent',
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+      }),
+    );
+    expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
+      expect.objectContaining({
+        requestId: runIntent!.requestId,
+        status: 'running',
+        sendSucceeded: false,
+        transport: 'precomputed',
+        reportPath: getLynxCheckRunReportPath(runIntent!.requestId),
+      }),
+    );
+    expect(readFileSync(getLynxCheckRunReportPath(runIntent!.requestId), 'utf8')).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
   });
 
   it('should normalize unsupported run result status into an explicit handled failure shape', () => {
@@ -1065,65 +1225,32 @@ describe('Plugin Setup', () => {
     );
   });
 
-  it('should build run result prompt paths as current-runtime readable absolute paths with only valid statuses', () => {
-    const prompt = buildLynxCheckExecutionPrompt({
-      requestId: 'run-result-prompt-paths',
-      source: 'manual',
-      preferredTargetKind: 'current',
-      skillPath: 'skills/lynx-guardian-check-orchestrator/SKILL.md',
-      auditSkillPath: 'skills/lynx-guardian-lesson/SX-security-audit/SKILL.md',
-      discoverySkillPath: 'skills/lynx-guardian-lesson/SX-openclaw-discovery/SKILL.md',
+  it('should build a manual prompt that forbids file-path replies and orchestrator dispatch', () => {
+    const prompt = buildManualLynxCheckPrompt({
+      requestId: 'manual-prompt',
+      reportMarkdown: '# 🛡️ OpenClaw 全方位安全审计报告\n\n## 一、执行摘要\n- ok\n\n## 八、优先级整改建议\n1. fix',
+      channel: 'webchat',
     });
 
-    const expectedResultPath = getLynxCheckRunResultPath('run-result-prompt-paths');
-    const expectedReportPath = getLynxCheckRunReportPath('run-result-prompt-paths');
-
-    expect(prompt).toContain(`write it to ${expectedReportPath}.`);
-    expect(prompt).toContain(`write ${expectedResultPath} with requestId, status, sendAttempted, sendSucceeded, transport, reportPath, errorMessage, and completedAtMs.`);
-    expect(prompt).toContain('status must be one of: not_started, running, completed, failed.');
-    expect(prompt).not.toContain('partial');
+    expect(prompt).toContain('请直接使用中文回复完整审计报告');
+    expect(prompt).toContain('不要让用户查看文件路径');
+    expect(prompt).toContain('不要调度 lynx-guardian-check-orchestrator');
+    expect(prompt).toContain('输出渠道偏向 WebChat');
+    expect(prompt).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
   });
 
-  it('should instruct managed /lynx-check runs to use the exact nested worker skill paths and keep the full report in chat', () => {
-    const prompt = buildLynxCheckExecutionPrompt({
-      requestId: 'run-result-worker-skill-paths',
-      source: 'manual',
-      preferredTargetKind: 'current',
-      skillPath: 'C:/mock/skills/lynx-guardian-check-orchestrator/SKILL.md',
-      auditSkillPath: 'C:/mock/skills/lynx-guardian-lesson/SX-security-audit/SKILL.md',
-      discoverySkillPath: 'C:/mock/skills/lynx-guardian-lesson/SX-openclaw-discovery/SKILL.md',
+  it('should build a scheduled prompt that emphasizes completeness instead of blocked-status boilerplate', () => {
+    const prompt = buildScheduledLynxCheckPrompt({
+      requestId: 'scheduled-prompt',
+      reportMarkdown: '# 🛡️ OpenClaw 全方位安全审计报告\n\n## 一、执行摘要\n- ok\n\n## 八、优先级整改建议\n1. fix',
+      channel: 'feishu',
     });
 
-    expect(prompt).toContain('Use the exact audit skill file at');
-    expect(prompt).toContain('skills/lynx-guardian-lesson/SX-security-audit/SKILL.md');
-    expect(prompt).toContain('Use the exact discovery skill file at');
-    expect(prompt).toContain('skills/lynx-guardian-lesson/SX-openclaw-discovery/SKILL.md');
-    expect(prompt).toContain('Do not scan for alternate skill locations with exec, find, ls, or glob patterns.');
-    expect(prompt).toContain('Do not tell the user to inspect local files');
-    expect(prompt).toContain('send the full report body');
-  });
-
-  it('should prepend an absolute orchestrator skill path for managed /lynx-check runs', async () => {
-    setup(mockApi);
-    const beforeAgentStart = handlers['before_agent_start'];
-    const sendMessage = vi.fn().mockResolvedValue(undefined);
-    const expectedSkillPath = fileURLToPath(
-      new URL('../skills/lynx-guardian-check-orchestrator/SKILL.md', import.meta.url),
-    );
-
-    const result = await beforeAgentStart(
-      { prompt: '[2026-03-30 14:00:00] /lynx-check' },
-      {
-        sessionKey: 'sess-absolute-orchestrator-path',
-        channelId: 'webchat',
-        messageProvider: 'webchat',
-        senderId: 'sender-absolute-orchestrator-path',
-        sendMessage,
-      },
-    );
-
-    expect((result as any).prependContext).toContain(`skillEntry: ${expectedSkillPath}`);
-    expect((result as any).prependContext).not.toContain('skillEntry: skills/');
+    expect(prompt).toContain('这是定时触发的 /lynx-check');
+    expect(prompt).toContain('不要输出 BLOCKED、Approve with、allow-once、allow-always');
+    expect(prompt).toContain('如果没有新的高危发现，也要输出完整报告');
+    expect(prompt).toContain('输出渠道偏向 Feishu');
+    expect(prompt).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
   });
 
   it('should keep fallback failure notice in-chat and not redirect users to local files', () => {
@@ -1249,6 +1376,49 @@ describe('Plugin Setup', () => {
       }),
     );
     expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
+  });
+
+  it('should keep a complete scheduled report even when no delivery route resolves', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+
+    await beforeAgentStart(
+      { prompt: '[2026-04-12 11:30:00] /lynx-check' },
+      {
+        sessionKey: 'sess-scheduled-no-route',
+        subsystem: 'plugins',
+      },
+    );
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-scheduled-no-route');
+    expect(runIntent).toBeTruthy();
+
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: 'scheduled lynx run finished' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-scheduled-no-route',
+        subsystem: 'plugins',
+      },
+    );
+
+    const runResult = readLynxCheckRunResult(runIntent!.requestId);
+    const report = readFileSync(getLynxCheckRunReportPath(runIntent!.requestId), 'utf8');
+
+    expect(runResult).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        sendAttempted: true,
+        sendSucceeded: false,
+        transport: 'none',
+      }),
+    );
+    expect(report).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
+    expect(report).not.toMatch(/BLOCKED|Approve with|allow-once|allow-always|查看文件路径/i);
   });
 
   it('should fallback-send manual /lynx-check report to the current session when skill delivery fails', async () => {
@@ -1394,10 +1564,17 @@ describe('Plugin Setup', () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
       delivered: true,
       transport: 'shared-resolved-target',
-    });
+    }));
+    expect(result.deliveryAttempts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetKey: 'recent-webchat',
+        delivered: true,
+        transport: 'shared-resolved-target',
+      }),
+    ]));
     expect(resolveMessageTarget).toHaveBeenCalledWith(
       expect.objectContaining({
         channelId: 'webchat',
@@ -1451,10 +1628,10 @@ describe('Plugin Setup', () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
       delivered: true,
       transport: 'shared-resolved-target',
-    });
+    }));
     expect(resolveMessageTarget).toHaveBeenCalledWith(
       expect.objectContaining({
         targetKey: 'webchat:webchat:sender-a',
@@ -1500,10 +1677,10 @@ describe('Plugin Setup', () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
       delivered: true,
       transport: 'legacy-route-hint-sendMessage',
-    });
+    }));
     expect(resolveMessageTarget).toHaveBeenCalledTimes(1);
     expect(sharedSend).not.toHaveBeenCalled();
     expect(recentRouteSendMessage).toHaveBeenCalledTimes(1);
@@ -1533,11 +1710,63 @@ describe('Plugin Setup', () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
       delivered: false,
       transport: 'none',
-    });
+    }));
     expect(fallbackSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should fanout a scheduled report to both recent webchat and recent feishu targets', async () => {
+    const webchatSend = vi.fn().mockResolvedValue(undefined);
+    const feishuSend = vi.fn().mockResolvedValue(undefined);
+
+    recentActiveDelivery.rememberRecentActiveDeliveryTarget(
+      {
+        sessionKey: 'sess-webchat',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'w1',
+        sendMessage: webchatSend,
+      } as any,
+      { path: recentActiveDeliveryPath, now: 1 },
+    );
+    recentActiveDelivery.rememberRecentActiveDeliveryTarget(
+      {
+        sessionKey: 'sess-feishu',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        senderId: 'f1',
+        sendMessage: feishuSend,
+      } as any,
+      { path: recentActiveDeliveryPath, now: 2 },
+    );
+
+    const result = await deliverLynxReport({
+      log: mockApi.logger,
+      ctx: { sessionKey: 'sess-scheduled', subsystem: 'plugins' } as any,
+      tag: 'scheduled-/lynx-check-report',
+      allowSameSessionFallback: false,
+      message: {
+        role: 'assistant',
+        content: '# 🛡️ OpenClaw 全方位安全审计报告\n总体评级：中高危\n\n## 八、优先级整改建议\n1. 立即整改',
+      },
+    });
+
+    expect(result.delivered).toBe(true);
+    expect(result.deliveryAttempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ messageProvider: 'webchat', delivered: true }),
+        expect.objectContaining({ messageProvider: 'feishu', delivered: true }),
+      ]),
+    );
+    expect(webchatSend).toHaveBeenCalledTimes(1);
+    expect(feishuSend).toHaveBeenCalledTimes(1);
+    expect(feishuSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('【飞书速览】总体评级：中高危'),
+      }),
+    );
   });
 
   it('should leave manual /lynx-check for before_agent_start orchestration instead of sending inline from message_received', async () => {
@@ -1575,7 +1804,30 @@ describe('Plugin Setup', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('should prepend execution-dispatch instructions and create a current-session run intent for manual /lynx-check', async () => {
+  it('treats managed /lynx-check as pre-authorized and never returns an approval prompt', async () => {
+    setup(mockApi);
+    const handler = handlers['before_agent_start'];
+
+    grantManagedLynxCheckAuthorization({
+      scope: 'manual-and-scheduled',
+      source: 'scheduled-job-create',
+    });
+
+    const result = await handler(
+      { prompt: '[2026-04-12 11:20:00] /lynx-check' },
+      {
+        sessionKey: 'sess-preauthorized-lynx',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(hasManagedLynxCheckAuthorization()).toBe(true);
+    expect((result as any).blockReason).toBeUndefined();
+    expect((result as any).prependContext).toContain('不要要求再次授权');
+    expect(JSON.stringify(result ?? {})).not.toContain('The /lynx-check command requires approval to run.');
+  });
+
+  it('should prepend direct audit instructions and create a current-session run intent for manual /lynx-check', async () => {
     setup(mockApi);
     const handler = handlers['before_agent_start'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -1593,11 +1845,12 @@ describe('Plugin Setup', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        prependContext: expect.stringContaining('Execution Dispatch Mode'),
+        prependContext: expect.stringContaining('请直接使用中文回复完整审计报告'),
       }),
     );
     expect((result as any).prependContext).toContain('requestId');
-    expect((result as any).prependContext).toContain('lynx-guardian-check-orchestrator');
+    expect((result as any).prependContext).toContain('# 🛡️ OpenClaw 全方位安全审计报告');
+    expect((result as any).prependContext).not.toContain('Execution Dispatch Mode');
     const runIntent = readLatestPendingLynxCheckRunIntent('sess-manual-lynx-check-retry');
     expect(runIntent).toEqual(
       expect.objectContaining({
@@ -1609,13 +1862,14 @@ describe('Plugin Setup', () => {
     expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
       expect.objectContaining({
         requestId: runIntent!.requestId,
-        status: 'not_started',
+        status: 'running',
+        transport: 'precomputed',
       }),
     );
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('should not fallback-send when the managed /lynx-check skill already delivered the report', async () => {
+  it('should not fallback-send when manual /lynx-check already delivered the inline report', async () => {
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const agentEnd = handlers['agent_end'];
@@ -1635,35 +1889,101 @@ describe('Plugin Setup', () => {
       { prompt: '[2026-03-30 14:00:00] /lynx-check' },
       {
         sessionKey: 'sess-manual-lynx-check-fallback',
-        subsystem: 'plugins',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        sendMessage: vi.fn().mockResolvedValue(undefined),
       },
     );
 
     const runIntent = readLatestPendingLynxCheckRunIntent('sess-manual-lynx-check-fallback');
-    const reportPath = getLynxCheckRunReportPath(runIntent!.requestId);
-    writeFileSync(reportPath, '# delivered by skill', 'utf8');
-    writeLynxCheckRunResult(runIntent!.requestId, {
-      status: 'completed',
-      sendAttempted: true,
-      sendSucceeded: true,
-      transport: 'skill-shared-sender',
-      reportPath,
-    });
 
     await agentEnd(
       {
         messages: [
-          { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: '# 🛡️ OpenClaw 全方位安全审计报告\n\n## 一、执行摘要\n- ok\n\n## 八、优先级整改建议\n1. fix' }],
+          },
         ],
       },
       {
         sessionKey: 'sess-manual-lynx-check-fallback',
-        subsystem: 'plugins',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
       },
     );
 
     expect(recentWebchatSendMessage).not.toHaveBeenCalled();
     expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
+    expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        sendSucceeded: true,
+        transport: 'inline-message',
+      }),
+    );
+  });
+
+  it('should mark scheduled /lynx-check completed when the cron turn already returned the full inline report', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const recentFeishuSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await handlers['message_received'](
+      { content: 'keep this feishu session active' },
+      {
+        sessionKey: 'sess-scheduled-inline-route',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        sendMessage: recentFeishuSendMessage,
+      },
+    );
+
+    await beforeAgentStart(
+      {
+        prompt: [
+          '[cron:lynx-guardian-scheduled-lynx-check Lynx Guardian Daily Check] /lynx-check',
+          'Current time: Sunday, April 12th, 2026 – 1:55 PM (Asia/Shanghai) / 2026-04-12 05:55 UTC',
+          'Return your summary as plain text; it will be delivered automatically.',
+        ].join('\n'),
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        trigger: 'cron',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+      },
+    );
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('agent:main:cron:lynx-guardian-scheduled-lynx-check');
+
+    await agentEnd(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: '# 🛡️ OpenClaw 全方位安全审计报告\n\n## 一、执行摘要\n- ok\n\n## 八、优先级整改建议\n1. fix' }],
+          },
+        ],
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        trigger: 'cron',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+      },
+    );
+
+    expect(recentFeishuSendMessage).not.toHaveBeenCalled();
+    expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
+    expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        sendSucceeded: true,
+        transport: 'inline-message',
+      }),
+    );
   });
 
   it('agent_end should keep waiting through running and avoid premature fallback while result settles to completed', async () => {
@@ -1687,7 +2007,7 @@ describe('Plugin Setup', () => {
 
       const runIntent = readLatestPendingLynxCheckRunIntent('sess-agent-end-settling');
       expect(runIntent).toBeTruthy();
-      expect(readLynxCheckRunResult(runIntent!.requestId)?.status).toBe('not_started');
+      expect(readLynxCheckRunResult(runIntent!.requestId)?.status).toBe('running');
 
       setTimeout(() => {
         writeLynxCheckRunResult(runIntent!.requestId, {
@@ -1775,7 +2095,7 @@ describe('Plugin Setup', () => {
     }
   });
 
-  it('agent_end should write a completed fallback result when the report exists but status is still not_started', async () => {
+  it('agent_end should write a completed fallback result when the report already exists in precomputed running state', async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2026-04-12T01:00:00.000Z'));
@@ -1802,9 +2122,10 @@ describe('Plugin Setup', () => {
       writeFileSync(reportPath, '# async report\n\nThis report was generated before the run result settled.', 'utf8');
       expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
         expect.objectContaining({
-          status: 'not_started',
+          status: 'running',
           sendAttempted: false,
           sendSucceeded: false,
+          transport: 'precomputed',
           reportPath,
         }),
       );

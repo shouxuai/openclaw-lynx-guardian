@@ -1,14 +1,15 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { buildManualLynxCheckReport } from "../src/discovery/manual-lynx-check.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import * as api from "../src/api.js";
+import { buildManualLynxCheckReport } from "../src/discovery/manual-lynx-check.js";
+import * as discoveryUtils from "../src/discovery/discovery-hook-utils.js";
 import * as securityAuditRunner from "../src/runtime/security-audit-runner.js";
 import * as skillGuard from "../src/skills/skill-guard.js";
-import * as discoveryUtils from "../src/discovery/discovery-hook-utils.js";
 
 vi.mock("../src/api.js");
+vi.mock("../src/discovery/discovery-hook-utils.js");
 vi.mock("../src/runtime/security-audit-runner.js");
 vi.mock("../src/skills/skill-guard.js");
-vi.mock("../src/discovery/discovery-hook-utils.js");
 
 describe("buildManualLynxCheckReport", () => {
   beforeEach(() => {
@@ -16,6 +17,37 @@ describe("buildManualLynxCheckReport", () => {
     vi.mocked(api.checkPublicAccess).mockResolvedValue({
       code: 200,
       result: { is_public: false },
+    } as any);
+    vi.mocked(discoveryUtils.runDiscoveryAndNotify).mockResolvedValue([
+      "OpenClaw 服务发现完成",
+      "- IP=127.0.0.1 port=18789 scheme=http score=90 status=confirmed",
+    ].join("\n"));
+    vi.mocked(securityAuditRunner.runSecurityAudit).mockResolvedValue({
+      audit_time: "2026-04-12T12:00:00Z",
+      summary: {
+        total: 3,
+        passed: 1,
+        warnings: 1,
+        failed: 1,
+        by_severity: {
+          critical: 0,
+          high: 1,
+          medium: 1,
+          low: 1,
+        },
+      },
+      results: [
+        {
+          category: "config",
+          name: "Plaintext config secret",
+          status: "fail",
+          severity: "high",
+          description: "secret stored in config",
+          impact: "credential exposure",
+          fix: "move to env",
+          timestamp: "2026-04-12T12:00:00Z",
+        },
+      ],
     } as any);
     vi.mocked(securityAuditRunner.runMaliciousScriptScan).mockResolvedValue([
       {
@@ -42,17 +74,9 @@ describe("buildManualLynxCheckReport", () => {
         reason: "Hash mismatch",
       },
     ] as any);
-    vi.mocked(discoveryUtils.runDiscoveryAndNotify).mockResolvedValue([
-      "OpenClaw 服务检测完成",
-      "- 扫描目标数: 2",
-      "- 命中结果数: 1",
-      "- 已确认 OpenClaw 服务: 1 个",
-      "已确认的 OpenClaw 服务列表:",
-      "- IP=127.0.0.1 端口=18789 协议=http 评分=90 状态=确认",
-    ].join("\n"));
   });
 
-  it("renders a webchat-friendly report with icons and summary", async () => {
+  it("renders the mandatory Chinese audit sections for manual /lynx-check", async () => {
     const report = await buildManualLynxCheckReport({
       log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
       userId: "TEST_ID",
@@ -61,13 +85,26 @@ describe("buildManualLynxCheckReport", () => {
       discoveryRuntimePath: "openclaw.plugin.json",
     });
 
-    expect(report).toContain("# 📋 Lynx Guardian /lynx-check 综合检测报告");
-    expect(report).toContain("## ✨ 总览");
-    expect(report).toContain("- 🌐 公网暴露检测: ✅ PASS");
-    expect(report).toContain("- 🦠 恶意脚本扫描: ⚠️ WARN");
-    expect(report).toContain("- 🧩 Skill 完整性校验: ❌ FAIL");
-    expect(report).toContain("## 🔎 服务发现 IP/端口");
-    expect(report).toContain("- 🎯 127.0.0.1:18789");
-    expect(report.lastIndexOf("## 🔎 服务发现 IP/端口")).toBeGreaterThan(report.lastIndexOf("## 🧩 Skill 完整性校验"));
+    expect(report).toContain("# 🛡️ OpenClaw 全方位安全审计报告");
+    expect(report).toContain("## 一、执行摘要");
+    expect(report).toContain("## 二、配置安全");
+    expect(report).toContain("## 三、网关与执行面安全");
+    expect(report).toContain("## 四、通道与消息投递安全");
+    expect(report).toContain("## 五、Skills 与插件代码风险");
+    expect(report).toContain("## 六、依赖与供应链风险");
+    expect(report).toContain("## 七、文件权限与敏感路径");
+    expect(report).toContain("## 八、优先级整改建议");
+  });
+
+  it("never tells the user to inspect report files or local paths", async () => {
+    const report = await buildManualLynxCheckReport({
+      log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      userId: "TEST_ID",
+      ipInfo: { ip: "127.0.0.1", port: 18789, type: "next_check" },
+      discoveryConfig: { fullScan: false },
+      discoveryRuntimePath: "openclaw.plugin.json",
+    });
+
+    expect(report).not.toMatch(/check-runs|report\.md|result\.json|查看文件路径|inspect local files/i);
   });
 });

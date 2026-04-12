@@ -21,6 +21,11 @@ export interface RecentActiveDeliveryTarget extends RecentActiveRouteHint {
   sendMessage: (message: Message) => Promise<void>;
 }
 
+interface RecentActiveDeliveryState {
+  version: 2;
+  targets: RecentActiveDeliverySnapshot[];
+}
+
 const liveTargets = new Map<string, RecentActiveDeliveryTarget["sendMessage"]>();
 
 function getDefaultRecentActiveDeliveryPath(): string {
@@ -54,6 +59,32 @@ function buildTargetKey(parts: {
     .join(":");
 }
 
+function normalizeSnapshot(value: unknown): RecentActiveDeliverySnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const parsed = value as Record<string, unknown>;
+  const targetKey = normalizeString(parsed.targetKey);
+  if (!targetKey) {
+    return null;
+  }
+
+  return {
+    targetKey,
+    sessionKey: normalizeString(parsed.sessionKey) || undefined,
+    channelId: normalizeString(parsed.channelId) || undefined,
+    messageProvider: normalizeString(parsed.messageProvider) || undefined,
+    senderId: normalizeString(parsed.senderId) || undefined,
+    bindingId: normalizeString(parsed.bindingId) || undefined,
+    updatedAtMs: typeof parsed.updatedAtMs === "number" ? parsed.updatedAtMs : 0,
+  };
+}
+
+function sortSnapshots(snapshots: RecentActiveDeliverySnapshot[]): RecentActiveDeliverySnapshot[] {
+  return [...snapshots].sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+}
+
 function buildSnapshot(ctx: EventContext, now: number): RecentActiveRouteHint | null {
   if (!ctx || typeof ctx.sendMessage !== "function") {
     return null;
@@ -81,46 +112,45 @@ function buildSnapshot(ctx: EventContext, now: number): RecentActiveRouteHint | 
   return snapshot;
 }
 
-function writeSnapshot(filePath: string, snapshot: RecentActiveRouteHint): void {
+function writeSnapshots(filePath: string, snapshots: RecentActiveDeliverySnapshot[]): void {
   mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, JSON.stringify(snapshot), "utf8");
+  const state: RecentActiveDeliveryState = {
+    version: 2,
+    targets: sortSnapshots(snapshots),
+  };
+  writeFileSync(filePath, JSON.stringify(state, null, 2), "utf8");
 }
 
-export function readRecentActiveDeliverySnapshot(customPath?: string): RecentActiveDeliverySnapshot | null {
+export function readRecentActiveDeliverySnapshots(customPath?: string): RecentActiveDeliverySnapshot[] {
   const filePath = resolveRecentActiveDeliveryPath(customPath);
   if (!existsSync(filePath)) {
-    return null;
+    return [];
   }
 
   try {
     const raw = readFileSync(filePath, "utf8");
     if (!raw) {
-      return null;
+      return [];
     }
 
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") {
-      return null;
+    if (parsed && typeof parsed === "object" && Array.isArray((parsed as any).targets)) {
+      return sortSnapshots(
+        (parsed as any).targets
+          .map((item: unknown) => normalizeSnapshot(item))
+          .filter((item: RecentActiveDeliverySnapshot | null): item is RecentActiveDeliverySnapshot => Boolean(item)),
+      );
     }
 
-    const snapshot: RecentActiveRouteHint = {
-      targetKey: normalizeString((parsed as any).targetKey),
-      sessionKey: normalizeString((parsed as any).sessionKey) || undefined,
-      channelId: normalizeString((parsed as any).channelId) || undefined,
-      messageProvider: normalizeString((parsed as any).messageProvider) || undefined,
-      senderId: normalizeString((parsed as any).senderId) || undefined,
-      bindingId: normalizeString((parsed as any).bindingId) || undefined,
-      updatedAtMs: typeof (parsed as any).updatedAtMs === "number" ? (parsed as any).updatedAtMs : 0,
-    };
-
-    if (!snapshot.targetKey) {
-      return null;
-    }
-
-    return snapshot;
+    const legacySnapshot = normalizeSnapshot(parsed);
+    return legacySnapshot ? [legacySnapshot] : [];
   } catch {
-    return null;
+    return [];
   }
+}
+
+export function readRecentActiveDeliverySnapshot(customPath?: string): RecentActiveDeliverySnapshot | null {
+  return readRecentActiveDeliverySnapshots(customPath)[0] ?? null;
 }
 
 export function rememberRecentActiveDeliveryTarget(
@@ -134,29 +164,35 @@ export function rememberRecentActiveDeliveryTarget(
   }
 
   liveTargets.set(snapshot.targetKey, ctx.sendMessage!);
-  writeSnapshot(resolveRecentActiveDeliveryPath(options?.path), snapshot);
+
+  const nextSnapshots = readRecentActiveDeliverySnapshots(options?.path)
+    .filter((item) => item.targetKey !== snapshot.targetKey);
+  nextSnapshots.push(snapshot);
+  writeSnapshots(resolveRecentActiveDeliveryPath(options?.path), nextSnapshots);
   return snapshot;
 }
 
+export function getRecentActiveDeliveryTargets(customPath?: string): RecentActiveDeliveryTarget[] {
+  return readRecentActiveDeliverySnapshots(customPath)
+    .map((snapshot) => {
+      const sendMessage = liveTargets.get(snapshot.targetKey);
+      if (typeof sendMessage !== "function") {
+        return null;
+      }
+
+      return {
+        ...snapshot,
+        sendMessage,
+      };
+    })
+    .filter((target: RecentActiveDeliveryTarget | null): target is RecentActiveDeliveryTarget => Boolean(target));
+}
+
 export function getRecentActiveDeliveryTarget(customPath?: string): RecentActiveDeliveryTarget | null {
-  const snapshot = readRecentActiveDeliverySnapshot(customPath);
-  if (!snapshot) {
-    return null;
-  }
-
-  const sendMessage = liveTargets.get(snapshot.targetKey);
-  if (typeof sendMessage !== "function") {
-    return null;
-  }
-
-  return {
-    ...snapshot,
-    sendMessage,
-  };
+  return getRecentActiveDeliveryTargets(customPath)[0] ?? null;
 }
 
 export function clearRecentActiveDeliveryTargetForContext(ctx: EventContext, customPath?: string): void {
-  const current = readRecentActiveDeliverySnapshot(customPath);
   const candidates = new Set<string>();
 
   const sessionKey = normalizeString(ctx?.sessionKey);
@@ -176,21 +212,30 @@ export function clearRecentActiveDeliveryTargetForContext(ctx: EventContext, cus
     liveTargets.delete(candidate);
   }
 
-  if (!current) {
+  const currentSnapshots = readRecentActiveDeliverySnapshots(customPath);
+  if (currentSnapshots.length === 0) {
     return;
   }
 
-  const matchesCurrent = candidates.has(current.targetKey)
-    || (sessionKey.length > 0 && current.sessionKey === sessionKey);
-
-  if (!matchesCurrent) {
-    return;
-  }
+  const nextSnapshots = currentSnapshots.filter((snapshot) => {
+    if (candidates.has(snapshot.targetKey)) {
+      return false;
+    }
+    if (sessionKey.length > 0 && snapshot.sessionKey === sessionKey) {
+      return false;
+    }
+    return true;
+  });
 
   const filePath = resolveRecentActiveDeliveryPath(customPath);
-  if (existsSync(filePath)) {
-    unlinkSync(filePath);
+  if (nextSnapshots.length === 0) {
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+    }
+    return;
   }
+
+  writeSnapshots(filePath, nextSnapshots);
 }
 
 export function shouldPreferRecentActiveDelivery(

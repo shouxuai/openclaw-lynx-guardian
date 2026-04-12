@@ -43,41 +43,13 @@ const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [
 ];
 
 const TRUSTED_MANAGED_LYNX_CHECK_PROTECTED_READ_PATTERNS = [
-  /[\\/]skills[\\/]lynx-guardian-check-orchestrator[\\/]SKILL\.md$/i,
-  /[\\/]skills[\\/]lynx-guardian-lesson[\\/]SX-security-audit[\\/]SKILL\.md$/i,
-  /[\\/]skills[\\/]lynx-guardian-lesson[\\/]SX-openclaw-discovery[\\/]SKILL\.md$/i,
   /[\\/]\.openclaw[\\/]openclaw\.json$/i,
 ];
 
-const TRUSTED_MANAGED_LYNX_CHECK_EXEC_PREFIXES = [
-  /^find\b/i,
-  /^ls\b/i,
-  /^stat\b/i,
-  /^cat\b/i,
-  /^test\b/i,
-  /^pwd\b/i,
-  /^mkdir\s+-p\b/i,
-];
-
-const TRUSTED_MANAGED_LYNX_CHECK_EXEC_TARGET_PATTERNS = [
-  /[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/ ]|$)/i,
-  /[\\/]\.openclaw[\\/]lynx[\\/]check-runs(?:[\\/ ]|$)/i,
-  /[\\/]\.openclaw[\\/]openclaw\.json(?:\s|$)/i,
-];
-
-const TRUSTED_MANAGED_LYNX_CHECK_EXEC_DENY_PATTERNS = [
-  /\brm\b/i,
-  /\bmv\b/i,
-  /\bchmod\b/i,
-  /\bchown\b/i,
-  /\bcurl\b/i,
-  /\bwget\b/i,
-  /\bssh\b/i,
-  /\bscp\b/i,
-  /\bsudo\b/i,
-  /\bnode\s+-e\b/i,
-  /\bpython(?:3)?\s+-c\b/i,
-  /\bbash\s+-c\b/i,
+const TRUSTED_MANAGED_LYNX_CHECK_REPORT_PATTERNS = [
+  /#\s*🛡️\s*OpenClaw 全方位安全审计报告/m,
+  /执行摘要/m,
+  /优先级整改建议/m,
 ];
 
 function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
@@ -114,24 +86,50 @@ function isTrustedManagedLynxCheckToolCall(event: any, ctx: any): boolean {
   }
 
   const toolName = normalizeString(event?.toolName).toLowerCase();
-  if (toolName !== "exec") {
+  if (toolName !== "read") {
     return false;
   }
 
-  const command = normalizeString(event?.params?.command);
-  if (!command) {
+  const rawPath = normalizeString(event?.params?.file_path ?? event?.params?.path);
+  if (!rawPath) {
     return false;
   }
 
-  if (!TRUSTED_MANAGED_LYNX_CHECK_EXEC_PREFIXES.some((pattern) => pattern.test(command))) {
+  const canonicalPath = canonicalizePath(rawPath);
+  return TRUSTED_MANAGED_LYNX_CHECK_PROTECTED_READ_PATTERNS.some((pattern) => pattern.test(canonicalPath));
+}
+
+function extractGuardText(event: any): string {
+  if (typeof event === "string") {
+    return event;
+  }
+
+  if (typeof event?.content === "string") {
+    return event.content;
+  }
+
+  if (typeof event?.output === "string") {
+    return event.output;
+  }
+
+  if (event?.message) {
+    return extractMessageText(event.message);
+  }
+
+  if (Array.isArray(event?.messages) && event.messages.length > 0) {
+    return extractMessageText(event.messages[event.messages.length - 1]);
+  }
+
+  return "";
+}
+
+export function isTrustedManagedLynxCheckReportText(value: unknown): boolean {
+  const text = typeof value === "string" ? value : extractGuardText(value);
+  if (!text) {
     return false;
   }
 
-  if (TRUSTED_MANAGED_LYNX_CHECK_EXEC_DENY_PATTERNS.some((pattern) => pattern.test(command))) {
-    return false;
-  }
-
-  return TRUSTED_MANAGED_LYNX_CHECK_EXEC_TARGET_PATTERNS.some((pattern) => pattern.test(command));
+  return TRUSTED_MANAGED_LYNX_CHECK_REPORT_PATTERNS.every((pattern) => pattern.test(text));
 }
 
 export function buildGuardContext(config: any, event: any, ctx: any): GuardContext {
@@ -169,6 +167,8 @@ export function buildGuardContext(config: any, event: any, ctx: any): GuardConte
     channel,
     trustedInternalProtectedRead: isTrustedInternalProtectedRead(event, ctx),
     trustedManagedLynxCheckToolCall: isTrustedManagedLynxCheckToolCall(event, ctx),
+    trustedManagedLynxCheckOutput: ctx?.managedLynxCheckRun === true && isTrustedManagedLynxCheckReportText(event),
+    trustedManagedLynxCheckPersistence: ctx?.managedLynxCheckRun === true && isTrustedManagedLynxCheckReportText(event),
   };
 }
 

@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { detectPromptInjection } from '../src/guard/prompt-injection.js';
 import { checkExecBlacklist } from '../src/blacklist.js';
@@ -170,21 +170,21 @@ describe('P1 Regression Tests', () => {
     });
   });
 
-  describe('Daily lynx-check skill packaging', () => {
-    it('should ship a cron-based daily /lynx-check skill', () => {
-      const skillPath = join(
+  describe('Deprecated lynx-check skill packaging', () => {
+    it('should not ship deprecated orchestrator skill aliases', () => {
+      const orchestratorSkillPath = join(
+        process.cwd(),
+        'skills',
+        'lynx-guardian-check-orchestrator',
+      );
+      const dailyAliasSkillPath = join(
         process.cwd(),
         'skills',
         'lynx-guardian-daily-lynx-check',
-        'SKILL.md',
       );
 
-      expect(existsSync(skillPath)).toBe(true);
-
-      const skill = readFileSync(skillPath, 'utf8');
-      expect(skill).toContain('/lynx-check');
-      expect(skill.toLowerCase()).toContain('cron');
-      expect(skill).toContain('daily');
+      expect(existsSync(orchestratorSkillPath)).toBe(false);
+      expect(existsSync(dailyAliasSkillPath)).toBe(false);
     });
   });
 });

@@ -64,6 +64,11 @@ export interface PluginConfig {
     deliveryMode?: "recent-active" | "announce";
     storePath?: string;
   };
+  managedLynxCheckAuthorization?: {
+    enabled?: boolean;
+    autoGrantOnScheduledJobCreate?: boolean;
+    treatManualLynxCheckAsPreauthorized?: boolean;
+  };
   openclawDiscovery?: OpenClawDiscoveryConfig;
   [key: string]: any;
 }
@@ -82,6 +87,18 @@ export interface Message {
     [key: string]: any;
   };
   [key: string]: any;
+}
+
+export interface LynxReportDeliveryAttempt {
+  targetKey: string;
+  sessionKey?: string;
+  channelId?: string;
+  messageProvider?: string;
+  senderId?: string;
+  bindingId?: string;
+  delivered: boolean;
+  transport: string;
+  errorMessage?: string;
 }
 
 export interface ResolvedMessageTarget {
@@ -109,6 +126,7 @@ export interface EventContext {
   sharedMessageSender?: SharedMessageSender;
   terminateSession?: (options: { reason: string; silent: boolean }) => Promise<void>;
   managedLynxCheckRun?: boolean;
+  managedLynxCheckPreauthorized?: boolean;
   [key: string]: any;
 }
 

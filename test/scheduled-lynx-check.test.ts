@@ -8,6 +8,10 @@ import {
   resolveScheduledLynxCheckConfig,
   SCHEDULED_LYNX_CHECK_JOB_ID,
 } from "../src/runtime/scheduled-lynx-check.js";
+import {
+  clearManagedLynxCheckAuthorization,
+  hasManagedLynxCheckAuthorization,
+} from "../src/runtime/managed-lynx-check-authorization-store.js";
 
 describe("scheduled lynx-check", () => {
   const tempDir = join(process.cwd(), "test-temp", "scheduled-lynx-check");
@@ -19,17 +23,19 @@ describe("scheduled lynx-check", () => {
     mkdirSync(tempDir, { recursive: true });
     rmSync(stubHome, { recursive: true, force: true });
     vi.unstubAllEnvs();
+    clearManagedLynxCheckAuthorization();
   });
 
   it("resolves enabled defaults when config is missing", () => {
     expect(resolveScheduledLynxCheckConfig(undefined)).toEqual({
       enabled: true,
-      cron: "37 8 * * *",
+      cron: "*/5 * * * *",
       timezone: undefined,
       jobName: "Lynx Guardian Daily Check",
       announce: true,
       deliveryMode: "recent-active",
       storePath: undefined,
+      autoGrantManagedAuthorization: true,
     });
   });
 
@@ -49,7 +55,7 @@ describe("scheduled lynx-check", () => {
     const store = JSON.parse(readFileSync(storePath, "utf8"));
     expect(store.jobs).toHaveLength(1);
     expect(store.jobs[0].id).toBe(SCHEDULED_LYNX_CHECK_JOB_ID);
-    expect(store.jobs[0].schedule.expr).toBe("37 8 * * *");
+    expect(store.jobs[0].schedule.expr).toBe("*/5 * * * *");
     expect(store.jobs[0].delivery).toEqual({ mode: "announce" });
   });
 
@@ -94,6 +100,25 @@ describe("scheduled lynx-check", () => {
     expect(job.delivery).toEqual({
       mode: "announce",
     });
+  });
+
+  it("registers managed /lynx-check authorization when the scheduled job is created", async () => {
+    await reconcileScheduledLynxCheck({
+      config: {
+        enabled: true,
+        cron: "37 8 * * *",
+        timezone: "Asia/Shanghai",
+      },
+      storePath,
+      logger: {
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      },
+      now: 1000,
+    });
+
+    expect(hasManagedLynxCheckAuthorization()).toBe(true);
   });
 
   it("creates the managed cron job when enabled", async () => {

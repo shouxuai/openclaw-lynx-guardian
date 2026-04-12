@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, isAbsolute, join, resolve } from "path";
+import type { LynxReportDeliveryAttempt } from "../types.js";
 import type { RecentActiveDeliverySnapshot } from "./recent-active-delivery.js";
 import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
@@ -20,6 +21,7 @@ export interface LynxCheckRunResult {
   sendAttempted: boolean;
   sendSucceeded: boolean;
   transport: string;
+  deliveryAttempts?: LynxReportDeliveryAttempt[];
   reportPath?: string;
   errorMessage?: string;
   completedAtMs: number;
@@ -223,9 +225,47 @@ function normalizeResult(
     sendAttempted: parsed.sendAttempted,
     sendSucceeded: parsed.sendSucceeded,
     transport,
+    deliveryAttempts: normalizeDeliveryAttempts(parsed.deliveryAttempts),
     reportPath: normalizeResultPath(parsed.reportPath, { rootDir: options?.rootDir }),
     errorMessage: statusErrorMessage ?? (normalizeString(parsed.errorMessage) || undefined),
     completedAtMs,
+  };
+}
+
+function normalizeDeliveryAttempts(value: unknown): LynxReportDeliveryAttempt[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = value
+    .map((item) => normalizeDeliveryAttempt(item))
+    .filter((item: LynxReportDeliveryAttempt | null): item is LynxReportDeliveryAttempt => Boolean(item));
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeDeliveryAttempt(value: unknown): LynxReportDeliveryAttempt | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const parsed = value as Record<string, unknown>;
+  const targetKey = normalizeString(parsed.targetKey);
+  const transport = normalizeString(parsed.transport);
+  if (!targetKey || !transport || typeof parsed.delivered !== "boolean") {
+    return null;
+  }
+
+  return {
+    targetKey,
+    sessionKey: normalizeString(parsed.sessionKey) || undefined,
+    channelId: normalizeString(parsed.channelId) || undefined,
+    messageProvider: normalizeString(parsed.messageProvider) || undefined,
+    senderId: normalizeString(parsed.senderId) || undefined,
+    bindingId: normalizeString(parsed.bindingId) || undefined,
+    delivered: parsed.delivered,
+    transport,
+    errorMessage: normalizeString(parsed.errorMessage) || undefined,
   };
 }
 

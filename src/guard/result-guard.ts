@@ -13,16 +13,26 @@ function containsProtectedResult(text: string): boolean {
   return PROTECTED_RESULT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-export function guardToolResultPersistence(toolName: string | undefined, message: any): {
+export function guardToolResultPersistence(
+  toolName: string | undefined,
+  message: any,
+  context?: {
+    trustedManagedLynxCheckPersistence?: boolean;
+  },
+): {
   block: boolean;
   message: any;
 } {
+  if (context?.trustedManagedLynxCheckPersistence === true) {
+    return { block: false, message };
+  }
+
   const text = extractMessageText(message);
   if (!text) {
     return { block: false, message };
   }
 
-  if (!containsProtectedResult(text) && !guardOutput(text).block) {
+  if (!containsProtectedResult(text) && !guardOutput(text, undefined, context).block) {
     return { block: false, message };
   }
 
@@ -35,16 +45,25 @@ export function guardToolResultPersistence(toolName: string | undefined, message
   };
 }
 
-export function guardAssistantPersistence(message: any): {
+export function guardAssistantPersistence(
+  message: any,
+  context?: {
+    trustedManagedLynxCheckPersistence?: boolean;
+  },
+): {
   block: boolean;
   message: any;
 } {
+  if (context?.trustedManagedLynxCheckPersistence === true) {
+    return { block: false, message };
+  }
+
   const text = extractMessageText(message);
   if (!text) {
     return { block: false, message };
   }
 
-  const decision = guardOutput(text);
+  const decision = guardOutput(text, undefined, context);
   if (!decision.block) {
     return { block: false, message };
   }
