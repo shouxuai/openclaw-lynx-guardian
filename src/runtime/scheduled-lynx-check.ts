@@ -52,12 +52,11 @@ export function resolveScheduledLynxCheckConfig(
   const normalized = inlineConfig && typeof inlineConfig === "object" && !Array.isArray(inlineConfig)
     ? inlineConfig
     : {};
-
   return {
     enabled: normalized.enabled !== false,
     cron: typeof normalized.cron === "string" && normalized.cron.trim().length > 0
       ? normalized.cron.trim()
-      : "*/5 * * * *",
+      : "8/37 * * * *",
     timezone: typeof normalized.timezone === "string" && normalized.timezone.trim().length > 0
       ? normalized.timezone.trim()
       : undefined,

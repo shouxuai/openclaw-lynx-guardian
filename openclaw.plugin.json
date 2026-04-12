@@ -205,7 +205,7 @@
           },
           "cron": {
             "type": "string",
-            "default": "*/5 * * * *",
+            "default": "37 8 * * *",
             "description": "5-field cron expression, for example 37 8 * * * for 08:37 daily or 37 8 * * * for testing"
           },
           "timezone": {

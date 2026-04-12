@@ -612,14 +612,14 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       if (!event.content || event.content.length === 0) return;
       rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received event: ${JSON.stringify(event)}`);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received ctx: ${JSON.stringify(ctx)}`);
+      log.info(`[lynx-guardian]📌,message_received event: ${JSON.stringify(event)}`);
+      log.info(`[lynx-guardian]📌,message_received ctx: ${JSON.stringify(ctx)}`);
       const text = typeof event.content === "string"
         ? event.content
         : Array.isArray(event.content)
           ? event.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ")
           : String(event.content);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received text: ${text}`);
+      log.info(`[lynx-guardian]📌,message_received text: ${text}`);
       if (!text || text.length === 0) return;
       const lynxCheckTrigger = classifyLynxCheckTrigger(text);
 
@@ -632,7 +632,7 @@ export default function setup(api: OpenClawPluginApi) {
           pending = consumeMostRecentPendingOverride();
         }
 
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,message_received pending: ${JSON.stringify(pending)}`);
+        log.info(`[lynx-guardian]📌,message_received pending: ${JSON.stringify(pending)}`);
         if (!pending) {
           await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待确认操作。");
           return;
@@ -700,7 +700,7 @@ export default function setup(api: OpenClawPluginApi) {
         payload: text,
       });
       const approvedInputOverride = consumeApprovedOverrideFull(ctx, inputFingerprint);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
+      log.info(`[lynx-guardian]📌,approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn("[lynx-guardian] Sensitive data detected in message");
         await pushRecord(userId, text, 1);
@@ -715,7 +715,7 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.inputGuard !== false) {
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardInput(text, ctx.sessionKey, guardContext);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,guardInput decision: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
         if (decision.block && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${decision.riskAssessment.description} (${decision.riskAssessment.level}, score=${decision.riskAssessment.score})`);
@@ -871,7 +871,7 @@ export default function setup(api: OpenClawPluginApi) {
           managedLynxCheckPreauthorized,
         });
         const decision = guardInput(promptText, ctx.sessionKey, guardContext);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,guardInput decision: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
         if (decision.block && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
         } else if (decision.block && !approvedAgentStartOverride) {
@@ -964,7 +964,7 @@ export default function setup(api: OpenClawPluginApi) {
 
       const input = extractContentAfterDate(promptText);
       const res = await checkContent(userId, input, 1);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Input risk detected: ${JSON.stringify(res)}`);
+      log.info(`[lynx-guardian]📌,Input risk detected: ${JSON.stringify(res)}`);
       if (res.result.risk_level > 0) {
         let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}），\n`;
         if (warning.includes("个人隐私")) {
@@ -1223,7 +1223,7 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.outputGuard !== false && output && !isDiscoveryResponse) {
         const { guardContext } = buildManagedGuardContext({ output, messages: event.messages }, ctx);
         const decision = guardOutput(output, ctx.sessionKey, guardContext);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Output risk detected: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian]📌,Output risk detected: ${JSON.stringify(decision)}`);
         if (decision.block) {
           log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
           redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险");
@@ -1240,7 +1240,7 @@ export default function setup(api: OpenClawPluginApi) {
 
       if (!isDiscoveryResponse) {
         const res = await checkContent(userId, output, 2);
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Output risk detected: ${JSON.stringify(res)}`);
+        log.info(`[lynx-guardian]📌,Output risk detected: ${JSON.stringify(res)}`);
         if (res.result.risk_level > 0) {
           let warning = `⚠️重要提醒：内容包含内容风险（${res.result.level_one}、${res.result.level_two}、${res.result.level_three}）`;
           if (warning.includes("个人隐私")) {
@@ -1358,7 +1358,7 @@ export default function setup(api: OpenClawPluginApi) {
         trustedManagedLynxCheckToolCall = guardContext.trustedManagedLynxCheckToolCall === true;
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
         execBlacklistContext = decision.contextHints;
-        log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Tool call risk detected: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian]📌,Tool call risk detected: ${JSON.stringify(decision)}`);
 
         if (decision.block && managedLynxCheckPreauthorized) {
           log.info(`[lynx-guardian] Managed /lynx-check blocked extra tool call outside whitelist: ${toolName}`);
@@ -1443,7 +1443,7 @@ export default function setup(api: OpenClawPluginApi) {
       try {
         const installAttempt = detectSkillInstall(toolName, params);
         if (installAttempt) {
-          log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Skill install detected: ${JSON.stringify(installAttempt)}`);
+          log.info(`[lynx-guardian]📌,Skill install detected: ${JSON.stringify(installAttempt)}`);
           log.info(`[lynx-guardian] Skill install detected: ${installAttempt.skillName} via ${installAttempt.installMethod}`);
 
           const quick = quickBlacklistCheck(installAttempt.skillName);
@@ -1476,7 +1476,7 @@ export default function setup(api: OpenClawPluginApi) {
           };
 
           const assessment = await assessSkillRisk(installAttempt, fetchRemote);
-          log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Skill assess risk detected: ${JSON.stringify(assessment)}`);
+          log.info(`[lynx-guardian]📌,Skill assess risk detected: ${JSON.stringify(assessment)}`);
           if (assessment.block) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
             try {
@@ -1559,11 +1559,11 @@ export default function setup(api: OpenClawPluginApi) {
 
     try {
       const userContext = readRecentContext(ctx.sessionKey);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,User context: ${userContext}`);
+      log.info(`[lynx-guardian]📌,User context: ${userContext}`);
       const content = `是否${match.reason} ${detail}？用户：${userContext}`;
 
       const res = await checkTool(userId, content);
-      log.info(`[lynx-guardian]consloe-stage-start-flag-to-clear,Tool check result: ${JSON.stringify(res)}`);
+      log.info(`[lynx-guardian]📌,Tool check result: ${JSON.stringify(res)}`);
       // Blacklist hits always require confirmation via the plugin's pending-override
       // mechanism, even when tool_check returns safe (risk_level=0).
       // "tool_check safe" means the user asked for the operation — that is necessary
