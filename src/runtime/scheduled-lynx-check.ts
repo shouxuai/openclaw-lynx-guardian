@@ -56,7 +56,7 @@ export function resolveScheduledLynxCheckConfig(
     enabled: normalized.enabled !== false,
     cron: typeof normalized.cron === "string" && normalized.cron.trim().length > 0
       ? normalized.cron.trim()
-      : "8/37 * * * *",
+      : "37 8 * * *",
     timezone: typeof normalized.timezone === "string" && normalized.timezone.trim().length > 0
       ? normalized.timezone.trim()
       : undefined,
