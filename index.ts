@@ -86,6 +86,7 @@ import {
 import { buildManualLynxCheckReport } from "./src/discovery/manual-lynx-check.js";
 import {
   clearRecentActiveDeliveryTargetForContext,
+  hasConcreteDeliveryTarget,
   readRecentActiveDeliverySnapshot,
   getRecentActiveDeliveryTarget,
   rememberRecentActiveDeliveryTarget,
@@ -419,6 +420,44 @@ export default function setup(api: OpenClawPluginApi) {
       return "webchat";
     }
     return "generic";
+  }
+
+  function resolveDeliveryThreadId(value: any): string | number | undefined {
+    return typeof value?.messageThreadId === "number" && Number.isFinite(value.messageThreadId)
+      ? value.messageThreadId
+      : typeof value?.threadId === "number" && Number.isFinite(value.threadId)
+        ? value.threadId
+        : normalizeString(value?.messageThreadId ?? value?.threadId) || undefined;
+  }
+
+  function buildDeliveryTargetSnapshot(value: any): Partial<RecentActiveDeliverySnapshot> {
+    return {
+      sessionKey: normalizeString(value?.sessionKey) || undefined,
+      channelId: normalizeString(value?.channelId ?? value?.channel) || undefined,
+      messageProvider: normalizeString(value?.messageProvider ?? value?.source) || undefined,
+      senderId: normalizeString(value?.senderId ?? value?.userId) || undefined,
+      bindingId: normalizeString(value?.bindingId) || undefined,
+      to: normalizeString(value?.to ?? value?.recipientId) || undefined,
+      accountId: normalizeString(value?.accountId) || undefined,
+      threadId: resolveDeliveryThreadId(value),
+    };
+  }
+
+  function buildOutboundDeliveryTarget(event: any, ctx: any): Partial<RecentActiveDeliverySnapshot> {
+    const currentTarget = buildDeliveryTargetSnapshot(ctx);
+    return {
+      ...currentTarget,
+      bindingId: normalizeString(event?.bindingId) || currentTarget.bindingId,
+      to: normalizeString(event?.to) || currentTarget.to,
+      accountId: normalizeString(event?.accountId) || currentTarget.accountId,
+      threadId: resolveDeliveryThreadId(event) ?? currentTarget.threadId,
+    };
+  }
+
+  function isScheduledManagedLynxCheckCronContext(ctx: any): boolean {
+    const trigger = normalizeString(ctx?.trigger).toLowerCase();
+    const sessionKey = normalizeString(ctx?.sessionKey).toLowerCase();
+    return trigger === "cron" || sessionKey.includes(":cron:");
   }
 
   function resolveActiveManagedLynxCheckState(ctx: any): {
@@ -1056,17 +1095,18 @@ export default function setup(api: OpenClawPluginApi) {
         const routeHint = activeRunIntent.routeHint ?? null;
         const reportPath = runResult?.reportPath ?? getLynxCheckRunReportPath(activeRunIntent.requestId);
         const inlineOutput = extractMessageText(event.messages[event.messages.length - 1]);
+        const currentDeliveryTarget = buildDeliveryTargetSnapshot(ctx);
         const inlineManagedReportDelivered = isTrustedManagedLynxCheckReportText(inlineOutput);
+        const inlineDeliveryEligible = activeRunIntent.source !== "scheduled"
+          || hasConcreteDeliveryTarget(currentDeliveryTarget);
 
         if (inlineManagedReportDelivered) {
-          const currentChannelId = normalizeString((ctx as any)?.channelId ?? (ctx as any)?.channel) || undefined;
-          const currentMessageProvider = normalizeString((ctx as any)?.messageProvider ?? (ctx as any)?.source) || undefined;
           const inlineAttempt: LynxReportDeliveryAttempt = {
             targetKey: normalizeString(ctx.sessionKey) || "inline-message",
             sessionKey: normalizeString(ctx.sessionKey) || undefined,
-            channelId: currentChannelId,
-            messageProvider: currentMessageProvider,
-            senderId: normalizeString((ctx as any)?.senderId ?? (ctx as any)?.userId) || undefined,
+            channelId: currentDeliveryTarget.channelId,
+            messageProvider: currentDeliveryTarget.messageProvider,
+            senderId: currentDeliveryTarget.senderId,
             delivered: true,
             transport: "inline-message",
           };
@@ -1084,8 +1124,12 @@ export default function setup(api: OpenClawPluginApi) {
             attempts: 1,
             routeHint,
             allowSameSessionFallback: false,
-            excludeMessageProviders: currentMessageProvider ? [currentMessageProvider] : [],
-            excludeChannelIds: currentChannelId ? [currentChannelId] : [],
+            excludeMessageProviders: inlineDeliveryEligible && currentDeliveryTarget.messageProvider
+              ? [currentDeliveryTarget.messageProvider]
+              : [],
+            excludeChannelIds: inlineDeliveryEligible && currentDeliveryTarget.channelId
+              ? [currentDeliveryTarget.channelId]
+              : [],
             useSessionStoreFallback: true,
             message: {
               role: "assistant",
@@ -1094,21 +1138,26 @@ export default function setup(api: OpenClawPluginApi) {
           });
           }
 
+          if (activeRunIntent.source === "scheduled" && !inlineDeliveryEligible) {
+            log.warn(
+              `[lynx-guardian] Scheduled /lynx-check inline report had no concrete current delivery target requestId=${activeRunIntent.requestId}`,
+            );
+          }
+
           const deliveryAttempts = [
-            inlineAttempt,
+            ...(inlineDeliveryEligible ? [inlineAttempt] : []),
             ...complementaryFanoutResult.deliveryAttempts,
           ];
+          const deliveredAttempts = deliveryAttempts.filter((attempt) => attempt.delivered);
           const deliveredTransports = [...new Set(
-            deliveryAttempts
-              .filter((attempt) => attempt.delivered)
-              .map((attempt) => attempt.transport),
+            deliveredAttempts.map((attempt) => attempt.transport),
           )];
 
           writeLynxCheckRunResult(activeRunIntent.requestId, {
             status: "completed",
             sendAttempted: true,
-            sendSucceeded: true,
-            transport: deliveredTransports.join(",") || "inline-message",
+            sendSucceeded: deliveredAttempts.length > 0,
+            transport: deliveredTransports.join(",") || "none",
             deliveryAttempts,
             reportPath: existsSync(reportPath) ? reportPath : undefined,
           });
@@ -1318,6 +1367,18 @@ export default function setup(api: OpenClawPluginApi) {
         shapedContent = nextContent;
         log.info("[lynx-guardian] Outbound Feishu message shaped at message_sending");
       }
+    }
+
+    if (
+      isScheduledManagedLynxCheckCronContext(ctx)
+      && typeof event.content === "string"
+      && isTrustedManagedLynxCheckReportText(event.content)
+      && !hasConcreteDeliveryTarget(buildOutboundDeliveryTarget(event, ctx))
+    ) {
+      log.warn(
+        `[lynx-guardian] Cancelled scheduled /lynx-check outbound message without concrete recipient session=${normalizeString(ctx.sessionKey) || "unknown"} target=${normalizeString((event as any)?.to) || "none"}`,
+      );
+      return { cancel: true };
     }
 
     if (selfSafetyGuardConfig.outputGuard === false) {

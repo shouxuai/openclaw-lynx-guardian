@@ -1,6 +1,7 @@
 import type { EventContext, Logger, LynxReportDeliveryAttempt, Message, ResolvedMessageTarget } from "../types.js";
 import {
   getRecentActiveDeliveryTargets,
+  isSystemOnlyDeliveryRoute,
   readRecentActiveDeliverySnapshots,
   readSessionStoreDeliverySnapshots,
   type RecentActiveRouteHint,
@@ -108,7 +109,7 @@ function toCurrentTargetHint(ctx: EventContext): DeliveryCandidate | null {
     .join(":");
   const targetKey = routedKey || sessionKey || `same-session:${senderId ?? "current"}`;
 
-  return {
+  const candidate: DeliveryCandidate = {
     targetKey,
     sessionKey,
     channelId,
@@ -122,6 +123,8 @@ function toCurrentTargetHint(ctx: EventContext): DeliveryCandidate | null {
     allowCurrentFallback: true,
     sendMessage: typeof ctx.sendMessage === "function" ? ctx.sendMessage : undefined,
   };
+
+  return isSystemOnlyDeliveryRoute(candidate) ? null : candidate;
 }
 
 function mergeCandidate(
@@ -204,6 +207,9 @@ function collectDeliveryCandidates(options: DeliverLynxReportOptions): DeliveryC
 
   return [...candidates.values()]
     .filter((candidate) => {
+      if (isSystemOnlyDeliveryRoute(candidate)) {
+        return false;
+      }
       const provider = (candidate.messageProvider ?? "").trim().toLowerCase();
       const channel = (candidate.channelId ?? "").trim().toLowerCase();
       if (provider && excludedProviders.has(provider)) {

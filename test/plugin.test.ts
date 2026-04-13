@@ -1119,6 +1119,45 @@ describe('Plugin Setup', () => {
     expect(result).toEqual({ cancel: true });
   });
 
+  it('should cancel scheduled trusted audit sends that still target heartbeat', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const handler = handlers['message_sending'];
+
+    await beforeAgentStart(
+      {
+        prompt: [
+          '[cron:lynx-guardian-scheduled-lynx-check Lynx Guardian Daily Check] /lynx-check',
+          'Current time: Sunday, April 12th, 2026 – 5:10 PM (Asia/Shanghai) / 2026-04-12 09:10 UTC',
+          'Return your summary as plain text; it will be delivered automatically.',
+        ].join('\n'),
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        trigger: 'cron',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        to: 'user:feishu-inline-session-store',
+      },
+    );
+
+    const result = await handler(
+      {
+        to: 'heartbeat',
+        content: '# 🛡️ OpenClaw 全方位安全审计报告\n\n## 一、执行摘要\n- ok\n\n## 八、优先级整改建议\n1. fix',
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        trigger: 'cron',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        to: 'user:feishu-inline-session-store',
+      },
+    );
+
+    expect(result).toEqual({ cancel: true });
+  });
+
   it('should write a lifecycle probe log for after_tool_call', async () => {
     setup(mockApi);
     const handler = handlers['after_tool_call'];
@@ -1815,6 +1854,7 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-route-only',
       },
     );
 
@@ -1834,6 +1874,7 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-route-only',
         resolveMessageTarget,
         sharedMessageSender: {
           send: sharedSend,
@@ -1877,6 +1918,62 @@ describe('Plugin Setup', () => {
         ]),
       }),
     );
+  });
+
+  it('should ignore heartbeat-only session-store routes when recovering scheduled delivery targets', () => {
+    mkdirSync(dirname(sessionStorePath), { recursive: true });
+    writeFileSync(
+      sessionStorePath,
+      JSON.stringify({
+        'agent:main:main': {
+          sessionId: 'sess-heartbeat-only',
+          updatedAt: 1713000300000,
+          origin: {
+            provider: 'heartbeat',
+            surface: 'heartbeat',
+            from: 'heartbeat',
+            to: 'heartbeat',
+          },
+          deliveryContext: {
+            channel: 'webchat',
+            to: 'heartbeat',
+          },
+        },
+        'agent:main:feishu': {
+          sessionId: 'sess-feishu-real',
+          updatedAt: 1713000400000,
+          origin: {
+            provider: 'feishu',
+            surface: 'feishu',
+            from: 'app:lynx',
+            to: 'user:stale-feishu',
+            accountId: 'default',
+          },
+          deliveryContext: {
+            channel: 'feishu',
+            to: 'user:feishu-recipient',
+            accountId: 'default',
+          },
+        },
+      }, null, 2),
+      'utf8',
+    );
+
+    const snapshots = recentActiveDelivery.readSessionStoreDeliverySnapshots();
+
+    expect(snapshots).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sessionKey: 'agent:main:feishu',
+        messageProvider: 'feishu',
+        channelId: 'feishu',
+        to: 'user:feishu-recipient',
+      }),
+    ]));
+    expect(snapshots).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sessionKey: 'agent:main:main',
+      }),
+    ]));
   });
 
   it('should reuse webchat origin metadata from session store when recent-active hints are missing', async () => {
@@ -1929,6 +2026,7 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-session-store',
       },
     );
 
@@ -2037,6 +2135,7 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-session-store',
       },
     );
 
@@ -2056,6 +2155,7 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-session-store',
       },
     );
 
@@ -2568,6 +2668,71 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-direct',
+      },
+    );
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('agent:main:cron:lynx-guardian-scheduled-lynx-check');
+
+    await agentEnd(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: '# 🛡️ OpenClaw 全方位安全审计报告\n\n## 一、执行摘要\n- ok\n\n## 八、优先级整改建议\n1. fix' }],
+          },
+        ],
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        trigger: 'cron',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        to: 'user:feishu-inline-direct',
+      },
+    );
+
+    expect(recentFeishuSendMessage).not.toHaveBeenCalled();
+    expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
+    expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        sendSucceeded: true,
+        transport: 'inline-message',
+      }),
+    );
+  });
+
+  it('should recover scheduled feishu fanout from recent activity when the cron ctx has no concrete recipient', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const recentFeishuSendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await handlers['message_received'](
+      { content: 'keep this feishu session active for recovery' },
+      {
+        sessionKey: 'sess-scheduled-inline-recovered-feishu',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        to: 'user:recovered-feishu',
+        sendMessage: recentFeishuSendMessage,
+      },
+    );
+
+    await beforeAgentStart(
+      {
+        prompt: [
+          '[cron:lynx-guardian-scheduled-lynx-check Lynx Guardian Daily Check] /lynx-check',
+          'Current time: Sunday, April 12th, 2026 – 2:15 PM (Asia/Shanghai) / 2026-04-12 06:15 UTC',
+          'Return your summary as plain text; it will be delivered automatically.',
+        ].join('\n'),
+      },
+      {
+        sessionKey: 'agent:main:cron:lynx-guardian-scheduled-lynx-check',
+        trigger: 'cron',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
       },
     );
 
@@ -2590,14 +2755,35 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(recentFeishuSendMessage).not.toHaveBeenCalled();
+    expect(recentFeishuSendMessage).toHaveBeenCalledTimes(1);
+    expect(recentFeishuSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('# 🛡️ OpenClaw 全方位安全审计报告'),
+      }),
+    );
     expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
     expect(readLynxCheckRunResult(runIntent!.requestId)).toEqual(
       expect.objectContaining({
         status: 'completed',
         sendSucceeded: true,
-        transport: 'inline-message',
+        transport: 'legacy-route-hint-sendMessage',
+        deliveryAttempts: expect.arrayContaining([
+          expect.objectContaining({
+            sessionKey: 'sess-scheduled-inline-recovered-feishu',
+            messageProvider: 'feishu',
+            delivered: true,
+            transport: 'legacy-route-hint-sendMessage',
+          }),
+        ]),
       }),
+    );
+    expect(readLynxCheckRunResult(runIntent!.requestId)?.deliveryAttempts).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          transport: 'inline-message',
+        }),
+      ]),
     );
   });
 
@@ -2641,6 +2827,7 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-fanout',
       },
     );
 
@@ -2660,6 +2847,7 @@ describe('Plugin Setup', () => {
         trigger: 'cron',
         channelId: 'feishu',
         messageProvider: 'feishu',
+        to: 'user:feishu-inline-fanout',
       },
     );
 

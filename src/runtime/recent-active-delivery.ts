@@ -93,6 +93,51 @@ function buildTargetKey(parts: {
     .join(":");
 }
 
+const SYSTEM_ONLY_DELIVERY_VALUES = new Set(["heartbeat"]);
+
+function normalizeThreadId(value: unknown): string | number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : normalizeString(value) || undefined;
+}
+
+export function isSystemOnlyDeliveryValue(value: unknown): boolean {
+  const normalized = normalizeString(value).toLowerCase();
+  return normalized.length > 0 && SYSTEM_ONLY_DELIVERY_VALUES.has(normalized);
+}
+
+export function isSystemOnlyDeliveryRoute(route?: Partial<RecentActiveRouteHint> | null): boolean {
+  if (!route) {
+    return false;
+  }
+
+  return [
+    route.messageProvider,
+    route.channelId,
+    route.senderId,
+    route.bindingId,
+    route.to,
+  ].some((candidate) => isSystemOnlyDeliveryValue(candidate));
+}
+
+export function hasConcreteDeliveryTarget(route?: Partial<RecentActiveRouteHint> | null): boolean {
+  if (!route || isSystemOnlyDeliveryRoute(route)) {
+    return false;
+  }
+
+  if (normalizeString(route.to)) {
+    return true;
+  }
+
+  if (normalizeString(route.bindingId)) {
+    return true;
+  }
+
+  const accountId = normalizeString(route.accountId);
+  const threadId = normalizeThreadId(route.threadId);
+  return Boolean(accountId && threadId !== undefined);
+}
+
 function normalizeSnapshot(value: unknown): RecentActiveDeliverySnapshot | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -104,7 +149,7 @@ function normalizeSnapshot(value: unknown): RecentActiveDeliverySnapshot | null 
     return null;
   }
 
-  return {
+  const snapshot: RecentActiveDeliverySnapshot = {
     targetKey,
     sessionKey: normalizeString(parsed.sessionKey) || undefined,
     channelId: normalizeString(parsed.channelId) || undefined,
@@ -113,12 +158,70 @@ function normalizeSnapshot(value: unknown): RecentActiveDeliverySnapshot | null 
     bindingId: normalizeString(parsed.bindingId) || undefined,
     to: normalizeString(parsed.to) || undefined,
     accountId: normalizeString(parsed.accountId) || undefined,
-    threadId:
-      typeof parsed.threadId === "number" && Number.isFinite(parsed.threadId)
-        ? parsed.threadId
-        : normalizeString(parsed.threadId) || undefined,
+    threadId: normalizeThreadId(parsed.threadId),
     updatedAtMs: typeof parsed.updatedAtMs === "number" ? parsed.updatedAtMs : 0,
   };
+
+  if (isSystemOnlyDeliveryRoute(snapshot)) {
+    return null;
+  }
+
+  return snapshot;
+}
+
+function resolveThreadId(origin: SessionStoreEntryOrigin, deliveryContext: SessionStoreEntryDeliveryContext, deliveryMatchesOrigin: boolean): string | number | undefined {
+  if (deliveryMatchesOrigin) {
+    return normalizeThreadId(deliveryContext?.threadId)
+      ?? normalizeThreadId(origin?.threadId);
+  }
+
+  return normalizeThreadId(origin?.threadId);
+}
+
+function resolveTo(origin: SessionStoreEntryOrigin, deliveryContext: SessionStoreEntryDeliveryContext, deliveryMatchesOrigin: boolean): string | undefined {
+  return deliveryMatchesOrigin
+    ? normalizeString(deliveryContext?.to) || normalizeString(origin?.to) || undefined
+    : normalizeString(origin?.to) || undefined;
+}
+
+function resolveAccountId(origin: SessionStoreEntryOrigin, deliveryContext: SessionStoreEntryDeliveryContext, deliveryMatchesOrigin: boolean): string | undefined {
+  return deliveryMatchesOrigin
+    ? normalizeString(deliveryContext?.accountId) || normalizeString(origin?.accountId) || undefined
+    : normalizeString(origin?.accountId) || undefined;
+}
+
+function normalizeSessionStoreRoute(
+  normalizedSessionKey: string,
+  entry: SessionStoreEntry,
+): RecentActiveDeliverySnapshot | null {
+  const origin = entry.origin;
+  const deliveryContext = entry.deliveryContext;
+  const messageProvider = normalizeString(origin?.provider) || normalizeString(origin?.surface) || undefined;
+  const channelId = normalizeString(origin?.surface) || normalizeString(origin?.provider) || undefined;
+  const senderId = normalizeString(origin?.from) || normalizeString(origin?.to) || undefined;
+  const normalizedDeliveryChannel = normalizeString(deliveryContext?.channel) || undefined;
+  const deliveryMatchesOrigin =
+    normalizedDeliveryChannel != null
+    && [messageProvider, channelId]
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .some((candidate) => candidate === normalizedDeliveryChannel);
+  const snapshot: RecentActiveDeliverySnapshot = {
+    targetKey: normalizedSessionKey,
+    sessionKey: normalizedSessionKey,
+    channelId,
+    messageProvider,
+    senderId,
+    to: resolveTo(origin ?? {}, deliveryContext ?? {}, deliveryMatchesOrigin),
+    accountId: resolveAccountId(origin ?? {}, deliveryContext ?? {}, deliveryMatchesOrigin),
+    threadId: resolveThreadId(origin ?? {}, deliveryContext ?? {}, deliveryMatchesOrigin),
+    updatedAtMs: typeof entry.updatedAt === "number" ? entry.updatedAt : 0,
+  };
+
+  if ((!messageProvider && !channelId && !senderId) || isSystemOnlyDeliveryRoute(snapshot)) {
+    return null;
+  }
+
+  return snapshot;
 }
 
 function normalizeSessionStoreSnapshot(
@@ -135,55 +238,7 @@ function normalizeSessionStoreSnapshot(
   }
 
   const entry = value as SessionStoreEntry;
-  const origin = entry.origin;
-  const deliveryContext = entry.deliveryContext;
-  const messageProvider = normalizeString(origin?.provider) || normalizeString(origin?.surface) || undefined;
-  const channelId = normalizeString(origin?.surface) || normalizeString(origin?.provider) || undefined;
-  const senderId = normalizeString(origin?.from) || normalizeString(origin?.to) || undefined;
-  const normalizedDeliveryChannel = normalizeString(deliveryContext?.channel) || undefined;
-  const deliveryMatchesOrigin =
-    normalizedDeliveryChannel != null
-    && [messageProvider, channelId]
-      .filter((candidate): candidate is string => Boolean(candidate))
-      .some((candidate) => candidate === normalizedDeliveryChannel);
-  const to = deliveryMatchesOrigin
-    ? normalizeString(deliveryContext?.to) || normalizeString(origin?.to) || undefined
-    : normalizeString(origin?.to) || undefined;
-  const accountId = deliveryMatchesOrigin
-    ? normalizeString(deliveryContext?.accountId) || normalizeString(origin?.accountId) || undefined
-    : normalizeString(origin?.accountId) || undefined;
-  const threadId = deliveryMatchesOrigin
-    ? (
-      typeof deliveryContext?.threadId === "number" && Number.isFinite(deliveryContext.threadId)
-        ? deliveryContext.threadId
-        : normalizeString(deliveryContext?.threadId)
-          || (
-            typeof origin?.threadId === "number" && Number.isFinite(origin.threadId)
-              ? String(origin.threadId)
-              : normalizeString(origin?.threadId)
-          )
-          || undefined
-    )
-    : (
-      typeof origin?.threadId === "number" && Number.isFinite(origin.threadId)
-        ? origin.threadId
-        : normalizeString(origin?.threadId) || undefined
-    );
-  if (!messageProvider && !channelId && !senderId) {
-    return null;
-  }
-
-  return {
-    targetKey: normalizedSessionKey,
-    sessionKey: normalizedSessionKey,
-    channelId,
-    messageProvider,
-    senderId,
-    to,
-    accountId,
-    threadId,
-    updatedAtMs: typeof entry.updatedAt === "number" ? entry.updatedAt : 0,
-  };
+  return normalizeSessionStoreRoute(normalizedSessionKey, entry);
 }
 
 function sortSnapshots(snapshots: RecentActiveDeliverySnapshot[]): RecentActiveDeliverySnapshot[] {
@@ -266,6 +321,10 @@ function buildSnapshotWithOptions(
     updatedAtMs: now,
     targetKey: "",
   };
+
+  if (isSystemOnlyDeliveryRoute(snapshot)) {
+    return null;
+  }
 
   snapshot.targetKey = buildTargetKey(snapshot);
   if (!snapshot.targetKey) {
