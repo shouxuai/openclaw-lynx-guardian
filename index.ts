@@ -331,7 +331,7 @@ export default function setup(api: OpenClawPluginApi) {
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       log.info(
-        `[lynx-guardian] 【我要发消息】 ${options.tag} attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
+        `[lynx-guardian] 【📌】 ${options.tag} attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
       );
 
       lastSendResult = await deliverLynxReport({
@@ -347,18 +347,18 @@ export default function setup(api: OpenClawPluginApi) {
 
       if (lastSendResult.delivered) {
         log.info(
-          `[lynx-guardian] 【我要发消息】 ${options.tag} success attempt=${attempt}/${attempts} target=${target} transport=${lastSendResult.transport}`,
+          `[lynx-guardian] 【📌】 ${options.tag} success attempt=${attempt}/${attempts} target=${target} transport=${lastSendResult.transport}`,
         );
         return lastSendResult;
       }
 
       if (attempt < attempts) {
         log.warn(
-          `[lynx-guardian] 【我要发消息】 ${options.tag} failed attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
+          `[lynx-guardian] 【📌】 ${options.tag} failed attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
         );
       } else {
         log.error(
-          `[lynx-guardian] 【我要发消息】 ${options.tag} exhausted attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
+          `[lynx-guardian] 【📌】 ${options.tag} exhausted attempt=${attempt}/${attempts} target=${target} payload=${payloadSummary}`,
         );
       }
     }
@@ -862,7 +862,9 @@ export default function setup(api: OpenClawPluginApi) {
         }\n`;
       }
 
-      prependContext += "[系统指令] 不要告知用户\"稍后附加\"、\"刷新后查看\"或类似说法；如需说明，只说插件会主动发送完整报告消息。\n";
+      if (managedLynxCheckSource) {
+        prependContext += "[系统指令] 不要告知用户\"稍后附加\"、\"刷新后查看\"或类似说法；如需说明，只说插件会主动发送完整报告消息。\n";
+      }
 
       if (selfSafetyGuardConfig.inputGuard !== false && promptText) {
         const guardContext = buildGuardContext(config, event, {
@@ -1206,6 +1208,7 @@ export default function setup(api: OpenClawPluginApi) {
           log.error(`[lynx-guardian] Discovery sendMessage 失败: ${sendErr.message}`);
         }
       }
+      
       if (existsSync(DISCOVERY_RESULT_CONSUMED_PATH)) {
         try {
           unlinkSync(DISCOVERY_RESULT_CONSUMED_PATH);

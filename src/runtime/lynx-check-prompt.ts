@@ -11,7 +11,7 @@ function buildSharedInstructions(input: BuildLynxCheckPromptInput): string[] {
     `[系统指令] 这是一次由 Lynx Guardian 预计算完成的 /lynx-check。requestId=${input.requestId}`,
     "请直接使用中文回复完整审计报告，不要让用户查看文件路径，不要提及 report.md、result.json 或本地工件。",
     "你的角色不是重新执行审计，而是把下面已经得到的审计结果整理成最终发给用户的中文 Markdown 报告。",
-    "不要调度 lynx-guardian-check-orchestrator，不要重新分派旧技能，不要要求再次授权，不要输出 BLOCKED、Approve with、allow-once、allow-always。",
+    "不要要求再次授权，不要输出 BLOCKED、Approve with、allow-once、allow-always。",
     "不要把回复写成执行状态、权限申请、调度过程、运行日志或内部实现说明；重点要把风险、影响、证据、优先级和整改动作说清楚。",
     "如果某个章节证据不足，也必须保留该章节，并明确写出“未能采集”或“需要进一步复核”，不要省略章节。",
     "报告需要详细、自然、专业、可转发，适合 OpenClaw 用户在聊天会话里直接阅读，而不是只看一个短摘要。",

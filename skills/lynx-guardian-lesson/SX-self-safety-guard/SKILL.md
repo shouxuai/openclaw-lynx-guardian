@@ -1,6 +1,5 @@
 ---
-
-## name: self-safety-guard
+name: self-safety-guard
 version: 2.0.0
 description: >
   AI自我安全防护系统v2。多层防御：提示注入、身份冒充、系统提示泄露、
@@ -8,7 +7,7 @@ description: >
   触发词：安全防护、身份验证、prompt injection、system prompt、
   权限升级、MCP安全、self-safety-guard、安全检查。
 tags: [security, core, defense, identity]
-
+---
 # AI自我安全防护系统 v2.0
 
 ## 核心使命与防御架构
