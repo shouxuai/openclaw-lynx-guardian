@@ -5,6 +5,8 @@
  * encoding obfuscation, and multi-turn progressive attacks.
  */
 
+import { findObfuscatedProtectedReferenceLabels } from "../path-glob-protection.js";
+
 export interface InjectionDetectionResult {
   detected: boolean;
   category: InjectionCategory;
@@ -238,6 +240,13 @@ export function detectSystemPromptExtraction(text: string): {
   if (!text) return { detected: false, confidence: 0, matchedPatterns: [] };
 
   const matches = matchPatterns(text, SYSTEM_PROMPT_EXTRACTION);
+  const obfuscatedProtectedReferences = findObfuscatedProtectedReferenceLabels(text);
+  if (
+    obfuscatedProtectedReferences.length > 0
+    && /(?:show|read|open|print|display|cat|less|more|head|tail|读取|查看|显示|打印|展示)/i.test(text)
+  ) {
+    matches.push("protected_md_read_obfuscated");
+  }
   const confidence = matches.length > 0
     ? Math.min(0.6 + matches.length * 0.15, 1.0)
     : 0;

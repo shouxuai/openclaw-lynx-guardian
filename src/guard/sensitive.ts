@@ -1,4 +1,4 @@
-import { PatternRule } from "./types.js";
+import { PatternRule } from "../types.js";
 
 export class SensitiveDataBlocker {
     blockedTerms: string[];

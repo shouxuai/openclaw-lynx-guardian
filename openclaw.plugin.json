@@ -22,7 +22,18 @@
           "outputGuard": {
             "type": "boolean",
             "default": true,
-            "description": "Enable output guard: system prompt leak detection with best-effort redaction (M2)"
+            "description": "Enable output guard: persisted assistant-output and outbound-delivery enforcement for protected content"
+          },
+          "resultGuard": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable synchronous interception of unsafe tool results before transcript persistence"
+          },
+          "outputEnforcementMode": {
+            "type": "string",
+            "enum": ["warn", "redact", "block"],
+            "default": "block",
+            "description": "Default enforcement mode for persisted assistant output and outbound delivery"
           },
           "toolGuard": {
             "type": "boolean",
@@ -47,6 +58,48 @@
                 "type": "array",
                 "items": { "type": "string" },
                 "description": "Channel/source names that should be treated as verified owner channels"
+              }
+            }
+          },
+          "policy": {
+            "type": "object",
+            "description": "Risk policy configuration for one-time overrides",
+            "additionalProperties": false,
+            "properties": {
+              "absoluteRejectScore": {
+                "type": "integer",
+                "default": 10,
+                "description": "Score threshold for hard reject decisions"
+              },
+              "confirmationPhrase": {
+                "type": "string",
+                "default": "确认放行本次操作",
+                "description": "Exact phrase required to approve a one-time override"
+              },
+              "allowOneTimeOverrideLevels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["L2", "L3", "L4"]
+                },
+                "description": "Risk levels that can request a one-time override"
+              },
+              "moduleOverrides": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "M3": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "allowOneTimeOverride": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Allow one-time override for module M3"
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -137,6 +190,141 @@
             "type": "number",
             "default": 5.0,
             "description": "Daily spending limit in USD (default: $5.00)"
+          }
+        }
+      },
+      "scheduledLynxCheck": {
+        "type": "object",
+        "description": "Managed native OpenClaw cron job for running /lynx-check on a configurable schedule",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable the managed scheduled /lynx-check cron job"
+          },
+          "cron": {
+            "type": "string",
+            "default": "37 8 * * *",
+            "description": "5-field cron expression, for example 37 8 * * * for 08:37 daily or 37 8 * * * for testing"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Optional IANA timezone, for example Asia/Shanghai"
+          },
+          "jobName": {
+            "type": "string",
+            "default": "Lynx Guardian Daily Check",
+            "description": "Display name for the managed cron job"
+          },
+          "announce": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether the isolated cron run should announce its report automatically"
+          },
+          "deliveryMode": {
+            "type": "string",
+            "enum": ["recent-active", "announce"],
+            "default": "recent-active",
+            "description": "How scheduled /lynx-check reports should be delivered. recent-active reuses the most recently active supported chat session; announce keeps the isolated session announce behavior."
+          },
+          "storePath": {
+            "type": "string",
+            "description": "Optional override of the OpenClaw cron jobs.json path, useful for tests or non-default cron.store setups"
+          },
+          "autoGrantManagedAuthorization": {
+            "type": "boolean",
+            "default": true,
+            "description": "Pre-authorize managed /lynx-check when the scheduled job is reconciled so later runs do not request allow-once approval"
+          }
+        }
+      },
+      "managedLynxCheckAuthorization": {
+        "type": "object",
+        "description": "Plugin-side pre-authorization rules for managed /lynx-check so audit generation and delivery never trigger self approval prompts",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable plugin-managed pre-authorization for /lynx-check"
+          },
+          "autoGrantOnScheduledJobCreate": {
+            "type": "boolean",
+            "default": true,
+            "description": "Grant managed /lynx-check authorization as soon as the scheduled cron job is created or reconciled"
+          },
+          "treatManualLynxCheckAsPreauthorized": {
+            "type": "boolean",
+            "default": true,
+            "description": "Treat manual /lynx-check runs as pre-authorized internal workflows"
+          }
+        }
+      },
+      "openclawDiscovery": {
+        "type": "object",
+        "description": "OpenClaw service discovery configuration used by /lynx-check and related detection flows",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable discovery-related features"
+          },
+          "runOnStartup": {
+            "type": "boolean",
+            "default": false,
+            "description": "Reserve startup discovery execution behavior"
+          },
+          "targets": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional explicit discovery targets such as host, host:port, URL, or CIDR"
+          },
+          "candidatePorts": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "description": "Candidate ports to scan when fullScan is disabled"
+          },
+          "fullScan": {
+            "type": "boolean",
+            "default": false,
+            "description": "Scan the full port range instead of only candidate ports"
+          },
+          "localOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Restrict automatic target expansion to localhost and local addresses"
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 250,
+            "maximum": 15000,
+            "description": "Per-request timeout in milliseconds"
+          },
+          "hostConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 128,
+            "description": "Concurrent host scan limit"
+          },
+          "portConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1024,
+            "description": "Concurrent port scan limit"
+          },
+          "minScore": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Minimum fingerprint score required before a hit is reported"
+          },
+          "maxHosts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096,
+            "description": "Maximum number of expanded hosts allowed from CIDR targets"
           }
         }
       }

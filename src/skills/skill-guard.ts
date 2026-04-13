@@ -22,7 +22,7 @@ import {
   type MaliciousSkillEntry,
   type TrustedSkillEntry,
 } from "./skill-blacklist-data.js";
-import { CONFIG } from "./config.js";
+import { CONFIG } from "../config.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 

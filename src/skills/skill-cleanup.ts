@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, readdirSync, statSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
-import { CONFIG } from "./config.js";
+import { CONFIG } from "../config.js";
 
 // ── Paths ────────────────────────────────────────────────────────────
 

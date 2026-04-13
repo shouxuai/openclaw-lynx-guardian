@@ -1,10 +1,12 @@
 
 import { describe, it, expect } from 'vitest';
-import { detectPromptInjection } from '../src/prompt-injection.js';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { detectPromptInjection } from '../src/guard/prompt-injection.js';
 import { checkExecBlacklist } from '../src/blacklist.js';
-import { guardInput, guardToolCall, clearSessionState } from '../src/safety-guard.js';
+import { guardInput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
 import { extractContentAfterDate } from '../src/utils.js';
-import { SensitiveDataBlocker } from '../src/sensitive.js';
+import { SensitiveDataBlocker } from '../src/guard/sensitive.js';
 
 describe('P0 Regression Tests', () => {
   describe('P0-1: Array content normalization', () => {
@@ -165,6 +167,24 @@ describe('P1 Regression Tests', () => {
       expect(checkExecBlacklist('npx vitest run')).toBeNull();
       expect(checkExecBlacklist('yarn test')).toBeNull();
       expect(checkExecBlacklist('pnpm dev')).toBeNull();
+    });
+  });
+
+  describe('Deprecated lynx-check skill packaging', () => {
+    it('should not ship deprecated orchestrator skill aliases', () => {
+      const orchestratorSkillPath = join(
+        process.cwd(),
+        'skills',
+        'lynx-guardian-check-orchestrator',
+      );
+      const dailyAliasSkillPath = join(
+        process.cwd(),
+        'skills',
+        'lynx-guardian-daily-lynx-check',
+      );
+
+      expect(existsSync(orchestratorSkillPath)).toBe(false);
+      expect(existsSync(dailyAliasSkillPath)).toBe(false);
     });
   });
 });

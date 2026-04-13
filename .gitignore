@@ -88,3 +88,12 @@ test-results/
 # 性能分析文件
 *.cpuprofile
 *.heapprofile
+/.
+/test
+/test/**
+/test-temp
+/docs/**
+.worktrees/
+/scripts-dev
+/AGENTS.md
+/CLAUDE.md
