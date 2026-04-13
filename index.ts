@@ -109,6 +109,7 @@ import {
   buildManualLynxCheckPrompt,
   buildScheduledLynxCheckPrompt,
 } from "./src/runtime/lynx-check-prompt.js";
+import { resolvePluginRuntimeConfig } from "./src/runtime/plugin-runtime-config.js";
 
 function isConfirmationPhrase(text: string, phrase: string): boolean {
   return text.includes(phrase.trim());
@@ -197,7 +198,7 @@ export default function setup(api: OpenClawPluginApi) {
     log.info(`[lynx-guardian] 仅用于开发期: LYNX_API_URL=${process.env.LYNX_API_URL}`);
   }
   const sensitiveDataBlocker = new SensitiveDataBlocker();
-  const config = api.config ?? {};
+  const config = resolvePluginRuntimeConfig(api.config, log);
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const riskPolicyConfig = normalizePolicyConfig((selfSafetyGuardConfig as any).policy ?? {});
   const securityAuditConfig = config.securityAudit ?? {};

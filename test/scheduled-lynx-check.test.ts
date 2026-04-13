@@ -29,7 +29,7 @@ describe("scheduled lynx-check", () => {
   it("resolves enabled defaults when config is missing", () => {
     expect(resolveScheduledLynxCheckConfig(undefined)).toEqual({
       enabled: true,
-      cron: "*/5 * * * *",
+      cron: "37 8 * * *",
       timezone: undefined,
       jobName: "Lynx Guardian Daily Check",
       announce: true,
@@ -55,7 +55,7 @@ describe("scheduled lynx-check", () => {
     const store = JSON.parse(readFileSync(storePath, "utf8"));
     expect(store.jobs).toHaveLength(1);
     expect(store.jobs[0].id).toBe(SCHEDULED_LYNX_CHECK_JOB_ID);
-    expect(store.jobs[0].schedule.expr).toBe("*/5 * * * *");
+    expect(store.jobs[0].schedule.expr).toBe("37 8 * * *");
     expect(store.jobs[0].delivery).toEqual({ mode: "announce" });
   });
 
