@@ -1,6 +1,10 @@
 import { homedir } from "os";
 import { normalize, resolve } from "path";
 import type { GuardContext } from "../guard/safety-guard.js";
+import {
+  buildEnvironmentProfile,
+  type EnvironmentProfile,
+} from "../guard/policy/environment-profile.js";
 
 export function canonicalizePath(raw: string): string {
   if (typeof raw !== "string" || raw.length === 0) {
@@ -35,6 +39,13 @@ export function resolveRuntimeHomeDir(): string {
   }
 
   return homedir();
+}
+
+export function resolveRuntimeEnvironmentProfile(cwd: string): EnvironmentProfile {
+  return buildEnvironmentProfile({
+    cwd,
+    pluginSourceRoot: cwd,
+  });
 }
 
 const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [

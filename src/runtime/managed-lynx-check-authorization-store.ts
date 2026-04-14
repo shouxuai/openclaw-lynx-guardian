@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
+import { assertManagedLynxAuditBoundary } from "./lynx-audit-runtime.js";
 import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
 export interface ManagedLynxCheckAuthorization {
@@ -84,6 +85,12 @@ export function grantManagedLynxCheckAuthorization(
   },
   options?: ManagedLynxCheckAuthorizationStoreOptions,
 ): ManagedLynxCheckAuthorization {
+  assertManagedLynxAuditBoundary({
+    action: "authorize_run",
+    target: input.source,
+    managed: true,
+  });
+
   return writeAuthorization({
     scope: input.scope,
     source: input.source,

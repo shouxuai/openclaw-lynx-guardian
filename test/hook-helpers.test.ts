@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   appendDiscoveryReportToMessage,
   decorateAssistantMessage,
@@ -9,6 +9,7 @@ import {
 import {
   buildGuardContext,
   redactAgentOutput,
+  resolveRuntimeEnvironmentProfile,
 } from "../src/runtime/plugin-runtime-helpers.js";
 
 describe("hook helper modules", () => {
@@ -69,9 +70,9 @@ describe("hook helper modules", () => {
     });
   });
 
-  it("detects manual discovery requests", () => {
+  it("keeps manual discovery requests disabled after the trigger boundary cleanup", () => {
     expect(isManualDiscoveryRequest("/check")).toBe(false);
-    expect(isManualDiscoveryRequest("帮我检测 openclaw 网关 ip 端口")).toBe(true);
+    expect(isManualDiscoveryRequest("帮我检测 openclaw 网关 ip 端口")).toBe(false);
     expect(isManualDiscoveryRequest("普通聊天")).toBe(false);
   });
 
@@ -118,5 +119,17 @@ describe("hook helper modules", () => {
 
     expect(event.output).toBe("redacted");
     expect(event.messages[0].content[0].text).toBe("redacted");
+  });
+
+  it("uses OPENCLAW_STATE_DIR for runtime environment session roots", () => {
+    vi.stubEnv("OPENCLAW_STATE_DIR", "/home/node/.openclaw/docker-state");
+    vi.stubEnv("HOME", "/home/node");
+
+    const profile = resolveRuntimeEnvironmentProfile("/app/extensions/openclaw-lynx-guardian");
+
+    expect(profile.stateDir).toBe("/home/node/.openclaw/docker-state");
+    expect(profile.sessionStoreRoot).toBe("/home/node/.openclaw/docker-state/agents/main/sessions");
+
+    vi.unstubAllEnvs();
   });
 });

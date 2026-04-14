@@ -12,6 +12,7 @@ import {
   clearManagedLynxCheckAuthorization,
   hasManagedLynxCheckAuthorization,
 } from "../src/runtime/managed-lynx-check-authorization-store.js";
+import { runManagedLynxAuditBoundaryCheck } from "../src/runtime/lynx-audit-runtime.js";
 
 describe("scheduled lynx-check", () => {
   const tempDir = join(process.cwd(), "test-temp", "scheduled-lynx-check");
@@ -180,5 +181,17 @@ describe("scheduled lynx-check", () => {
     const store = JSON.parse(readFileSync(storePath, "utf8"));
     expect(store.jobs).toHaveLength(1);
     expect(store.jobs[0].id).toBe("user-job");
+  });
+  it("blocks non-whitelisted extra actions from the managed audit runtime", () => {
+    expect(
+      runManagedLynxAuditBoundaryCheck({
+        action: "exec",
+        target: "rm -rf /tmp/x",
+        managed: true,
+      }),
+    ).toEqual({
+      allowed: false,
+      reason: "managed-audit-whitelist-only",
+    });
   });
 });

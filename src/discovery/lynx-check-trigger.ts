@@ -5,9 +5,25 @@ export interface LynxCheckTrigger {
   normalizedText: string;
 }
 
-const NATIVE_PASSTHROUGH = new Set(["check", "/check"]);
-const LYNX_COMMANDS = new Set(["lynx-check", "/lynx-check"]);
-const LIKELY_SENDER_PREFIX = /^[\p{L}\p{N}_-]+(?: [\p{L}\p{N}_-]+){0,2}$/u;
+const NATIVE_PASSTHROUGH = new Set(["/check"]);
+const LYNX_COMMANDS = new Set(["/lynx-check"]);
+const LIKELY_SENDER_PREFIX = /^[\p{L}\p{N}_-]+$/u;
+const DISALLOWED_SENDER_PREFIX_TERMS = new Set([
+  "can",
+  "check",
+  "could",
+  "inspect",
+  "scan",
+  "detect",
+  "do",
+  "kindly",
+  "verify",
+  "please",
+  "pls",
+  "help",
+  "would",
+  "you",
+]);
 
 function normalizeRawInput(text: string): string {
   return text.trim().toLowerCase();
@@ -15,10 +31,11 @@ function normalizeRawInput(text: string): string {
 
 function isLikelySenderPrefix(prefix: string): boolean {
   const trimmedPrefix = prefix.trim();
-  if (!trimmedPrefix) {
+  if (!trimmedPrefix || !LIKELY_SENDER_PREFIX.test(trimmedPrefix)) {
     return false;
   }
-  return LIKELY_SENDER_PREFIX.test(trimmedPrefix);
+
+  return !DISALLOWED_SENDER_PREFIX_TERMS.has(trimmedPrefix);
 }
 
 function normalizeInput(text: string): string {

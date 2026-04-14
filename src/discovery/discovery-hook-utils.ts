@@ -8,7 +8,8 @@ export function isManualCompositeLynxCheckRequest(text: string): boolean {
 }
 
 export function isManualDiscoveryRequest(text: string): boolean {
-  return classifyLynxCheckTrigger(text).kind === "keyword_request";
+  void text;
+  return false;
 }
 
 export async function resolveDiscoveryTargets(config: any): Promise<string[]> {

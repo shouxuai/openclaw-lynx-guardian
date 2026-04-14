@@ -11,6 +11,7 @@ import {
   buildReadySyncSuccessMessage,
   buildCronStoreContainsJobShellCommand,
   buildCronStoreSyncShellCommand,
+  chooseReadyLogText,
   collectGatewayReadyMarkerLines,
   DEFAULT_SCHEDULED_LYNX_CHECK_JOB_ID,
   extractContainerHealthStatus,
@@ -193,6 +194,14 @@ function readLogsSince(containerName, startedAt) {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+function readRecentLogs(containerName, tailLines = 400) {
+  const result = runCommand("docker", ["logs", "--tail", String(tailLines), containerName], {
+    capture: true,
+    allowFailure: true,
+  });
+  return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
 function runContainerShell(containerName, shellCommand, { capture = false, allowFailure = false } = {}) {
   return runCommand("docker", [
     "exec",
@@ -245,7 +254,10 @@ async function waitForReadyMarkers(containerName, startedAt, timeoutMs, pollMs) 
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() <= deadline) {
-    const logText = readLogsSince(containerName, startedAt);
+    const logText = chooseReadyLogText(
+      readLogsSince(containerName, startedAt),
+      readRecentLogs(containerName),
+    );
     if (hasGatewayReadyMarkers(logText)) {
       return {
         logText,

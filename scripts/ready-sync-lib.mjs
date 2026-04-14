@@ -42,6 +42,15 @@ export function collectGatewayReadyMarkerLines(logText) {
     .filter((line) => /\[lynx-guardian\] Plugin loading\.\.\./.test(line) || /listening on ws:\/\/\S+/i.test(line));
 }
 
+export function chooseReadyLogText(sinceLogText, tailLogText) {
+  const primary = String(sinceLogText ?? "");
+  if (hasGatewayReadyMarkers(primary)) {
+    return primary;
+  }
+
+  return String(tailLogText ?? "");
+}
+
 export function buildReadySyncSuccessMessage({ containerName, startedAt }) {
   const resolvedContainer = String(containerName ?? "").trim() || DEFAULT_GATEWAY_CONTAINER;
   const resolvedStartedAt = String(startedAt ?? "").trim() || "unknown-start-time";

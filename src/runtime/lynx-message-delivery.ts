@@ -11,7 +11,7 @@ import {
   injectLynxWebchatReportViaGateway,
 } from "./lynx-webchat-delivery.js";
 
-interface DeliverLynxReportOptions {
+export interface DeliverLynxReportOptions {
   log: Logger;
   ctx: EventContext;
   message: Message;

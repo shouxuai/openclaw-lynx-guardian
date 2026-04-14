@@ -12,6 +12,7 @@ import * as skillGuard from '../src/skills/skill-guard.js';
 import * as safetyGuard from '../src/guard/safety-guard.js';
 import * as blacklist from '../src/blacklist.js';
 import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js';
+import * as lynxMessageDelivery from '../src/runtime/lynx-message-delivery.js';
 import { deliverLynxReport } from '../src/runtime/lynx-message-delivery.js';
 import { setLynxWebchatGatewayCallerForTests } from '../src/runtime/lynx-webchat-delivery.js';
 import {
@@ -715,6 +716,39 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
+  it('should map local guard policy decisions back to legacy risk levels before pushRecord', async () => {
+    setup(mockApi);
+    const toolHandler = handlers['before_tool_call'];
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
+      block: true,
+      blockReason: '[Lynx Guardian] blocked local tool',
+      riskAssessment: {
+        level: 'L4',
+        score: 9,
+        modules: ['M2:protected_file_access'],
+        description: 'protected file tool attempt',
+        action: 'deny',
+      },
+    });
+
+    const result = await toolHandler(
+      {
+        toolName: 'read',
+        params: { file_path: '/etc/passwd' },
+      },
+      { sessionKey: 'sess-policy-runtime' },
+    );
+
+    expect(api.pushRecord).toHaveBeenCalledWith(
+      'TEST_ID',
+      expect.stringContaining('[policy:L4/deny] [SSG:tool] read'),
+      4,
+    );
+    expect(result).toEqual(expect.objectContaining({ block: true }));
+
+    guardSpy.mockRestore();
+  });
+
   it('should allow blacklist-backed delete confirmation to open the workflow window', async () => {
     mockApi.config = {
       selfSafetyGuard: {
@@ -798,8 +832,8 @@ describe('Plugin Setup', () => {
     expect(event.messages[0].content[0].text).toContain('输出已被安全防护替换');
     expect(api.pushRecord).toHaveBeenCalledWith(
       'TEST_ID',
-      expect.stringContaining('[SSG:output]'),
-      2,
+      expect.stringContaining('[policy:L4/deny] [SSG:output]'),
+      4,
     );
   });
 
@@ -3063,6 +3097,69 @@ describe('Plugin Setup', () => {
     }
   });
 
+  it('agent_end should prefer lynx-check run-store completion over legacy pending discovery fallback', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const agentEnd = handlers['agent_end'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const deliverySpy = vi.spyOn(lynxMessageDelivery, 'deliverLynxReport');
+
+    await beforeAgentStart(
+      { prompt: '[2026-04-12 09:30:00] /lynx-check' },
+      {
+        sessionKey: 'sess-run-store-first',
+        subsystem: 'plugins',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-run-store-first',
+        sendMessage,
+      },
+    );
+
+    const runIntent = readLatestPendingLynxCheckRunIntent('sess-run-store-first');
+    expect(runIntent).toBeTruthy();
+
+    writeLynxCheckRunResult(runIntent!.requestId, {
+      status: 'completed',
+      sendAttempted: true,
+      sendSucceeded: true,
+      transport: 'inline-message',
+      reportPath: getLynxCheckRunReportPath(runIntent!.requestId),
+    });
+
+    mkdirSync(join(openclawHome, '.openclaw'), { recursive: true });
+    writeFileSync(pendingDiscoveryPath, 'legacy discovery output', 'utf8');
+
+    await agentEnd(
+      {
+        messages: [
+          { role: 'assistant', content: [{ type: 'text', text: '# unrelated completion marker' }] },
+        ],
+      },
+      {
+        sessionKey: 'sess-run-store-first',
+        subsystem: 'plugins',
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+        senderId: 'sender-run-store-first',
+        sendMessage,
+      },
+    );
+
+    expect(readLynxCheckRunIntent(runIntent!.requestId)?.status).toBe('completed');
+    expect(deliverySpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        tag: 'agent-end-/lynx-check-report',
+      }),
+    );
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('legacy discovery output'),
+      }),
+    );
+    expect(existsSync(pendingDiscoveryPath)).toBe(true);
+  });
+
   it('should bypass native /check and only claim /lynx-check', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
@@ -3129,7 +3226,7 @@ describe('Plugin Setup', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('should bypass bare check command', async () => {
+  it('should not auto-capture bare check text', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);

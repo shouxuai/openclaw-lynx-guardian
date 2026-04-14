@@ -244,6 +244,39 @@ def scan_script_file(script_file: Path) -> List[Dict[str, Any]]:
     return findings
 
 
+def scan_skill_markdown_file(skill_file: Path) -> List[Dict[str, Any]]:
+    """SKILL.md 是文档层，不按可执行脚本模式做恶意代码扫描。"""
+    findings = []
+
+    try:
+        with open(skill_file, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+
+        suspicious_urls = []
+        for url_pattern in SUSPICIOUS_URL_PATTERNS:
+            if re.search(url_pattern, content, re.IGNORECASE):
+                suspicious_urls.append(url_pattern)
+
+        if suspicious_urls:
+            findings.append({
+                'type': 'suspicious_url',
+                'file': str(skill_file),
+                'severity': 'medium',
+                'description': f"妫€娴嬪埌鍙枒URL: {', '.join(suspicious_urls[:3])}",
+                'details': suspicious_urls
+            })
+    except Exception as e:
+        findings.append({
+            'type': 'error',
+            'file': str(skill_file),
+            'severity': 'low',
+            'description': f"鎵弿澶辫触: {str(e)}",
+            'details': None
+        })
+
+    return findings
+
+
 def scan_skills_directory(skills_dir: Path) -> Dict[str, Any]:
     """扫描整个skills目录"""
     results = {
@@ -290,7 +323,7 @@ def scan_skills_directory(skills_dir: Path) -> Dict[str, Any]:
         if skill_file.exists():
             results['scanned_files'] += 1
             # SKILL.md通常不会包含恶意代码，但也可以扫描
-            findings = scan_script_file(skill_file)
+            findings = scan_skill_markdown_file(skill_file)
             if findings:
                 # 过滤掉不太严重的发现
                 serious_findings = [f for f in findings if f['type'] in ['malicious_pattern', 'suspicious_url']]

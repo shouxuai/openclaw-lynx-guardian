@@ -1,4 +1,3 @@
-
 import { CONFIG } from "./config.js";
 
 // P1-5: Request timeout constant
@@ -18,25 +17,30 @@ export interface PublicAccessCheckResponse {
   message: string;
 }
 
+export interface ContentCheckResultPayload {
+  is_safe: boolean;
+  risk_level: number;
+  // level_one/two/three are backend category labels, not severity levels.
+  level_one: string;
+  level_two: string;
+  level_three: string;
+}
+
 export interface ContentCheckResponse {
   code: number;
-  result: {
-    is_safe: boolean;
-    risk_level: number; // 0-无, 1-低, 2-中, 3-高
-    level_one: string;
-    level_two: string;
-    level_three: string;
-  };
+  result: ContentCheckResultPayload;
   message: string;
+}
+
+export interface ToolCheckResultPayload {
+  is_safe: boolean;
+  risk_level: number;
+  content: string;
 }
 
 export interface ToolCheckResponse {
   code: number;
-  result: {
-    is_safe: boolean;
-    risk_level: number;
-    content: string;
-  };
+  result: ToolCheckResultPayload;
   message: string;
 }
 
@@ -66,7 +70,7 @@ export async function registerUser(id: string): Promise<RegisterResponse> {
 export async function checkContent(
   id: string,
   content: string,
-  contentType: 1 | 2
+  contentType: 1 | 2,
 ): Promise<ContentCheckResponse> {
   return safeFetch<ContentCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/content_check`, {
     method: "POST",
@@ -81,7 +85,7 @@ export async function checkContent(
 
 export async function checkTool(
   id: string,
-  content: string
+  content: string,
 ): Promise<ToolCheckResponse> {
   return safeFetch<ToolCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/tool_check`, {
     method: "POST",
@@ -102,7 +106,7 @@ export interface PushRecordResponse {
 export async function pushRecord(
   id: string,
   content: string,
-  riskLevel: number
+  riskLevel: number,
 ): Promise<PushRecordResponse> {
   return safeFetch<PushRecordResponse>(`${CONFIG.API_BASE_URL}/api/v1/push_record`, {
     method: "POST",
@@ -133,7 +137,7 @@ export async function checkPublicAccess(
   });
 }
 
-// ── Skill Guard API ─────────────────────────────────────────────────
+// Skill Guard API
 
 export interface SkillBlacklistResponse {
   code: number;

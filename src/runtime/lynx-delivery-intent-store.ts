@@ -5,7 +5,7 @@ import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers
 export interface LynxDeliveryIntent {
   id: string;
   source: "manual" | "scheduled";
-  trigger: "lynx_command" | "keyword_request";
+  trigger: "lynx_command";
   preferredTargetKind: "current" | "bound" | "recent";
   reportPath: string;
   createdAtMs: number;
@@ -43,7 +43,7 @@ function normalizeIntent(input: unknown): LynxDeliveryIntent | null {
     return null;
   }
 
-  if (trigger !== "lynx_command" && trigger !== "keyword_request") {
+  if (trigger !== "lynx_command") {
     return null;
   }
 
