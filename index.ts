@@ -69,10 +69,7 @@ import {
   formatWorkflowAuthSummary,
   normalizePolicyConfig,
 } from "./src/runtime/policy-runtime.js";
-import {
-  isManualCompositeLynxCheckRequest,
-  runDiscoveryAndNotify,
-} from "./src/discovery/discovery-hook-utils.js";
+import { isManualCompositeLynxCheckRequest } from "./src/discovery/discovery-hook-utils.js";
 import { classifyLynxCheckTrigger } from "./src/discovery/lynx-check-trigger.js";
 import {
   clearPendingDiscoveryRequest,
@@ -705,33 +702,6 @@ export default function setup(api: OpenClawPluginApi) {
       if (lynxCheckTrigger.kind === "lynx_command") {
         log.info(`[lynx-guardian] 收到手动 /lynx-check 指令，将在 before_agent_start 中直出预计算审计报告: ${text}`);
         return;
-      }
-
-      if (lynxCheckTrigger.kind === "keyword_request") {
-        log.info(`[lynx-guardian] 收到手动 OpenClaw 服务检测指令: ${text}`);
-        if (ctx.sendMessage) {
-          await ctx.sendMessage({
-            role: "assistant",
-            content: "OpenClaw 服务检测已启动，请稍候。",
-          });
-        }
-        const discoverySummary = await runDiscoveryAndNotify(
-          log,
-          ctx,
-          openClawDiscoveryConfig,
-          discoveryRuntime.path,
-        );
-        if (ctx.sendMessage) {
-          await ctx.sendMessage({
-            role: "assistant",
-            content: discoverySummary,
-          });
-        }
-        return;
-        return {
-          block: true,
-          blockReason: discoverySummary,
-        };
       }
 
       const inputFingerprint = buildOperationFingerprint({

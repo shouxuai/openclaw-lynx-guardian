@@ -3063,7 +3063,7 @@ describe('Plugin Setup', () => {
     }
   });
 
-  it('should bypass native /check and only claim /lynx-check plus keywords', async () => {
+  it('should bypass native /check and only claim /lynx-check', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -3159,7 +3159,7 @@ describe('Plugin Setup', () => {
     expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
   });
 
-  it('should capture colon-separated natural language lynx request', async () => {
+  it('should not trigger discovery for colon-separated natural language prompts', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -3169,8 +3169,8 @@ describe('Plugin Setup', () => {
       { sessionKey: 'sess-natural-colon', sendMessage },
     );
 
-    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(result).toBeUndefined();
   });
 
@@ -3187,20 +3187,6 @@ describe('Plugin Setup', () => {
     expect(result).toBeUndefined();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
-  });
-
-  it('should trigger discovery reply on chinese detection prompt', async () => {
-    setup(mockApi);
-    const handler = handlers['message_received'];
-    const sendMessage = vi.fn().mockResolvedValue(undefined);
-
-    await handler(
-      { content: 'help me check the lynx ip process' },
-      { sessionKey: 'sess-check-cn', sendMessage },
-    );
-
-    expect(discovery.discoverOpenClaw).toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it('should bypass /check when sendMessage is unavailable', async () => {
