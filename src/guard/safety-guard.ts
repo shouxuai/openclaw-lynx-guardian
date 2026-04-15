@@ -474,8 +474,17 @@ const PROTECTED_FILE_READ_PATTERNS: RegExp[] = [
 const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
   /\b(?:write|edit|modify|update|append|overwrite|rewrite|rename|move|delete|remove|rm|mv|cp|tee)\b/i,
   /sed\s+-i/i,
+  /\b(?:Remove-Item|Move-Item|Copy-Item|Rename-Item|Set-Content|Add-Content|Out-File|New-Item)\b/i,
+  /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
+  /\b(?:File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|remove_tree)\b/i,
+  /\bopen\s*\([^)]*,\s*['"][^'"]*[wa+][^'"]*['"]\)/i,
   /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)/i,
 ];
+
+const IMMUTABLE_RUNTIME_CONFIG_LABELS = new Set([
+  "openclaw.json",
+  "openclaw.plugin.json",
+]);
 
 const LYNX_PLUGIN_ROOT_PATTERNS: RegExp[] = [
   /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$)/i,
@@ -574,6 +583,33 @@ function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFi
 }
 
 // ── Credential Theft Detection (M5) ────────────────────────────────
+
+function detectImmutableRuntimeConfigWrite(protectedAccess: ProtectedFileAccessResult): boolean {
+  return protectedAccess.operation === "write"
+    && protectedAccess.matchedFiles.some((label) => IMMUTABLE_RUNTIME_CONFIG_LABELS.has(label));
+}
+
+const DISABLE_LYNX_GUARDIAN_PATTERNS: RegExp[] = [
+  /(?:禁用|停用|关闭|卸载|移除)[^\n\r]{0,40}(?:lynx[-\s]*guardian|lynx[-\s]*plugin|openclaw[-\s]*lynx[-\s]*guardian|lynx[-\s]*插件|guardian[-\s]*插件)/i,
+  /\b(?:disable|deactivate|turn\s+off|uninstall|remove)\b[^\n\r]{0,60}\b(?:lynx[-\s]*guardian|lynx[-\s]*plugin|openclaw[-\s]*lynx[-\s]*guardian)\b/i,
+  /\bopenclaw\b[^\n\r]{0,40}\b(?:extension|plugin)\b[^\n\r]{0,20}\bdisable\b[^\n\r]{0,60}\b(?:openclaw-lynx-guardian|lynx-guardian)\b/i,
+];
+
+function detectLynxGuardianDisableRequest(text: string): boolean {
+  return DISABLE_LYNX_GUARDIAN_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+const OPENCLAW_AVAILABILITY_CONTROL_PATTERNS: RegExp[] = [
+  /(?:重启|关闭|停止|关停|停掉|杀掉)[^\n\r]{0,40}(?:openclaw(?:\s*gateway)?|openclaw\s*网关|openclaw\s*gateway)/i,
+  /\b(?:restart|stop|shutdown|kill)\b[^\n\r]{0,40}\bopenclaw(?:\s+gateway)?\b/i,
+  /\bopenclaw\b[^\n\r]{0,80}\b(?:gateway\b[^\n\r]{0,20})?(?:restart|stop|shutdown|kill|down)\b/i,
+  /\bdocker(?:\s+compose)?\b[^\n\r]{0,120}\b(?:restart|stop|down|kill)\b[^\n\r]*(?:openclaw|openclaw-gateway)\b/i,
+  /\b(?:Restart-Service|Stop-Service|taskkill|pkill|killall)\b[^\n\r]*(?:openclaw|openclaw-gateway)\b/i,
+];
+
+function detectOpenClawAvailabilityControl(text: string): boolean {
+  return OPENCLAW_AVAILABILITY_CONTROL_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 const CREDENTIAL_ACCESS_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /(?:cat|less|more|head|tail|read|open)\s+.*\.env\b/i, label: "env_file_read" },
@@ -841,6 +877,18 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
       instantModules.push("M0:identity_verification");
     }
     return buildInstantDenyForModules(instantModules, "system prompt extraction");
+  }
+
+  if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
+    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+  }
+
+  if (detectLynxGuardianDisableRequest(text)) {
+    return buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian");
+  }
+
+  if (detectOpenClawAvailabilityControl(text)) {
+    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
   }
 
   // M5: 主要凭证/系统敏感文件
@@ -1219,11 +1267,24 @@ export function guardToolCall(
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
   const combined = `${command} ${filePath}`;
+  const protectedAccess = detectProtectedFileAccess(combined, toolName);
   let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
 
   // === 即时危险通道 ===
 
   // M5: 主要凭证 via tool
+  if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
+    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+  }
+
+  if (detectLynxGuardianDisableRequest(combined)) {
+    return buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian");
+  }
+
+  if (detectOpenClawAvailabilityControl(combined)) {
+    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+  }
+
   if (detectPluginIntegrityViolation(combined, toolName)) {
     return buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory");
   }
@@ -1272,7 +1333,6 @@ export function guardToolCall(
     masqueradeTaintLevel = updateExecMasqueradeState(sessionKey, "soft", masqueradeHint);
   }
 
-  const protectedAccess = detectProtectedFileAccess(combined, toolName);
   if (
     protectedAccess.matchedFiles.length > 0
     && !trustedInternalProtectedRead
@@ -1379,6 +1439,7 @@ function buildDescription(modules: string[], level: RiskLevel): string {
 
   const moduleNames: Record<string, string> = {
     "M2:plugin_integrity": "Lynx plugin integrity",
+    "M2:runtime_config_integrity": "immutable OpenClaw/Lynx config",
     "M3:remote_access_control": "SSH remote login control",
     "M3:system_availability": "system shutdown/reboot control",
     "M0:identity_verification": "身份冒充/未验证身份声明",

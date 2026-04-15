@@ -1332,6 +1332,39 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
+  it('should not open pending override flow for immutable runtime config integrity locks', async () => {
+    setup(mockApi);
+    const toolHandler = handlers['before_tool_call'];
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
+      block: true,
+      blockReason: '[Lynx Guardian] immutable config lock',
+      riskAssessment: {
+        level: 'L4',
+        score: 10,
+        modules: ['M2:runtime_config_integrity'],
+        description: 'immutable runtime config lock',
+        action: 'deny',
+      },
+    });
+
+    const event = {
+      toolName: 'write',
+      params: {
+        file_path: 'C:\\Users\\alice\\.openclaw\\openclaw.json',
+      },
+    };
+
+    const first = await toolHandler(event, { sessionKey: 'sess-immutable-config-lock' });
+    expect(first).toEqual({
+      block: true,
+      blockReason: '[Lynx Guardian] immutable config lock',
+    });
+    expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
+
+    expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
   it('should map local guard policy decisions back to legacy risk levels before pushRecord', async () => {
     setup(mockApi);
     const toolHandler = handlers['before_tool_call'];

@@ -50,6 +50,7 @@ const MODULE_OVERRIDE_ELIGIBLE: Record<string, boolean> = {
   // Potentially legitimate access by the workspace owner
   "M0:identity_verification":  true,
   "M2:protected_file_access":  true,
+  "M2:runtime_config_integrity": false,
   // Self-modification / privilege escalation — configurable, default on
   "M2:plugin_integrity":       false,
   "M3:over_agency":            false,

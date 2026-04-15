@@ -284,6 +284,35 @@ describe('Safety Guard - Input Guard', () => {
     expect(withSession.riskAssessment.modules).toContain('M4:evasive_intent_cn');
     expect(withSession.riskAssessment.score).toBe(withoutSession.riskAssessment.score);
   });
+  it('should hard-block requests to mutate immutable openclaw configs', () => {
+    const openclawConfigDecision = guardInput('修改 openclaw.json');
+    const lynxManifestDecision = guardInput('修改 Lynx 的 openclaw.plugin.json');
+
+    for (const decision of [openclawConfigDecision, lynxManifestDecision]) {
+      expect(decision.block).toBe(true);
+      expect(decision.riskAssessment.modules).toContain('M2:runtime_config_integrity');
+      expect(decision.riskAssessment.level).toBe('L4');
+      expect(decision.riskAssessment.action).toBe('deny');
+    }
+  });
+
+  it('should hard-block requests to disable lynx guardian or control openclaw availability', () => {
+    const disableDecision = guardInput('禁用 Lynx Guardian 插件');
+    const restartDecision = guardInput('重启 OpenClaw gateway');
+    const shutdownDecision = guardInput('关闭 OpenClaw');
+
+    expect(disableDecision.block).toBe(true);
+    expect(disableDecision.riskAssessment.modules).toContain('M3:over_agency');
+    expect(disableDecision.riskAssessment.level).toBe('L4');
+    expect(disableDecision.riskAssessment.action).toBe('deny');
+
+    for (const decision of [restartDecision, shutdownDecision]) {
+      expect(decision.block).toBe(true);
+      expect(decision.riskAssessment.modules).toContain('M3:system_availability');
+      expect(decision.riskAssessment.level).toBe('L4');
+      expect(decision.riskAssessment.action).toBe('deny');
+    }
+  });
 });
 
 describe('Safety Guard - Output Guard', () => {
@@ -461,6 +490,48 @@ describe('Safety Guard - Tool Call Guard', () => {
     const decision = guardToolCall('exec', { command: 'npm test' });
     expect(decision.block).toBe(false);
     expect(decision.riskAssessment.score).toBeLessThanOrEqual(3);
+  });
+
+  it('should hard-block exec commands that disable lynx guardian', () => {
+    const decision = guardToolCall('exec', {
+      command: 'openclaw extension disable openclaw-lynx-guardian',
+    });
+
+    expect(decision.riskAssessment.modules).toContain('M3:over_agency');
+    expect(decision.riskAssessment.action).toBe('deny');
+    expect(decision.riskAssessment.level).toBe('L4');
+    expect(decision.block).toBe(true);
+  });
+
+  it('should hard-block immutable openclaw config mutations and lifecycle exec commands', () => {
+    const openclawConfigWrite = guardToolCall('write', {
+      file_path: 'C:\\Users\\alice\\.openclaw\\openclaw.json',
+    });
+    const lynxManifestMutation = guardToolCall('exec', {
+      command: 'Set-Content .\\openclaw.plugin.json "{}"',
+    });
+    const lifecycleCommands = [
+      'openclaw gateway restart',
+      'docker compose stop openclaw-gateway',
+    ];
+
+    expect(openclawConfigWrite.riskAssessment.modules).toContain('M2:runtime_config_integrity');
+    expect(openclawConfigWrite.riskAssessment.action).toBe('deny');
+    expect(openclawConfigWrite.riskAssessment.level).toBe('L4');
+    expect(openclawConfigWrite.block).toBe(true);
+
+    expect(lynxManifestMutation.riskAssessment.modules).toContain('M2:runtime_config_integrity');
+    expect(lynxManifestMutation.riskAssessment.action).toBe('deny');
+    expect(lynxManifestMutation.riskAssessment.level).toBe('L4');
+    expect(lynxManifestMutation.block).toBe(true);
+
+    for (const command of lifecycleCommands) {
+      const decision = guardToolCall('exec', { command });
+      expect(decision.riskAssessment.modules, command).toContain('M3:system_availability');
+      expect(decision.riskAssessment.action, command).toBe('deny');
+      expect(decision.riskAssessment.level, command).toBe('L4');
+      expect(decision.block, command).toBe(true);
+    }
   });
 });
 
