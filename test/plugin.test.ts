@@ -24,6 +24,7 @@ import {
   clearRequesterProvenanceStore,
   readRequesterProvenance,
 } from '../src/runtime/requester-provenance-store.js';
+import { clearLocalToolApprovals } from '../src/runtime/local-tool-approval-store.js';
 import {
   clearRunApprovalContexts,
   readRunApprovalContext,
@@ -139,6 +140,7 @@ describe('Plugin Setup', () => {
     }
     clearManagedLynxCheckAuthorization();
     clearRequesterProvenanceStore();
+    clearLocalToolApprovals();
     clearRunApprovalContexts();
     clearApprovalGrants();
     clearPendingToolApprovals();
@@ -337,6 +339,42 @@ describe('Plugin Setup', () => {
       requesterId: 'ou_owner',
       requesterOuId: 'ou_owner',
       conversationId: 'chat-group-1',
+      isGroup: true,
+    });
+  });
+
+  it('captures Feishu requester ou_id from senderOpenId fallback in before_dispatch', async () => {
+    setup(mockApi);
+    const handler = handlers['before_dispatch'];
+    const now = Date.now();
+
+    await handler(
+      {
+        content: '请帮我安装 openssh-server',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-group-openid',
+        senderId: 'u_mobile_only',
+        senderOpenId: 'ou_owner',
+        isGroup: true,
+        timestamp: now,
+      },
+      {
+        sessionKey: 'sess-feishu-group-openid',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-group-openid',
+      },
+    );
+
+    expect(
+      readRequesterProvenance({
+        sessionKey: 'sess-feishu-group-openid',
+        channelId: 'feishu',
+      }),
+    ).toMatchObject({
+      requesterId: 'u_mobile_only',
+      requesterOuId: 'ou_owner',
+      conversationId: 'chat-group-openid',
       isGroup: true,
     });
   });
@@ -994,6 +1032,270 @@ describe('Plugin Setup', () => {
     });
 
     expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
+  it('should allow Feishu manual approval reply from configured owner ou_id', async () => {
+    mockApi.config = {
+      selfSafetyGuard: {
+        policy: {
+          toolApprovalTimeoutSeconds: 90,
+          grantWindowSeconds: 180,
+          localApprovalApproverOuIds: ['ou_owner'],
+        },
+      },
+    };
+    setup(mockApi);
+    await handlers['before_dispatch'](
+      {
+        content: 'read protected config',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-manual-approval',
+        senderId: 'ou_requester',
+        isGroup: true,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-feishu-manual-approval',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-feishu-manual-approval',
+      },
+    );
+    await handlers['before_agent_start'](
+      { prompt: 'read protected config' },
+      {
+        sessionKey: 'sess-feishu-manual-approval',
+        channelId: 'feishu',
+        runId: 'run-feishu-manual-approval',
+      },
+    );
+
+    const toolHandler = handlers['before_tool_call'];
+    const messageHandler = handlers['message_received'];
+    const promptSendMessage = vi.fn().mockResolvedValue(undefined);
+    const replySendMessage = vi.fn().mockResolvedValue(undefined);
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall');
+    guardSpy
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L3',
+          score: 8,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any)
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L2',
+          score: 6,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any);
+
+    const firstEvent = {
+      toolName: 'read',
+      params: { file_path: 'README.md' },
+      runId: 'run-feishu-manual-approval',
+      toolCallId: 'tool-feishu-manual-1',
+    };
+
+    const first = await toolHandler(firstEvent, {
+      sessionKey: 'sess-feishu-manual-approval',
+      channelId: 'feishu',
+      runId: 'run-feishu-manual-approval',
+      senderId: 'ou_requester',
+      sendMessage: promptSendMessage,
+    });
+    expect(first).toMatchObject({
+      requireApproval: {
+        title: expect.stringContaining('Lynx Guardian'),
+      },
+    });
+
+    const promptText = String(promptSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
+    expect(promptText).toContain('/lynx-approve');
+    const token = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
+    expect(token).toBeTruthy();
+
+    const reply = await messageHandler(
+      { content: `/lynx-approve ${token} allow-once` },
+      {
+        sessionKey: 'sess-feishu-manual-approval',
+        channelId: 'feishu',
+        senderId: 'ou_owner',
+        sendMessage: replySendMessage,
+      },
+    );
+    expect(reply).toBeUndefined();
+    expect(replySendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('已批准'),
+      }),
+    );
+
+    const second = await toolHandler(
+      {
+        ...firstEvent,
+        params: { file_path: '/etc/hosts' },
+        toolCallId: 'tool-feishu-manual-2',
+      },
+      {
+        sessionKey: 'sess-feishu-manual-approval',
+        channelId: 'feishu',
+        runId: 'run-feishu-manual-approval',
+      },
+    );
+    expect(second).toBeUndefined();
+
+    expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
+  it('should reject Feishu manual approval reply from non-approver requester ou_id', async () => {
+    mockApi.config = {
+      selfSafetyGuard: {
+        policy: {
+          toolApprovalTimeoutSeconds: 90,
+          grantWindowSeconds: 180,
+          localApprovalApproverOuIds: ['ou_owner'],
+        },
+      },
+    };
+    setup(mockApi);
+    await handlers['before_dispatch'](
+      {
+        content: 'read protected config',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-ou-check',
+        senderId: 'ou_requester',
+        isGroup: true,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-feishu-ou-check',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-feishu-ou-check',
+      },
+    );
+    await handlers['before_agent_start'](
+      { prompt: 'read protected config' },
+      {
+        sessionKey: 'sess-feishu-ou-check',
+        channelId: 'feishu',
+        runId: 'run-feishu-ou-check',
+      },
+    );
+
+    const toolHandler = handlers['before_tool_call'];
+    const messageHandler = handlers['message_received'];
+    const promptSendMessage = vi.fn().mockResolvedValue(undefined);
+    const wrongReplySendMessage = vi.fn().mockResolvedValue(undefined);
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall');
+    guardSpy
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L3',
+          score: 8,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any)
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L3',
+          score: 8,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any);
+
+    const firstEvent = {
+      toolName: 'read',
+      params: { file_path: 'README.md' },
+      runId: 'run-feishu-ou-check',
+      toolCallId: 'tool-feishu-ou-1',
+    };
+
+    const first = await toolHandler(firstEvent, {
+      sessionKey: 'sess-feishu-ou-check',
+      channelId: 'feishu',
+      runId: 'run-feishu-ou-check',
+      senderId: 'ou_requester',
+      sendMessage: promptSendMessage,
+    });
+    expect(first).toMatchObject({
+      requireApproval: {
+        title: expect.stringContaining('Lynx Guardian'),
+      },
+    });
+
+    const promptText = String(promptSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
+    const token = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
+    expect(token).toBeTruthy();
+
+    const wrongReply = await messageHandler(
+      { content: `/lynx-approve ${token} allow-once` },
+      {
+        sessionKey: 'sess-feishu-ou-check',
+        channelId: 'feishu',
+        senderId: 'ou_requester',
+        sendMessage: wrongReplySendMessage,
+      },
+    );
+    expect(wrongReply).toBeUndefined();
+    expect(wrongReplySendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('owner'),
+      }),
+    );
+
+    let secondSettled = false;
+    const secondPromise = toolHandler(
+      {
+        ...firstEvent,
+        toolCallId: 'tool-feishu-ou-2',
+      },
+      {
+        sessionKey: 'sess-feishu-ou-check',
+        channelId: 'feishu',
+        runId: 'run-feishu-ou-check',
+      },
+    ).then((value: unknown) => {
+      secondSettled = true;
+      return value;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    const ownerReplySendMessage = vi.fn().mockResolvedValue(undefined);
+    await messageHandler(
+      { content: `/lynx-approve ${token} deny` },
+      {
+        sessionKey: 'sess-feishu-ou-check',
+        channelId: 'feishu',
+        senderId: 'ou_owner',
+        sendMessage: ownerReplySendMessage,
+      },
+    );
+    await secondPromise;
+
     guardSpy.mockRestore();
   });
 

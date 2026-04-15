@@ -81,6 +81,11 @@
                 "default": 180,
                 "description": "Seconds that same-run, same-module, same-or-lower-risk tool calls may continue after approval"
               },
+              "localApprovalApproverOuIds": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Feishu ou_id allowlist for Lynx local chat approval replies. When empty, local reply approval is disabled and only native OpenClaw approval remains."
+              },
               "confirmationPhrase": {
                 "type": "string",
                 "default": "确认放行本次操作",

@@ -54,6 +54,9 @@ describe("resolvePluginRuntimeConfig", () => {
         ownerVerification: {
           trustedUserIds: ["owner-1"],
         },
+        policy: {
+          localApprovalApproverOuIds: ["ou_owner"],
+        },
       },
     });
 
@@ -76,6 +79,11 @@ describe("resolvePluginRuntimeConfig", () => {
       expect.objectContaining({
         enabled: true,
         trustedUserIds: ["owner-1"],
+      }),
+    );
+    expect(result.selfSafetyGuard?.policy).toEqual(
+      expect.objectContaining({
+        localApprovalApproverOuIds: ["ou_owner"],
       }),
     );
   });

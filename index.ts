@@ -1,6 +1,10 @@
 import { join } from "path";
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
-import type { LynxReportDeliveryAttempt, OpenClawPluginApi } from "./src/types.js";
+import type {
+  LynxReportDeliveryAttempt,
+  OpenClawPluginApi,
+  ToolApprovalResolution,
+} from "./src/types.js";
 import {
   ensureUserRegistered,
   readRecentContext,
@@ -48,6 +52,11 @@ import {
   toApprovalRiskLevel,
 } from "./src/runtime/tool-approval-runtime.js";
 import { getOrCreatePendingToolApproval } from "./src/runtime/pending-tool-approval-store.js";
+import {
+  listLocalToolApprovalsForSession,
+  readLocalToolApprovalByToken,
+  registerLocalToolApproval,
+} from "./src/runtime/local-tool-approval-store.js";
 import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skills/skill-guard.js";
 import { quarantineSkill } from "./src/skills/skill-cleanup.js";
 import type { MaliciousSkillEntry } from "./src/skills/skill-blacklist-data.js";
@@ -212,6 +221,61 @@ function resolveManagedLynxCheckCommandText(event: any): string {
   return "";
 }
 
+const LOCAL_TOOL_APPROVAL_COMMAND = "/lynx-approve";
+
+function normalizeOuId(value: unknown): string | undefined {
+  const normalized = normalizeString(value).toLowerCase();
+  if (!normalized.startsWith("ou_")) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function normalizeOuIdList(values: unknown): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const normalized = values
+    .map((value) => normalizeOuId(value))
+    .filter((value): value is string => Boolean(value));
+
+  return [...new Set(normalized)];
+}
+
+function resolveActorOuId(event: any, ctx: any): string | undefined {
+  return normalizeOuId(
+    event?.sender?.sender_id?.open_id
+    ?? event?.sender?.id
+    ?? event?.senderOpenId
+    ?? event?.senderId
+    ?? event?.SenderId
+    ?? event?.userId
+    ?? ctx?.senderOpenId
+    ?? ctx?.senderId
+    ?? ctx?.SenderId
+    ?? ctx?.userId,
+  );
+}
+
+function parseLocalToolApprovalReply(text: string): {
+  token?: string;
+  resolution: Extract<ToolApprovalResolution, "allow-once" | "deny">;
+} | null {
+  const normalized = stripBracketPrefixedEnvelope(text);
+  const match = normalized.match(
+    /^\/lynx-approve(?:\s+([a-z0-9]+))?\s+(allow-once|deny)$/i,
+  );
+  if (!match) {
+    return null;
+  }
+
+  return {
+    token: match[1]?.toLowerCase(),
+    resolution: match[2].toLowerCase() as Extract<ToolApprovalResolution, "allow-once" | "deny">,
+  };
+}
+
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
   log.info("[lynx-guardian] Plugin loading...");
@@ -220,6 +284,13 @@ export default function setup(api: OpenClawPluginApi) {
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const outputEnforcementMode = selfSafetyGuardConfig.outputEnforcementMode ?? "block";
   const riskPolicyConfig = normalizePolicyConfig((selfSafetyGuardConfig as any).policy ?? {});
+  const localApprovalApproverOuIds = (() => {
+    const explicitApprovers = normalizeOuIdList((selfSafetyGuardConfig as any)?.policy?.localApprovalApproverOuIds);
+    if (explicitApprovers.length > 0) {
+      return explicitApprovers;
+    }
+    return normalizeOuIdList((selfSafetyGuardConfig as any)?.ownerVerification?.trustedUserIds);
+  })();
   const securityAuditConfig = config.securityAudit ?? {};
   const skillGuardConfig = config.skillGuard ?? {};
   const tokenOptimizerConfig = config.tokenOptimizer ?? {};
@@ -318,6 +389,128 @@ export default function setup(api: OpenClawPluginApi) {
     } catch (err: any) {
       log.warn(`[lynx-guardian] Failed to send hook feedback: ${err.message}`);
     }
+  }
+
+  function shouldOfferFeishuLocalToolApproval(ctx: any, approverOuIds: string[]): boolean {
+    const channelId = normalizeString(ctx?.channelId ?? ctx?.channel).toLowerCase();
+    return channelId === "feishu" && approverOuIds.length > 0;
+  }
+
+  function canActorResolveLocalToolApproval(actorOuId: string, approval: {
+    approverOuIds?: string[];
+    requesterOuId?: string;
+  }): boolean {
+    if (approval.approverOuIds && approval.approverOuIds.length > 0) {
+      return approval.approverOuIds.includes(actorOuId);
+    }
+    return Boolean(approval.requesterOuId) && approval.requesterOuId === actorOuId;
+  }
+
+  function buildLocalToolApprovalReplyPrompt(params: {
+    approvalToken: string;
+    module: string;
+    riskLevel: string;
+    toolName: string;
+    timeoutMs: number;
+    approverOuIds: string[];
+  }): string {
+    const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
+    const approverLabel = params.approverOuIds.length === 1
+      ? params.approverOuIds[0]
+      : `${params.approverOuIds.length} 个 owner/approver`;
+    return [
+      `[Lynx Guardian] ${params.toolName} 已进入本地审批窗口。`,
+      `模块: ${params.module}`,
+      `风险: ${params.riskLevel}`,
+      `审批人: ${approverLabel}`,
+      `请在 ${timeoutSeconds}s 内回复以下命令之一:`,
+      `${LOCAL_TOOL_APPROVAL_COMMAND} ${params.approvalToken} allow-once`,
+      `${LOCAL_TOOL_APPROVAL_COMMAND} ${params.approvalToken} deny`,
+      "仅接受配置的 owner/approver ou_id 审批回复，群里其他人的消息不会消费这次审批。",
+    ].join("\n");
+  }
+
+  async function prepareToolApprovalHandlers(params: {
+    ctx: any;
+    runId?: string;
+    requesterOuId?: string;
+    conversationId?: string;
+    approverOuIds: string[];
+    approvalId: string;
+    toolName: string;
+    module: string;
+    riskLevel: "L2" | "L3";
+    timeoutMs: number;
+    grantWindowMs: number;
+    pendingApproval?: {
+      pending?: {
+        settle: (resolution: ToolApprovalResolution) => void;
+      };
+    };
+  }): Promise<{
+    resolveApproval: (resolution: ToolApprovalResolution) => void;
+  }> {
+    let resolved = false;
+    const resolveApproval = (resolution: ToolApprovalResolution) => {
+      if (resolved) {
+        return;
+      }
+
+      resolved = true;
+      params.pendingApproval?.pending?.settle(resolution);
+      persistGrantFromApproval({
+        decision: resolution,
+        approvalId: params.approvalId,
+        runId: params.runId,
+        requesterOuId: params.requesterOuId,
+        module: params.module,
+        riskLevel: params.riskLevel,
+        grantWindowMs: params.grantWindowMs,
+      });
+    };
+
+    if (!shouldOfferFeishuLocalToolApproval(params.ctx, params.approverOuIds)) {
+      return { resolveApproval };
+    }
+
+    const localApproval = registerLocalToolApproval({
+      pendingId: params.approvalId,
+      runId: params.runId,
+      sessionKey: normalizeString(params.ctx?.sessionKey) || undefined,
+      channelId: normalizeString(params.ctx?.channelId ?? params.ctx?.channel) || undefined,
+      requesterOuId: params.requesterOuId,
+      approverOuIds: params.approverOuIds,
+      conversationId: params.conversationId,
+      module: params.module,
+      riskLevel: params.riskLevel,
+      toolName: params.toolName,
+      timeoutMs: params.timeoutMs,
+      onResolution: resolveApproval,
+    });
+
+    if (localApproval.created && localApproval.approval) {
+      await sendHookFeedback(
+        params.ctx,
+        buildLocalToolApprovalReplyPrompt({
+          approvalToken: localApproval.approval.approvalToken,
+          module: params.module,
+          riskLevel: params.riskLevel,
+          toolName: params.toolName,
+          timeoutMs: params.timeoutMs,
+          approverOuIds: params.approverOuIds,
+        }),
+      );
+    }
+
+    if (localApproval.approval) {
+      return {
+        resolveApproval: (resolution) => {
+          localApproval.approval?.resolve(resolution);
+        },
+      };
+    }
+
+    return { resolveApproval };
   }
 
   async function sendAssistantMessageWithRetry(options: {
@@ -666,14 +859,25 @@ export default function setup(api: OpenClawPluginApi) {
   });
 
   api.on("before_dispatch", async (event, ctx) => {
-    const senderId = normalizeString(event.senderId ?? ctx.senderId);
+    const dispatchEvent = event as any;
+    const dispatchCtx = ctx as any;
+    const requesterOuId = resolveActorOuId(dispatchEvent, dispatchCtx);
+    const senderId = normalizeString(
+      dispatchEvent.senderId
+      ?? dispatchEvent.senderOpenId
+      ?? dispatchEvent.SenderId
+      ?? dispatchCtx.senderId
+      ?? dispatchCtx.senderOpenId
+      ?? dispatchCtx.SenderId
+      ?? requesterOuId,
+    );
     const normalizedSender = senderId?.toLowerCase();
 
     rememberRequesterProvenance({
       sessionKey: normalizeString(ctx.sessionKey ?? event.sessionKey) || undefined,
       channelId: normalizeString(ctx.channelId ?? event.channel) || undefined,
-      requesterId: normalizedSender,
-      requesterOuId: normalizedSender?.startsWith("ou_") ? normalizedSender : undefined,
+      requesterId: normalizedSender ?? requesterOuId,
+      requesterOuId,
       accountId: normalizeString(ctx.accountId) || undefined,
       conversationId: normalizeString(ctx.conversationId) || undefined,
       threadId: ctx.threadId ?? undefined,
@@ -707,6 +911,62 @@ export default function setup(api: OpenClawPluginApi) {
 
       if (lynxCheckTrigger.kind === "lynx_command") {
         log.info(`[lynx-guardian] Manual /lynx-check will be handled in before_agent_start: ${text}`);
+        return;
+      }
+
+      const localApprovalReply = parseLocalToolApprovalReply(text);
+      if (localApprovalReply) {
+        const sessionKey = normalizeString(ctx.sessionKey) || undefined;
+        const actorOuId = resolveActorOuId(event, ctx);
+        if (!actorOuId) {
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前审批只接受带 ou_id 的飞书回复。");
+          return;
+        }
+
+        let localApproval = localApprovalReply.token
+          ? readLocalToolApprovalByToken(localApprovalReply.token)
+          : undefined;
+
+        if (!localApproval) {
+          const candidates = listLocalToolApprovalsForSession({
+            sessionKey,
+          });
+          if (!localApprovalReply.token && candidates.length === 1) {
+            [localApproval] = candidates;
+          } else if (!localApprovalReply.token && candidates.length > 1) {
+            await sendHookFeedback(
+              ctx,
+              `[Lynx Guardian] 当前有多个待审批操作，请使用完整命令：${LOCAL_TOOL_APPROVAL_COMMAND} <token> allow-once|deny`,
+            );
+            return;
+          }
+        }
+
+        if (!localApproval) {
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待审批操作或审批已过期。");
+          return;
+        }
+
+        if (localApproval.sessionKey && sessionKey && localApproval.sessionKey !== sessionKey) {
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待审批操作或审批已过期。");
+          return;
+        }
+
+        if (!canActorResolveLocalToolApproval(actorOuId, localApproval)) {
+          await sendHookFeedback(
+            ctx,
+            "[Lynx Guardian] 当前回复的 ou_id 不在本地审批 owner/approver 列表中，无法批准这次操作。",
+          );
+          return;
+        }
+
+        localApproval.resolve(localApprovalReply.resolution);
+        await sendHookFeedback(
+          ctx,
+          localApprovalReply.resolution === "deny"
+            ? "[Lynx Guardian] 已拒绝本次操作。"
+            : "[Lynx Guardian] 已批准本次操作，原工具调用将继续执行。",
+        );
         return;
       }
 
@@ -1669,6 +1929,20 @@ export default function setup(api: OpenClawPluginApi) {
             }
             return { block: true, blockReason: "Approval timed out" };
           }
+          const { resolveApproval } = await prepareToolApprovalHandlers({
+            ctx,
+            runId: ctx.runId,
+            requesterOuId: runApprovalContext?.requesterOuId,
+            conversationId: runApprovalContext?.conversationId,
+            approverOuIds: localApprovalApproverOuIds,
+            approvalId,
+            toolName,
+            module: primaryModule,
+            riskLevel: approvalRiskLevel,
+            timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+            grantWindowMs: riskPolicyConfig.grantWindowMs,
+            pendingApproval,
+          });
           return {
             requireApproval: buildToolApprovalRequest({
               toolName,
@@ -1676,18 +1950,7 @@ export default function setup(api: OpenClawPluginApi) {
               riskLevel: approvalRiskLevel,
               description: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
               timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
-              onResolution: (resolution) => {
-                pendingApproval?.pending?.settle(resolution);
-                persistGrantFromApproval({
-                  decision: resolution,
-                  approvalId,
-                  runId: ctx.runId,
-                  requesterOuId: runApprovalContext?.requesterOuId,
-                  module: primaryModule,
-                  riskLevel: approvalRiskLevel,
-                  grantWindowMs: riskPolicyConfig.grantWindowMs,
-                });
-              },
+              onResolution: resolveApproval,
             }),
           };
         }
@@ -1957,6 +2220,20 @@ export default function setup(api: OpenClawPluginApi) {
             }
             return { block: true, blockReason: "Approval timed out" };
           }
+          const { resolveApproval } = await prepareToolApprovalHandlers({
+            ctx,
+            runId: ctx.runId,
+            requesterOuId: runApprovalContext?.requesterOuId,
+            conversationId: runApprovalContext?.conversationId,
+            approverOuIds: localApprovalApproverOuIds,
+            approvalId,
+            toolName,
+            module: primaryModule,
+            riskLevel: approvalRiskLevel,
+            timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+            grantWindowMs: riskPolicyConfig.grantWindowMs,
+            pendingApproval,
+          });
           return {
             requireApproval: buildToolApprovalRequest({
               toolName,
@@ -1964,18 +2241,7 @@ export default function setup(api: OpenClawPluginApi) {
               riskLevel: approvalRiskLevel,
               description: `[Lynx Guardian] Risk Level ${riskLevel}: ${match.reason}`,
               timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
-              onResolution: (resolution) => {
-                pendingApproval?.pending?.settle(resolution);
-                persistGrantFromApproval({
-                  decision: resolution,
-                  approvalId,
-                  runId: ctx.runId,
-                  requesterOuId: runApprovalContext?.requesterOuId,
-                  module: primaryModule,
-                  riskLevel: approvalRiskLevel,
-                  grantWindowMs: riskPolicyConfig.grantWindowMs,
-                });
-              },
+              onResolution: resolveApproval,
             }),
           };
         }

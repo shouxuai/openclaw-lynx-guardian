@@ -26,6 +26,7 @@ export interface PluginConfig {
       absoluteRejectScore?: number;
       confirmationPhrase?: string;
       allowOneTimeOverrideLevels?: Array<"L2" | "L3" | "L4">;
+      localApprovalApproverOuIds?: string[];
       moduleOverrides?: {
         M2?: {
           protectedFileAccess?: { allowOneTimeOverride?: boolean };
