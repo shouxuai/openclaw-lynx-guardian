@@ -9,6 +9,7 @@
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
 import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
+import { SensitiveDataBlocker } from "./sensitive.js";
 import {
   findObfuscatedLynxPluginPath,
   findObfuscatedProtectedReferenceLabels,
@@ -1066,10 +1067,23 @@ const SECRET_VALUE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/, label: "private_key" },
 ];
 
+const outputSensitiveDataBlocker = new SensitiveDataBlocker();
+
 function detectSecretsInOutput(text: string): string[] {
   return SECRET_VALUE_PATTERNS
     .filter(({ pattern }) => pattern.test(text))
     .map(({ label }) => label);
+}
+
+function detectPersonalFinancialDataInOutput(text: string): string[] {
+  return Array.from(
+    new Set(
+      outputSensitiveDataBlocker
+        .findSensitiveData(text, { includePersonalFinancial: true })
+        .map((match) => match.type)
+        .filter((type) => type === "cn_resident_id" || type === "bank_card"),
+    ),
+  );
 }
 
 // ── Public API: Output Guard ───────────────────────────────────────
@@ -1105,6 +1119,16 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
     modules.push("M5:secrets_in_output");
     pushDim(accum, "harm", 3);
     pushDim(accum, "rev", 2);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
+  }
+
+  const personalFinancialData = detectPersonalFinancialDataInOutput(output);
+  if (personalFinancialData.length > 0) {
+    modules.push("M5:pii_in_output");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", 1);
     pushDim(accum, "auth", 2);
     pushDim(accum, "pattern", 2);
     pushDim(accum, "clarity", 2);

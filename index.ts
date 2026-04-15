@@ -13,7 +13,7 @@ import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import type { CheckExecBlacklistContext } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
-import { guardAssistantPersistence, guardToolResultPersistence } from "./src/guard/result-guard.js";
+import { guardAssistantPersistence, guardOutputText, guardToolResultPersistence } from "./src/guard/result-guard.js";
 import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
@@ -218,6 +218,7 @@ export default function setup(api: OpenClawPluginApi) {
   const sensitiveDataBlocker = new SensitiveDataBlocker();
   const config = resolvePluginRuntimeConfig(api.config, log);
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
+  const outputEnforcementMode = selfSafetyGuardConfig.outputEnforcementMode ?? "block";
   const riskPolicyConfig = normalizePolicyConfig((selfSafetyGuardConfig as any).policy ?? {});
   const securityAuditConfig = config.securityAudit ?? {};
   const skillGuardConfig = config.skillGuard ?? {};
@@ -1391,7 +1392,32 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian]📌,Output risk detected: ${JSON.stringify(decision)}`);
         if (decision.block) {
           const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
+          const enforcement = guardOutputText(output, ctx.sessionKey, {
+            ...guardContext,
+            enforcementMode: outputEnforcementMode,
+          }, {
+            subject: "assistant output",
+          });
+          if (enforcement.warning) {
+            log.warn(`[lynx-guardian] Output guard diagnostic: ${enforcement.warning}`);
+          }
+          if (enforcement.changed) {
+            redactAgentOutput(event, enforcement.content);
+          }
+          try {
+            await pushRecord(
+              userId,
+              buildPolicyRecordContent(
+                policyEvaluation,
+                `[SSG:output] ${decision.riskAssessment.modules.join(",")}`,
+              ),
+              policyEvaluation.legacyRiskLevel,
+            );
+          } catch {
+
+          }
+          return;
+            log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
           redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险");
           try {
             await pushRecord(
@@ -1454,7 +1480,13 @@ export default function setup(api: OpenClawPluginApi) {
 
       if (selfSafetyGuardConfig.outputGuard !== false && nextMessage.role === "assistant") {
         const { guardContext } = buildManagedGuardContext({ message: nextMessage }, ctx);
-        const persistenceDecision = guardAssistantPersistence(nextMessage, guardContext);
+        const persistenceDecision = guardAssistantPersistence(nextMessage, {
+          ...guardContext,
+          enforcementMode: outputEnforcementMode,
+        });
+        if (persistenceDecision.warning) {
+          log.warn(`[lynx-guardian] Assistant persistence guard diagnostic: ${persistenceDecision.warning}`);
+        }
         if (persistenceDecision.block) {
           return {
             message: persistenceDecision.message,
@@ -1476,7 +1508,13 @@ export default function setup(api: OpenClawPluginApi) {
     appendLifecycleProbe("tool_result_persist", event, ctx);
     if (selfSafetyGuardConfig.resultGuard === false) return;
     const { guardContext } = buildManagedGuardContext(event, ctx);
-    const decision = guardToolResultPersistence(event.toolName, event.message, guardContext);
+    const decision = guardToolResultPersistence(event.toolName, event.message, {
+      ...guardContext,
+      enforcementMode: outputEnforcementMode,
+    });
+    if (decision.warning) {
+      log.warn(`[lynx-guardian] Tool result guard diagnostic: ${decision.warning}`);
+    }
     if (!decision.block) return;
     return {
       message: decision.message,
@@ -1511,9 +1549,17 @@ export default function setup(api: OpenClawPluginApi) {
       return shapedContent ? { content: shapedContent } : undefined;
     }
     const { guardContext } = buildManagedGuardContext(event, ctx);
-    const decision = guardOutput(event.content, ctx.sessionKey, guardContext);
-    if (decision.block) {
-      return { cancel: true };
+    const enforcement = guardOutputText(event.content, ctx.sessionKey, {
+      ...guardContext,
+      enforcementMode: outputEnforcementMode,
+    }, {
+      subject: "outbound message",
+    });
+    if (enforcement.warning) {
+      log.warn(`[lynx-guardian] Outbound guard diagnostic: ${enforcement.warning}`);
+    }
+    if (enforcement.changed) {
+      return { content: enforcement.content };
     }
     return shapedContent ? { content: shapedContent } : undefined;
   });

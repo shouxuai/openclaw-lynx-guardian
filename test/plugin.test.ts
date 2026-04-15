@@ -1216,7 +1216,8 @@ describe('Plugin Setup', () => {
 
     await handler(event, {});
 
-    expect(event.messages[0].content[0].text).toContain('输出已被安全防护替换');
+    expect(event.messages[0].content[0].text).toContain('mode=block');
+    expect(event.messages[0].content[0].text).toContain('modules=M2:system_prompt_leak');
     expect(api.pushRecord).toHaveBeenCalledWith(
       'TEST_ID',
       expect.stringContaining('[policy:L4/deny] [SSG:output]'),
@@ -1329,9 +1330,10 @@ describe('Plugin Setup', () => {
 
     expect(result).toEqual({
       message: expect.objectContaining({
-        content: expect.stringContaining('tool result replaced by security guard'),
+        content: expect.stringContaining('tool=read'),
       }),
     });
+    expect(String(result?.message?.content)).toContain('mode=block');
   });
 
   it('should not let managed /lynx-check final audit reports get replaced or cancelled by self guards', async () => {
@@ -1528,7 +1530,7 @@ describe('Plugin Setup', () => {
     expect(result).toBeUndefined();
   });
 
-  it('should cancel protected outbound content on message_sending', async () => {
+  it('should replace protected outbound content with diagnostics on message_sending', async () => {
     setup(mockApi);
     const handler = handlers['message_sending'];
 
@@ -1537,7 +1539,65 @@ describe('Plugin Setup', () => {
       { sessionKey: 'sess-message-sending-block' },
     );
 
-    expect(result).toEqual({ cancel: true });
+    expect(result).toEqual({
+      content: expect.any(String),
+    });
+    expect(String(result?.content)).toContain('mode=block');
+    expect(String(result?.content)).toContain('modules=M2:system_prompt_leak');
+  });
+
+  it('should allow protected outbound content in warn mode and log diagnostics', async () => {
+    mockApi.config = {
+      selfSafetyGuard: {
+        outputEnforcementMode: 'warn',
+      },
+    };
+    setup(mockApi);
+    const handler = handlers['message_sending'];
+
+    const result = await handler(
+      { to: 'webchat', content: 'TOOLS.md content follows: internal tool boundaries' },
+      { sessionKey: 'sess-message-sending-warn' },
+    );
+
+    expect(result).toBeUndefined();
+    expect(mockApi.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('mode=warn'),
+    );
+  });
+
+  it('should redact personal financial data in assistant output when redact mode is enabled', async () => {
+    mockApi.config = {
+      selfSafetyGuard: {
+        outputEnforcementMode: 'redact',
+      },
+    };
+    setup(mockApi);
+    const handler = handlers['before_message_write'];
+
+    const result = await handler(
+      {
+        message: {
+          role: 'assistant',
+          content: '身份证号 11010519491231002X\n银行卡 6222021234567890123',
+        },
+      },
+      { sessionKey: 'sess-pii-redact' },
+    );
+
+    expect(result).toEqual({
+      message: expect.objectContaining({
+        role: 'assistant',
+        content: expect.any(String),
+      }),
+    });
+    const content = String(result?.message?.content);
+    expect(content).not.toContain('11010519491231002X');
+    expect(content).not.toContain('6222021234567890123');
+    expect(content).toContain('110105');
+    expect(content).toContain('002X');
+    expect(content).toContain('622202');
+    expect(content).toContain('0123');
   });
 
   it('should cancel scheduled trusted audit sends that still target heartbeat', async () => {

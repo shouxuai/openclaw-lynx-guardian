@@ -16,6 +16,7 @@ export interface PluginConfig {
     outputGuard?: boolean;
     toolGuard?: boolean;
     resultGuard?: boolean;
+    outputEnforcementMode?: "warn" | "redact" | "block";
     ownerVerification?: {
       enabled?: boolean;
       trustedUserIds?: string[];

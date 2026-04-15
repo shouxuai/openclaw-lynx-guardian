@@ -308,7 +308,8 @@ describe('Safety Guard - Result Persistence Guard', () => {
     });
 
     expect(decision.block).toBe(true);
-    expect(String(decision.message?.content)).toContain('tool result replaced by security guard');
+    expect(String(decision.message?.content)).toContain('tool=read');
+    expect(String(decision.message?.content)).toContain('mode=block');
   });
 
   it('should rewrite assistant messages that still contain leaked protected content', () => {
@@ -318,7 +319,34 @@ describe('Safety Guard - Result Persistence Guard', () => {
     });
 
     expect(decision.block).toBe(true);
-    expect(String(decision.message?.content)).toContain('assistant output replaced by security guard');
+    expect(String(decision.message?.content)).toContain('modules=M2:system_prompt_leak');
+    expect(String(decision.message?.content)).toContain('mode=block');
+  });
+
+  it('should allow tool results that only mention protected filenames without leaked content', () => {
+    const decision = guardToolResultPersistence('read', {
+      role: 'tool',
+      content: 'Referenced files: TOOLS.md, README.md',
+    });
+
+    expect(decision.block).toBe(false);
+    expect(String(decision.message?.content)).toContain('Referenced files: TOOLS.md, README.md');
+  });
+
+  it('should surface diagnostics without rewriting assistant output in warn mode', () => {
+    const originalMessage = {
+      role: 'assistant',
+      content: 'TOOLS.md content follows: internal tool boundaries',
+    };
+
+    const decision = guardAssistantPersistence(originalMessage, {
+      enforcementMode: 'warn',
+    });
+
+    expect(decision.block).toBe(false);
+    expect(decision.message).toBe(originalMessage);
+    expect(String(decision.warning)).toContain('mode=warn');
+    expect(String(decision.warning)).toContain('modules=M2:system_prompt_leak');
   });
 });
 
