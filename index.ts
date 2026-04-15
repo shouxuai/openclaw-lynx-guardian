@@ -199,9 +199,6 @@ function resolveManagedLynxCheckCommandText(event: any): string {
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
   log.info("[lynx-guardian] Plugin loading...");
-  if (process.env.NODE_ENV === "development" && process.env.LYNX_API_URL) {
-    log.info(`[lynx-guardian] 仅用于开发期: LYNX_API_URL=${process.env.LYNX_API_URL}`);
-  }
   const sensitiveDataBlocker = new SensitiveDataBlocker();
   const config = resolvePluginRuntimeConfig(api.config, log);
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
