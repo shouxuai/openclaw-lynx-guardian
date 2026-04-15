@@ -5,7 +5,7 @@ import { toLegacyRiskLevel } from "./api-risk-adapter.js";
 import type { WorkflowAuthorization } from "./workflow-authorization-store.js";
 
 const DEFAULT_CONFIRMATION_PHRASE = "确认放行本次操作";
-const DEFAULT_OVERRIDE_LEVELS = ["L2", "L3", "L4"] as const;
+const DEFAULT_APPROVABLE_LEVELS = ["L2", "L3"] as const;
 
 const POLICY_DECISION_PRIORITY: Record<PolicyDecisionKind, number> = {
   allow: 0,
@@ -24,20 +24,37 @@ export interface PolicyRuntimeEvaluation extends ResolvedRiskLevel {
 }
 
 export function normalizePolicyConfig(policy: any = {}) {
+  const approvableRiskLevels =
+    policy.approvableRiskLevels
+    ?? policy.allowOneTimeOverrideLevels
+    ?? [...DEFAULT_APPROVABLE_LEVELS];
+  const toolApprovalTimeoutSeconds = Math.max(
+    30,
+    Number(policy.toolApprovalTimeoutSeconds ?? 120),
+  );
+  const grantWindowSeconds = Math.min(
+    900,
+    Math.max(
+      30,
+      Number(policy.grantWindowSeconds ?? policy.workflowAuthWindowSeconds ?? 180),
+    ),
+  );
+
   return {
     absoluteRejectScore: policy.absoluteRejectScore ?? 10,
     confirmationPhrase: policy.confirmationPhrase ?? DEFAULT_CONFIRMATION_PHRASE,
-    allowOneTimeOverrideLevels: policy.allowOneTimeOverrideLevels ?? [...DEFAULT_OVERRIDE_LEVELS],
+    deprecatedConfirmationPhrase: policy.confirmationPhrase ?? DEFAULT_CONFIRMATION_PHRASE,
+    approvableRiskLevels,
+    allowOneTimeOverrideLevels: approvableRiskLevels,
     moduleOverrides: {
       M3: {
         allowOneTimeOverride: policy.moduleOverrides?.M3?.allowOneTimeOverride ?? true,
       },
     },
-    overrideTtlMs: Math.max(30, Number(policy.overrideTtlSeconds ?? 90)) * 1000,
-    workflowAuthWindowMs: Math.min(
-      900_000,
-      Math.max(30_000, Number(policy.workflowAuthWindowSeconds ?? 180)) * 1000,
-    ),
+    toolApprovalTimeoutMs: toolApprovalTimeoutSeconds * 1000,
+    grantWindowMs: grantWindowSeconds * 1000,
+    overrideTtlMs: grantWindowSeconds * 1000,
+    workflowAuthWindowMs: grantWindowSeconds * 1000,
   };
 }
 

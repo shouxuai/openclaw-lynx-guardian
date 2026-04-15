@@ -32,6 +32,21 @@ import {
   grantManagedLynxCheckAuthorization,
   hasManagedLynxCheckAuthorization,
 } from "./src/runtime/managed-lynx-check-authorization-store.js";
+import {
+  readRequesterProvenance,
+  rememberRequesterProvenance,
+} from "./src/runtime/requester-provenance-store.js";
+import {
+  readRunApprovalContext,
+  saveRunApprovalContext,
+} from "./src/runtime/run-approval-context-store.js";
+import { matchApprovalGrant } from "./src/runtime/approval-grant-store.js";
+import {
+  buildToolApprovalRequest,
+  persistGrantFromApproval,
+  toApprovalRiskLevel,
+} from "./src/runtime/tool-approval-runtime.js";
+import { getOrCreatePendingToolApproval } from "./src/runtime/pending-tool-approval-store.js";
 import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skills/skill-guard.js";
 import { quarantineSkill } from "./src/skills/skill-cleanup.js";
 import type { MaliciousSkillEntry } from "./src/skills/skill-blacklist-data.js";
@@ -648,6 +663,25 @@ export default function setup(api: OpenClawPluginApi) {
     }
   });
 
+  api.on("before_dispatch", async (event, ctx) => {
+    const senderId = normalizeString(event.senderId ?? ctx.senderId);
+    const normalizedSender = senderId?.toLowerCase();
+
+    rememberRequesterProvenance({
+      sessionKey: normalizeString(ctx.sessionKey ?? event.sessionKey) || undefined,
+      channelId: normalizeString(ctx.channelId ?? event.channel) || undefined,
+      requesterId: normalizedSender,
+      requesterOuId: normalizedSender?.startsWith("ou_") ? normalizedSender : undefined,
+      accountId: normalizeString(ctx.accountId) || undefined,
+      conversationId: normalizeString(ctx.conversationId) || undefined,
+      threadId: ctx.threadId ?? undefined,
+      isGroup: event.isGroup === true,
+      timestamp: Number(event.timestamp ?? Date.now()),
+    });
+
+    return { handled: false };
+  });
+
 
   api.on("message_received", async (event, ctx) => {
     try {
@@ -664,9 +698,38 @@ export default function setup(api: OpenClawPluginApi) {
       if (!text || text.length === 0) return;
       const lynxCheckTrigger = classifyLynxCheckTrigger(text);
 
+      if (lynxCheckTrigger.kind === "native_passthrough") {
+        log.info(`[lynx-guardian] Native check command passthrough: ${text}`);
+        return;
+      }
+
+      if (lynxCheckTrigger.kind === "lynx_command") {
+        log.info(`[lynx-guardian] Manual /lynx-check will be handled in before_agent_start: ${text}`);
+        return;
+      }
+
+      if (sensitiveDataBlocker.containsSensitiveData(text)) {
+        log.warn("[lynx-guardian] Sensitive data detected in message");
+        await pushRecord(userId, text, 1);
+        await sendHookFeedback(ctx, "Sensitive data detected");
+        return;
+      }
+
+      // Free-text approval is disabled. Critical non-tool review now happens
+      // in the awaited before_agent_start hook so group chat messages do not
+      // accidentally consume approval state.
+      return;
+
       const confirmLookupKey = resolveOverrideKey(ctx);
-      if (confirmLookupKey && isConfirmationPhrase(text, riskPolicyConfig.confirmationPhrase)) {
-        let pending = consumePendingOverride(confirmLookupKey);
+      if (
+        confirmLookupKey
+        && isConfirmationPhrase(
+          text,
+          riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
+        )
+      ) {
+        const confirmedLookupKey = confirmLookupKey as string;
+        let pending = consumePendingOverride(confirmedLookupKey);
 
         if (!pending) {
           log.info("[lynx-guardian] Primary pending lookup miss 尝试 fallback scan");
@@ -683,9 +746,10 @@ export default function setup(api: OpenClawPluginApi) {
           };
         }
 
-        const allKeys = [...new Set([...resolveOverrideKeys(ctx), ...pending.sourceKeys])];
+        const confirmedPending = pending!;
+        const allKeys = [...new Set([...resolveOverrideKeys(ctx), ...confirmedPending.sourceKeys])];
         const windowMs = riskPolicyConfig.workflowAuthWindowMs;
-        grantWorkflowAuth(allKeys, pending.matchedModules, windowMs, /* scopeAll */ true);
+        grantWorkflowAuth(allKeys, confirmedPending.matchedModules, windowMs, /* scopeAll */ true);
         const windowSec = Math.round(windowMs / 1000);
         await sendHookFeedback(
           ctx,
@@ -794,6 +858,24 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       if (!event.prompt && !event.messages) return;
       rememberRecentActiveDeliveryTarget(ctx);
+      const requester = readRequesterProvenance({
+        sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        channelId: normalizeString(ctx.channelId) || undefined,
+      });
+      if (ctx.runId) {
+        saveRunApprovalContext({
+          runId: ctx.runId,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          requesterId: requester?.requesterId,
+          requesterOuId: requester?.requesterOuId,
+          accountId: requester?.accountId ?? (normalizeString(ctx.accountId) || undefined),
+          conversationId: requester?.conversationId ?? (normalizeString(ctx.conversationId) || undefined),
+          threadId: requester?.threadId ?? ctx.threadId,
+          isGroup: requester?.isGroup === true,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 30 * 60 * 1000,
+        });
+      }
       let prependContext = "";
       let publicAccessResult: any = null;
       const ipInfo = await baseIpInfo();
@@ -895,6 +977,26 @@ export default function setup(api: OpenClawPluginApi) {
           managedLynxCheckPreauthorized,
         });
         const decision = guardInput(promptText, ctx.sessionKey, guardContext);
+        if (decision.block && !managedLynxCheckPreauthorized) {
+          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
+          try {
+            await pushRecord(
+              userId,
+              buildPolicyRecordContent(
+                policyEvaluation,
+                `[SSG:agent_start] ${decision.riskAssessment.modules.join(",")}`,
+              ),
+              policyEvaluation.legacyRiskLevel,
+            );
+          } catch {
+
+          }
+          return {
+            block: true,
+            blockReason: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+          } as any;
+        }
         log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
         if (decision.block && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
@@ -1013,6 +1115,13 @@ export default function setup(api: OpenClawPluginApi) {
           warning += "插件已进行拦截。\n";
         }
         log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
+
+        if (adaptedContentCheck.externalRiskLevel >= 3 && !managedLynxCheckPreauthorized) {
+          return {
+            block: true,
+            blockReason: `[Lynx Guardian] ${warning}`,
+          } as any;
+        }
 
         if (adaptedContentCheck.externalRiskLevel >= 3 && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized API risk passthrough");
@@ -1417,6 +1526,7 @@ export default function setup(api: OpenClawPluginApi) {
       }),
     });
     const approvedToolOverride = consumeApprovedOverrideFull(ctx, toolFingerprint);
+    const runApprovalContext = readRunApprovalContext(ctx.runId);
     if (selfSafetyGuardConfig.toolGuard !== false) {
       try {
         const sessionKey = normalizeString(ctx.sessionKey);
@@ -1442,6 +1552,92 @@ export default function setup(api: OpenClawPluginApi) {
           return {
             block: true,
             blockReason: "[Lynx Guardian] Managed /lynx-check 已完成预计算，仅允许白名单内的内部读写与报告发送链路。",
+          };
+        }
+
+        if (decision.block) {
+          const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
+          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${decision.riskAssessment.description}`);
+          try {
+            await pushRecord(
+              userId,
+              buildPolicyRecordContent(
+                policyEvaluation,
+                `[SSG:tool] ${toolName} ${decision.riskAssessment.modules.join(",")}`,
+              ),
+              policyEvaluation.legacyRiskLevel,
+            );
+          } catch {
+
+          }
+
+          const approvalRiskLevel = toApprovalRiskLevel(decision.riskAssessment.level);
+          const primaryModule = decision.riskAssessment.modules[0];
+          if (!policyResult.override.allowed || !approvalRiskLevel || !primaryModule) {
+            return {
+              block: true,
+              blockReason: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+            };
+          }
+
+          const matchingGrant = matchApprovalGrant({
+            runId: ctx.runId,
+            requesterOuId: runApprovalContext?.requesterOuId,
+            module: primaryModule,
+            riskLevel: approvalRiskLevel,
+          });
+          if (matchingGrant) {
+            log.info(
+              `[lynx-guardian] approval grant hit run=${ctx.runId ?? "no-run"} module=${primaryModule} risk=${approvalRiskLevel}`,
+            );
+            return;
+          }
+
+          const approvalId = `lynx:ssg:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
+          const pendingApproval = ctx.runId
+            ? getOrCreatePendingToolApproval({
+                runId: ctx.runId,
+                requesterOuId: runApprovalContext?.requesterOuId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+                pendingId: approvalId,
+              })
+            : undefined;
+          if (pendingApproval?.pending && !pendingApproval.created) {
+            const resolution = await pendingApproval.pending.wait();
+            if (resolution === "allow-once" || resolution === "allow-always") {
+              return;
+            }
+            if (resolution === "deny") {
+              return { block: true, blockReason: "Denied by user" };
+            }
+            if (resolution === "cancelled") {
+              return { block: true, blockReason: "Approval cancelled" };
+            }
+            return { block: true, blockReason: "Approval timed out" };
+          }
+          return {
+            requireApproval: buildToolApprovalRequest({
+              toolName,
+              module: primaryModule,
+              riskLevel: approvalRiskLevel,
+              description: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+              timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+              onResolution: (resolution) => {
+                pendingApproval?.pending?.settle(resolution);
+                persistGrantFromApproval({
+                  decision: resolution,
+                  approvalId,
+                  runId: ctx.runId,
+                  requesterOuId: runApprovalContext?.requesterOuId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  grantWindowMs: riskPolicyConfig.grantWindowMs,
+                });
+              },
+            }),
           };
         }
 
@@ -1657,9 +1853,87 @@ export default function setup(api: OpenClawPluginApi) {
       // Floor to the blacklist's own severity so we never silently allow a blacklist hit.
       const rawRiskLevel = adaptedToolCheck.externalRiskLevel;
       const blacklistFloor = match.level === "critical" ? 3 : 2;
-      const riskLevel = !approvedToolOverride ? Math.max(rawRiskLevel, blacklistFloor) : rawRiskLevel;
+      const riskLevel = Math.max(rawRiskLevel, blacklistFloor);
 
       log.info(`[lynx-guardian] Tool check result: risk=${rawRiskLevel} (effective=${riskLevel}, blacklistFloor=${blacklistFloor})`);
+
+      if (riskLevel >= 2) {
+        const apiAssessment = {
+          ...buildApiRiskAssessment(
+            riskLevel,
+            `API tool risk: ${match.reason}${adaptedToolCheck.content ? ` (${adaptedToolCheck.content})` : ""}`,
+          ),
+          modules: blacklistModules,
+        };
+        const policyResult = resolveRiskPolicy(apiAssessment, riskPolicyConfig);
+        const approvalRiskLevel = toApprovalRiskLevel(apiAssessment.level);
+        const primaryModule = blacklistModules[0];
+        if (policyResult.override.allowed && approvalRiskLevel && primaryModule) {
+          const matchingGrant = matchApprovalGrant({
+            runId: ctx.runId,
+            requesterOuId: runApprovalContext?.requesterOuId,
+            module: primaryModule,
+            riskLevel: approvalRiskLevel,
+          });
+          if (matchingGrant) {
+            log.info(
+              `[lynx-guardian] approval grant hit run=${ctx.runId ?? "no-run"} module=${primaryModule} risk=${approvalRiskLevel}`,
+            );
+            return;
+          }
+
+          const approvalId = `lynx:blacklist:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
+          const pendingApproval = ctx.runId
+            ? getOrCreatePendingToolApproval({
+                runId: ctx.runId,
+                requesterOuId: runApprovalContext?.requesterOuId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+                pendingId: approvalId,
+              })
+            : undefined;
+          if (pendingApproval?.pending && !pendingApproval.created) {
+            const resolution = await pendingApproval.pending.wait();
+            if (resolution === "allow-once" || resolution === "allow-always") {
+              return;
+            }
+            if (resolution === "deny") {
+              return { block: true, blockReason: "Denied by user" };
+            }
+            if (resolution === "cancelled") {
+              return { block: true, blockReason: "Approval cancelled" };
+            }
+            return { block: true, blockReason: "Approval timed out" };
+          }
+          return {
+            requireApproval: buildToolApprovalRequest({
+              toolName,
+              module: primaryModule,
+              riskLevel: approvalRiskLevel,
+              description: `[Lynx Guardian] Risk Level ${riskLevel}: ${match.reason}`,
+              timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+              onResolution: (resolution) => {
+                pendingApproval?.pending?.settle(resolution);
+                persistGrantFromApproval({
+                  decision: resolution,
+                  approvalId,
+                  runId: ctx.runId,
+                  requesterOuId: runApprovalContext?.requesterOuId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  grantWindowMs: riskPolicyConfig.grantWindowMs,
+                });
+              },
+            }),
+          };
+        }
+
+        return {
+          block: true,
+          blockReason: `[Lynx Guardian] ${riskLevel >= 3 ? "High-risk tool call blocked" : "Tool call blocked"} (Risk Level ${riskLevel}): ${match.reason}`,
+        };
+      }
 
       if (riskLevel >= 2 && !approvedToolOverride) {
         const apiAssessment = {

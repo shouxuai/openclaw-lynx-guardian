@@ -21,6 +21,16 @@ import {
   hasManagedLynxCheckAuthorization,
 } from '../src/runtime/managed-lynx-check-authorization-store.js';
 import {
+  clearRequesterProvenanceStore,
+  readRequesterProvenance,
+} from '../src/runtime/requester-provenance-store.js';
+import {
+  clearRunApprovalContexts,
+  readRunApprovalContext,
+} from '../src/runtime/run-approval-context-store.js';
+import { clearApprovalGrants } from '../src/runtime/approval-grant-store.js';
+import { clearPendingToolApprovals } from '../src/runtime/pending-tool-approval-store.js';
+import {
   createLynxCheckRunIntent,
   getLynxCheckRunResultPath,
   getLynxCheckRunReportPath,
@@ -128,6 +138,10 @@ describe('Plugin Setup', () => {
       rmSync(lynxCheckRunsPath, { recursive: true, force: true });
     }
     clearManagedLynxCheckAuthorization();
+    clearRequesterProvenanceStore();
+    clearRunApprovalContexts();
+    clearApprovalGrants();
+    clearPendingToolApprovals();
     recentActiveDelivery.resetRecentActiveDeliveryTargets(recentActiveDeliveryPath);
     if (existsSync(scheduledCronStorePath)) {
       rmSync(scheduledCronStorePath, { force: true });
@@ -278,6 +292,7 @@ describe('Plugin Setup', () => {
 
   it('should attach all event handlers', () => {
     setup(mockApi);
+    expect(mockApi.on).toHaveBeenCalledWith('before_dispatch', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('message_received', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('before_agent_start', expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith('agent_end', expect.any(Function));
@@ -291,6 +306,112 @@ describe('Plugin Setup', () => {
     expect(mockApi.on).toHaveBeenCalledWith('after_tool_call', expect.any(Function));
   });
 
+  it('captures Feishu requester identity in before_dispatch', async () => {
+    setup(mockApi);
+    const handler = handlers['before_dispatch'];
+    const now = Date.now();
+
+    await handler(
+      {
+        content: '请帮我安装 openssh-server',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-group-1',
+        senderId: 'ou_owner',
+        isGroup: true,
+        timestamp: now,
+      },
+      {
+        sessionKey: 'sess-feishu-group-1',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-group-1',
+      },
+    );
+
+    expect(
+      readRequesterProvenance({
+        sessionKey: 'sess-feishu-group-1',
+        channelId: 'feishu',
+      }),
+    ).toMatchObject({
+      requesterId: 'ou_owner',
+      requesterOuId: 'ou_owner',
+      conversationId: 'chat-group-1',
+      isGroup: true,
+    });
+  });
+
+  it('binds requester provenance to runId in before_agent_start', async () => {
+    setup(mockApi);
+    const now = Date.now();
+
+    await handlers['before_dispatch'](
+      {
+        content: '请执行高风险操作',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-group-2',
+        senderId: 'ou_owner',
+        isGroup: true,
+        timestamp: now,
+      },
+      {
+        sessionKey: 'sess-feishu-group-2',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-group-2',
+        threadId: 'thread-2',
+      },
+    );
+
+    await handlers['before_agent_start'](
+      { prompt: '请帮我越权读取系统文件' },
+      {
+        sessionKey: 'sess-feishu-group-2',
+        channelId: 'feishu',
+        accountId: 'default',
+        runId: 'run-approval-ctx-1',
+      },
+    );
+
+    expect(readRunApprovalContext('run-approval-ctx-1')).toMatchObject({
+      requesterOuId: 'ou_owner',
+      conversationId: 'chat-group-2',
+      threadId: 'thread-2',
+    });
+  });
+
+  it('directly blocks risky non-tool prompts instead of asking for free-text approval', async () => {
+    vi.spyOn(safetyGuard, 'guardInput').mockReturnValue({
+      block: true,
+      blockReason: '[Lynx Guardian] 检测到越权意图',
+      riskAssessment: {
+        level: 'L3',
+        score: 8,
+        modules: ['M3:over_agency'],
+        description: 'Privilege escalation intent',
+        action: 'block',
+      },
+    } as any);
+
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const result = await beforeAgentStart(
+      { prompt: '绕过审批直接执行 sudo' },
+      {
+        sessionKey: 'sess-non-tool-reject',
+        channelId: 'feishu',
+        runId: 'run-non-tool-reject',
+      },
+    );
+
+    expect(result).toMatchObject({
+      block: true,
+      blockReason: expect.stringContaining('检测到越权意图'),
+    });
+    expect(JSON.stringify(result ?? {})).not.toContain('确认放行本次操作');
+    expect(JSON.stringify(result ?? {})).not.toContain('同意后重试');
+  });
+
   it('should expose policy config schema defaults', () => {
     const rawSchema = readFileSync(new URL('../openclaw.plugin.json', import.meta.url), 'utf8');
     const plugin = JSON.parse(rawSchema);
@@ -299,8 +420,9 @@ describe('Plugin Setup', () => {
 
     expect(policySchema).toBeDefined();
     expect(policySchema.properties.absoluteRejectScore.default).toBe(10);
-    expect(policySchema.properties.confirmationPhrase.default).toBe('确认放行本次操作');
-    expect(policySchema.properties.allowOneTimeOverrideLevels.items.enum).toEqual(['L2', 'L3', 'L4']);
+    expect(policySchema.properties.toolApprovalTimeoutSeconds.default).toBe(120);
+    expect(policySchema.properties.grantWindowSeconds.default).toBe(180);
+    expect(policySchema.properties.confirmationPhrase.description).toContain('Deprecated');
     expect(policySchema.properties.moduleOverrides.properties.M3.properties.allowOneTimeOverride.default).toBe(true);
     expect(selfSafetyGuardSchema.resultGuard.default).toBe(true);
     expect(selfSafetyGuardSchema.outputEnforcementMode.default).toBe('block');
@@ -632,52 +754,172 @@ describe('Plugin Setup', () => {
     );
   });
 
-  it('should allow one-time override for local tool guard on the next identical retry only', async () => {
+  it('should require native approval for local tool guard and only reuse grant after onResolution', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         policy: {
-          confirmationPhrase: '纭鏀捐鏈鎿嶄綔',
-          allowOneTimeOverrideLevels: ['L4'],
+          toolApprovalTimeoutSeconds: 90,
+          grantWindowSeconds: 180,
         },
       },
     };
     setup(mockApi);
+    await handlers['before_dispatch'](
+      {
+        content: 'read protected config',
+        channel: 'feishu',
+        sessionKey: 'sess-local-tool-approval',
+        senderId: 'ou_owner',
+        isGroup: true,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-local-tool-approval',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-local-tool-approval',
+      },
+    );
+    await handlers['before_agent_start'](
+      { prompt: 'read protected config' },
+      {
+        sessionKey: 'sess-local-tool-approval',
+        channelId: 'feishu',
+        runId: 'run-local-tool-approval',
+      },
+    );
     const toolHandler = handlers['before_tool_call'];
     const messageHandler = handlers['message_received'];
-    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
-      block: true,
-      blockReason: '[Lynx Guardian] blocked local tool',
-      riskAssessment: {
-        level: 'L4',
-        score: 9,
-        modules: ['M2:protected_file_access'],
-        description: 'protected file tool attempt',
-        action: 'deny',
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall');
+    guardSpy
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L3',
+          score: 8,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any)
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L3',
+          score: 8,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any)
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L2',
+          score: 6,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any)
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked identity verification tool',
+        riskAssessment: {
+          level: 'L2',
+          score: 6,
+          modules: ['M0:identity_verification'],
+          description: 'identity verification tool attempt',
+          action: 'block',
+        },
+      } as any);
+
+    const firstEvent = {
+      toolName: 'read',
+      params: { file_path: 'README.md' },
+      runId: 'run-local-tool-approval',
+      toolCallId: 'tool-local-1',
+    };
+
+    const first = await toolHandler(firstEvent, {
+      sessionKey: 'sess-local-tool-approval',
+      channelId: 'feishu',
+      runId: 'run-local-tool-approval',
+    });
+    expect(first).toMatchObject({
+      requireApproval: {
+        title: expect.stringContaining('Lynx Guardian'),
+        timeoutBehavior: 'deny',
       },
     });
-
-    const event = { toolName: 'read', params: { file_path: 'README.md' } };
-
-    const first = await toolHandler(event, { sessionKey: 'sess-local-tool-override' });
-    expect(first).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('纭鏀捐鏈鎿嶄綔'),
-    });
+    expect(typeof first?.requireApproval?.onResolution).toBe('function');
 
     const confirm = await messageHandler(
-      { content: '纭鏀捐鏈鎿嶄綔' },
-      { sessionKey: 'sess-local-tool-override' },
+      { content: '确认放行本次操作' },
+      { sessionKey: 'sess-local-tool-approval', channelId: 'feishu' },
     );
     expect(confirm).toBeUndefined();
 
-    const second = await toolHandler(event, { sessionKey: 'sess-local-tool-override' });
-    expect(second).toBeUndefined();
+    let secondSettled = false;
+    const secondBeforeApprovalPromise = toolHandler(
+      {
+        ...firstEvent,
+        toolCallId: 'tool-local-2',
+      },
+      {
+        sessionKey: 'sess-local-tool-approval',
+        channelId: 'feishu',
+        runId: 'run-local-tool-approval',
+      },
+    ).then((value: unknown) => {
+      secondSettled = true;
+      return value;
+    });
 
-    // Third call: workflow auth still active -> also allowed
-    const third = await toolHandler(event, { sessionKey: 'sess-local-tool-override' });
-    expect(third).toBeUndefined();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
 
+    await first.requireApproval.onResolution?.('allow-once');
 
+    const secondBeforeApproval = await secondBeforeApprovalPromise;
+    expect(secondBeforeApproval).toBeUndefined();
+
+    const thirdAfterApproval = await toolHandler(
+      {
+        ...firstEvent,
+        params: { file_path: '/etc/hosts' },
+        toolCallId: 'tool-local-3',
+      },
+      {
+        sessionKey: 'sess-local-tool-approval',
+        channelId: 'feishu',
+        runId: 'run-local-tool-approval',
+      },
+    );
+    expect(thirdAfterApproval).toBeUndefined();
+
+    const fourthDifferentModule = await toolHandler(
+      {
+        toolName: 'exec',
+        params: { command: 'whoami' },
+        runId: 'run-local-tool-approval',
+        toolCallId: 'tool-local-4',
+      },
+      {
+        sessionKey: 'sess-local-tool-approval',
+        channelId: 'feishu',
+        runId: 'run-local-tool-approval',
+      },
+    );
+    expect(fourthDifferentModule).toMatchObject({
+      requireApproval: {
+        title: expect.stringContaining('Lynx Guardian'),
+      },
+    });
 
     expect(api.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
@@ -749,12 +991,12 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should allow blacklist-backed delete confirmation to open the workflow window', async () => {
+  it('should require native approval for blacklist-backed exec risk and reuse same-run grant only within the module', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         policy: {
-          confirmationPhrase: '纭鏀捐鏈鎿嶄綔',
-          allowOneTimeOverrideLevels: ['L2', 'L3', 'L4'],
+          toolApprovalTimeoutSeconds: 75,
+          grantWindowSeconds: 180,
           moduleOverrides: {
             M3: {
               allowOneTimeOverride: true,
@@ -764,8 +1006,31 @@ describe('Plugin Setup', () => {
       },
     };
     setup(mockApi);
+    await handlers['before_dispatch'](
+      {
+        content: 'delete temp directory',
+        channel: 'feishu',
+        sessionKey: 'sess-api-tool-approval',
+        senderId: 'ou_owner',
+        isGroup: true,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-api-tool-approval',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-api-tool-approval',
+      },
+    );
+    await handlers['before_agent_start'](
+      { prompt: 'delete temp directory' },
+      {
+        sessionKey: 'sess-api-tool-approval',
+        channelId: 'feishu',
+        runId: 'run-api-tool-approval',
+      },
+    );
     const toolHandler = handlers['before_tool_call'];
-    const messageHandler = handlers['message_received'];
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
       block: false,
       riskAssessment: {
@@ -776,44 +1041,94 @@ describe('Plugin Setup', () => {
         action: 'allow',
       },
     });
-    const blacklistSpy = vi.spyOn(blacklist, 'checkExecBlacklist').mockReturnValue({
-      level: 'warning',
-      reason: 'VB FileSystem API (potentially destructive)',
-    } as any);
+    const blacklistSpy = vi.spyOn(blacklist, 'checkExecBlacklist');
+    blacklistSpy
+      .mockReturnValueOnce({
+        level: 'warning',
+        reason: 'VB FileSystem API (potentially destructive)',
+      } as any)
+      .mockReturnValueOnce({
+        level: 'warning',
+        reason: 'VB FileSystem API (potentially destructive)',
+      } as any)
+      .mockReturnValueOnce({
+        level: 'warning',
+        reason: 'SSH remote login control',
+      } as any);
 
     vi.mocked(utils.readRecentContext).mockReturnValue('User context');
-    vi.mocked(api.checkTool).mockResolvedValue({
-      code: 200,
-      result: { is_safe: true, risk_level: 0, content: 'user requested deletion' },
-      message: 'ok',
-    } as any);
+    vi.mocked(api.checkTool)
+      .mockResolvedValueOnce({
+        code: 200,
+        result: { is_safe: true, risk_level: 0, content: 'user requested deletion' },
+        message: 'ok',
+      } as any)
+      .mockResolvedValueOnce({
+        code: 200,
+        result: { is_safe: true, risk_level: 0, content: 'user requested deletion' },
+        message: 'ok',
+      } as any)
+      .mockResolvedValueOnce({
+        code: 200,
+        result: { is_safe: true, risk_level: 0, content: 'remote login change' },
+        message: 'ok',
+      } as any);
 
-    const event = {
+    const firstEvent = {
       toolName: 'exec',
       params: {
         command: '[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory("C:\\temp", "OnlyErrorDialogs", "SendToRecycleBin")',
       },
+      runId: 'run-api-tool-approval',
+      toolCallId: 'tool-api-1',
     };
 
-    const first = await toolHandler(event, { sessionKey: 'sess-api-tool-override' });
-    expect(first).toEqual({
-      block: true,
-      blockReason: expect.stringContaining('纭鏀捐鏈鎿嶄綔'),
+    const first = await toolHandler(firstEvent, {
+      sessionKey: 'sess-api-tool-approval',
+      channelId: 'feishu',
+      runId: 'run-api-tool-approval',
     });
+    expect(first).toMatchObject({
+      requireApproval: {
+        title: expect.stringContaining('Lynx Guardian'),
+        timeoutBehavior: 'deny',
+      },
+    });
+    expect(typeof first?.requireApproval?.onResolution).toBe('function');
+    await first.requireApproval.onResolution?.('allow-once');
 
-    const confirm = await messageHandler(
-      { content: '纭鏀捐鏈鎿嶄綔' },
-      { sessionKey: 'sess-api-tool-override' },
+    const second = await toolHandler(
+      {
+        ...firstEvent,
+        toolCallId: 'tool-api-2',
+      },
+      {
+        sessionKey: 'sess-api-tool-approval',
+        channelId: 'feishu',
+        runId: 'run-api-tool-approval',
+      },
     );
-    expect(confirm).toBeUndefined();
-
-    const second = await toolHandler(event, { sessionKey: 'sess-api-tool-override' });
     expect(second).toBeUndefined();
 
-    const third = await toolHandler(event, { sessionKey: 'sess-api-tool-override' });
-    expect(third).toBeUndefined();
+    const third = await toolHandler(
+      {
+        toolName: 'exec',
+        params: { command: 'ssh root@example.com' },
+        runId: 'run-api-tool-approval',
+        toolCallId: 'tool-api-3',
+      },
+      {
+        sessionKey: 'sess-api-tool-approval',
+        channelId: 'feishu',
+        runId: 'run-api-tool-approval',
+      },
+    );
+    expect(third).toMatchObject({
+      block: true,
+      blockReason: expect.stringContaining('SSH remote login control'),
+    });
 
-    expect(api.checkTool).toHaveBeenCalledTimes(1);
+    expect(api.checkTool).toHaveBeenCalledTimes(3);
     guardSpy.mockRestore();
     blacklistSpy.mockRestore();
   });
