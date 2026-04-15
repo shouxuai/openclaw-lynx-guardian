@@ -517,9 +517,11 @@ describe('Plugin Setup', () => {
     expect(result).toMatchObject({
       block: true,
       blockReason: expect.stringContaining('检测到越权意图'),
+      prependContext: expect.stringContaining('必须直接拒绝该请求'),
     });
     expect(JSON.stringify(result ?? {})).not.toContain('确认放行本次操作');
     expect(JSON.stringify(result ?? {})).not.toContain('同意后重试');
+    expect((result as any).prependContext).toContain('不得调用任何工具');
   });
 
   it('should expose policy config schema defaults', () => {
@@ -1358,6 +1360,39 @@ describe('Plugin Setup', () => {
     expect(first).toEqual({
       block: true,
       blockReason: '[Lynx Guardian] immutable config lock',
+    });
+    expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
+
+    expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
+  it('should not open pending override flow for OpenClaw memory and session privacy locks', async () => {
+    setup(mockApi);
+    const toolHandler = handlers['before_tool_call'];
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
+      block: true,
+      blockReason: '[Lynx Guardian] memory/session privacy lock',
+      riskAssessment: {
+        level: 'L4',
+        score: 10,
+        modules: ['M2:memory_session_privacy'],
+        description: 'memory/session privacy lock',
+        action: 'deny',
+      },
+    });
+
+    const event = {
+      toolName: 'read',
+      params: {
+        file_path: 'C:\\Users\\alice\\.openclaw\\agents\\main\\sessions\\2026-04-15.jsonl',
+      },
+    };
+
+    const first = await toolHandler(event, { sessionKey: 'sess-memory-session-lock' });
+    expect(first).toEqual({
+      block: true,
+      blockReason: '[Lynx Guardian] memory/session privacy lock',
     });
     expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
 

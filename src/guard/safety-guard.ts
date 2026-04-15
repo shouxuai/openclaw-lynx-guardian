@@ -233,6 +233,7 @@ function getSessionState(sessionKey: string): SessionState {
 // workflow retries, NOT escalating attack attempts.
 const REJECTION_TRACKING_EXEMPT = new Set([
   "M0:identity_verification",
+  "M2:memory_session_privacy",
   "M2:plugin_integrity",
   "M2:protected_file_access",
   "M3:over_agency",
@@ -246,7 +247,11 @@ const OPERATION_HISTORY_MAX = 8;
 function inferOperationCategory(modules: string[]): OperationCategory {
   if (modules.includes("M7:pipe_execution")) return "pipe_exec";
   if (modules.some((m) => m.includes("credential"))) return "credential_access";
-  if (modules.includes("M2:plugin_integrity") || modules.includes("M2:protected_file_access")) return "file_access";
+  if (
+    modules.includes("M2:memory_session_privacy")
+    || modules.includes("M2:plugin_integrity")
+    || modules.includes("M2:protected_file_access")
+  ) return "file_access";
   if (modules.includes("M7:wildcard_obfuscation")) return "obfuscated_path";
   if (modules.includes("fatal_triangle")) return "external_output";
   if (modules.includes("sensitive_dir_entry")) return "sensitive_dir_entry";
@@ -509,8 +514,103 @@ const MUTATING_TOOL_PATTERNS: RegExp[] = [
   />>?/,
 ];
 
+const OPENCLAW_RUNTIME_NAME = String.raw`(?:openc(?:law|alaw)|open\s*claw)`;
+
+const OPENCLAW_MEMORY_SESSION_PATH_PATTERNS: RegExp[] = [
+  /(?:^|[\\/])\.openclaw[\\/]memory(?:[\\/]|$)/i,
+  /(?:^|[\\/])\.openclaw[\\/]agents[\\/][^\\/\s]+[\\/]sessions(?:[\\/]|$)/i,
+  /(?:^|[\\/])\.openclaw[\\/]docker-state[\\/]agents[\\/][^\\/\s]+[\\/]sessions(?:[\\/]|$)/i,
+];
+
+const OPENCLAW_MEMORY_SESSION_TARGET_PATTERNS: RegExp[] = [
+  new RegExp(`${OPENCLAW_RUNTIME_NAME}[^\\n\\r]{0,40}\\bmemory\\b`, "i"),
+  new RegExp(`\\bmemory\\b[^\\n\\r]{0,40}${OPENCLAW_RUNTIME_NAME}`, "i"),
+  new RegExp(`${OPENCLAW_RUNTIME_NAME}[^\\n\\r]{0,40}\\bsession(?:\\s+(?:records?|history|logs?))?\\b`, "i"),
+  new RegExp(`${OPENCLAW_RUNTIME_NAME}[^\\n\\r]{0,40}\\bconversation(?:\\s+(?:records?|history|logs?))\\b`, "i"),
+  new RegExp(`(?:${OPENCLAW_RUNTIME_NAME})[^\\n\\r]{0,20}(?:记忆|内存|会话记录|会话历史|聊天记录)`, "i"),
+];
+
+const OPENCLAW_MEMORY_SESSION_READ_PATTERNS: RegExp[] = [
+  ...PROTECTED_FILE_READ_PATTERNS,
+  /\b(?:ls|dir|find|grep|rg|list|export)\b/i,
+  /\b(?:Get-Content|Get-ChildItem|Select-String)\b/i,
+  /(?:列出|导出)/i,
+];
+
+const OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS: RegExp[] = [
+  ...PROTECTED_FILE_WRITE_PATTERNS,
+  /\b(?:clear|erase|wipe|purge|reset)\b/i,
+  /(?:清空|擦除|抹掉|重置)/i,
+];
+
+const OPENCLAW_MEMORY_SESSION_TOOL_NAMES = new Set([
+  "sessions_list",
+  "sessions_history",
+  "session_status",
+  "memory_search",
+  "memory_get",
+]);
+
+const OPENCLAW_MEMORY_SESSION_TRANSCRIPT_PATTERNS: RegExp[] = [
+  /"message"\s*:\s*\{\s*"role"\s*:\s*"(?:system|user|assistant|tool)"/i,
+  /"role"\s*:\s*"(?:system|user|assistant|tool)"[\s\S]{0,160}"content"\s*:/i,
+];
+
 function normalizeGuardPath(text: string): string {
   return text.replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function hasOpenClawMemorySessionTarget(text: string): boolean {
+  const normalized = normalizeGuardPath(text);
+  return OPENCLAW_MEMORY_SESSION_PATH_PATTERNS.some((pattern) => pattern.test(normalized))
+    || OPENCLAW_MEMORY_SESSION_TARGET_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function detectOpenClawMemorySessionRequest(text: string): boolean {
+  if (!hasOpenClawMemorySessionTarget(text)) {
+    return false;
+  }
+
+  return OPENCLAW_MEMORY_SESSION_READ_PATTERNS.some((pattern) => pattern.test(text))
+    || OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function detectOpenClawMemorySessionArtifactAccess(text: string, toolName?: string): boolean {
+  const normalizedToolName = (toolName ?? "").trim().toLowerCase();
+  if (OPENCLAW_MEMORY_SESSION_TOOL_NAMES.has(normalizedToolName)) {
+    return true;
+  }
+
+  const normalized = normalizeGuardPath(text);
+  const targetsDetected = OPENCLAW_MEMORY_SESSION_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
+
+  if (!targetsDetected) {
+    return false;
+  }
+
+  if (toolName === "read" || toolName === "write" || toolName === "edit") {
+    return true;
+  }
+
+  return OPENCLAW_MEMORY_SESSION_READ_PATTERNS.some((pattern) => pattern.test(text))
+    || OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function detectOpenClawMemorySessionLeak(text: string): boolean {
+  const normalized = normalizeGuardPath(text);
+  if (OPENCLAW_MEMORY_SESSION_PATH_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  if (/"scope"\s*:\s*"openclaw-memory"/i.test(text)) {
+    return true;
+  }
+
+  const explicitRuntimeReference = OPENCLAW_MEMORY_SESSION_TARGET_PATTERNS.some((pattern) => pattern.test(text))
+    || /\bopenclaw-memory\b/i.test(text);
+
+  return explicitRuntimeReference
+    && OPENCLAW_MEMORY_SESSION_TRANSCRIPT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function extractPluginTargets(text: string): string[] {
@@ -891,6 +991,10 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
   }
 
+  if (detectOpenClawMemorySessionRequest(text)) {
+    return buildInstantDeny("M2:memory_session_privacy", "attempt to access or clear OpenClaw memory/session records");
+  }
+
   // M5: 主要凭证/系统敏感文件
   const credentialTheft = detectCredentialTheft(text);
   if (credentialTheft.some((label) => PRIMARY_SECRETS.has(label))) {
@@ -1150,6 +1254,10 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
     };
   }
 
+  if (detectOpenClawMemorySessionLeak(output)) {
+    return buildInstantDeny("M2:memory_session_privacy", "attempt to reveal OpenClaw memory/session records");
+  }
+
   const modules: string[] = [];
   const accum = createAccumulators();
   let leakDirectScore = 0;
@@ -1264,11 +1372,27 @@ export function guardToolCall(
   const trustedInternalProtectedRead = context?.trustedInternalProtectedRead === true;
   const trustedManagedLynxCheckToolCall = context?.trustedManagedLynxCheckToolCall === true;
 
+  const toolAction = (params?.action ?? "") as string;
+  const note = (params?.note ?? "") as string;
+  const raw = (params?.raw ?? "") as string;
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
-  const combined = `${command} ${filePath}`;
+  const normalizedToolName = toolName.trim().toLowerCase();
+  const normalizedToolAction = toolAction.trim().toLowerCase();
+  const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
   let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
+
+  if (normalizedToolName === "gateway" && /^config\.(?:patch|set|replace|update)$/i.test(normalizedToolAction)) {
+    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+  }
+
+  if (
+    normalizedToolName === "gateway"
+    && /(?:^|\.)(?:restart|stop|shutdown|close|kill|down|quit|exit)(?:$|\.)/i.test(normalizedToolAction)
+  ) {
+    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+  }
 
   // === 即时危险通道 ===
 
@@ -1283,6 +1407,10 @@ export function guardToolCall(
 
   if (detectOpenClawAvailabilityControl(combined)) {
     return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+  }
+
+  if (detectOpenClawMemorySessionArtifactAccess(combined, toolName)) {
+    return buildInstantDeny("M2:memory_session_privacy", "attempt to access or modify OpenClaw memory/session artifacts");
   }
 
   if (detectPluginIntegrityViolation(combined, toolName)) {
@@ -1438,6 +1566,7 @@ function buildDescription(modules: string[], level: RiskLevel): string {
   if (modules.length === 0) return "安全";
 
   const moduleNames: Record<string, string> = {
+    "M2:memory_session_privacy": "OpenClaw memory/session privacy",
     "M2:plugin_integrity": "Lynx plugin integrity",
     "M2:runtime_config_integrity": "immutable OpenClaw/Lynx config",
     "M3:remote_access_control": "SSH remote login control",

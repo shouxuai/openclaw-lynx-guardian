@@ -16,7 +16,8 @@ function isExternalSink(value: string): boolean {
 }
 
 function isStateSessionPath(value: string): boolean {
-  return value.includes("/.openclaw/agents/")
+  return value.includes("/.openclaw/memory/")
+    || value.includes("/.openclaw/agents/")
     && value.includes("/sessions/")
     || value.includes("/.openclaw/docker-state/agents/")
     && value.includes("/sessions/");
