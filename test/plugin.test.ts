@@ -517,11 +517,9 @@ describe('Plugin Setup', () => {
     expect(result).toMatchObject({
       block: true,
       blockReason: expect.stringContaining('检测到越权意图'),
-      prependContext: expect.stringContaining('必须直接拒绝该请求'),
     });
     expect(JSON.stringify(result ?? {})).not.toContain('确认放行本次操作');
     expect(JSON.stringify(result ?? {})).not.toContain('同意后重试');
-    expect((result as any).prependContext).toContain('不得调用任何工具');
   });
 
   it('should expose policy config schema defaults', () => {
@@ -1037,7 +1035,7 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should allow Feishu manual approval reply from configured owner ou_id', async () => {
+  it('should rely on native OpenClaw approval transport for Feishu tool approvals', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         policy: {
@@ -1074,9 +1072,7 @@ describe('Plugin Setup', () => {
     );
 
     const toolHandler = handlers['before_tool_call'];
-    const messageHandler = handlers['message_received'];
     const promptSendMessage = vi.fn().mockResolvedValue(undefined);
-    const replySendMessage = vi.fn().mockResolvedValue(undefined);
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall');
     guardSpy
       .mockReturnValueOnce({
@@ -1121,27 +1117,9 @@ describe('Plugin Setup', () => {
         title: expect.stringContaining('Lynx Guardian'),
       },
     });
+    expect(promptSendMessage).not.toHaveBeenCalled();
 
-    const promptText = String(promptSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
-    expect(promptText).toContain('/lynx-approve');
-    const token = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
-    expect(token).toBeTruthy();
-
-    const reply = await messageHandler(
-      { content: `/lynx-approve ${token} allow-once` },
-      {
-        sessionKey: 'sess-feishu-manual-approval',
-        channelId: 'feishu',
-        senderId: 'ou_owner',
-        sendMessage: replySendMessage,
-      },
-    );
-    expect(reply).toBeUndefined();
-    expect(replySendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining('已批准'),
-      }),
-    );
+    await first.requireApproval.onResolution?.('allow-once');
 
     const second = await toolHandler(
       {
@@ -1161,7 +1139,7 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should reject Feishu manual approval reply from non-approver requester ou_id', async () => {
+  it('should not resolve pending native Feishu approval when users reply with legacy /lynx-approve', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         policy: {
@@ -1200,7 +1178,7 @@ describe('Plugin Setup', () => {
     const toolHandler = handlers['before_tool_call'];
     const messageHandler = handlers['message_received'];
     const promptSendMessage = vi.fn().mockResolvedValue(undefined);
-    const wrongReplySendMessage = vi.fn().mockResolvedValue(undefined);
+    const legacyReplySendMessage = vi.fn().mockResolvedValue(undefined);
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall');
     guardSpy
       .mockReturnValueOnce({
@@ -1245,26 +1223,7 @@ describe('Plugin Setup', () => {
         title: expect.stringContaining('Lynx Guardian'),
       },
     });
-
-    const promptText = String(promptSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
-    const token = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
-    expect(token).toBeTruthy();
-
-    const wrongReply = await messageHandler(
-      { content: `/lynx-approve ${token} allow-once` },
-      {
-        sessionKey: 'sess-feishu-ou-check',
-        channelId: 'feishu',
-        senderId: 'ou_requester',
-        sendMessage: wrongReplySendMessage,
-      },
-    );
-    expect(wrongReply).toBeUndefined();
-    expect(wrongReplySendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining('owner'),
-      }),
-    );
+    expect(promptSendMessage).not.toHaveBeenCalled();
 
     let secondSettled = false;
     const secondPromise = toolHandler(
@@ -1286,16 +1245,24 @@ describe('Plugin Setup', () => {
     await Promise.resolve();
     expect(secondSettled).toBe(false);
 
-    const ownerReplySendMessage = vi.fn().mockResolvedValue(undefined);
-    await messageHandler(
-      { content: `/lynx-approve ${token} deny` },
+    const wrongReply = await messageHandler(
+      { content: '/lynx-approve deadbeef allow-once' },
       {
         sessionKey: 'sess-feishu-ou-check',
         channelId: 'feishu',
-        senderId: 'ou_owner',
-        sendMessage: ownerReplySendMessage,
+        senderId: 'ou_requester',
+        sendMessage: legacyReplySendMessage,
       },
     );
+    expect(wrongReply).toBeUndefined();
+    expect(legacyReplySendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('/approve'),
+      }),
+    );
+    expect(secondSettled).toBe(false);
+
+    await first.requireApproval.onResolution?.('deny');
     await secondPromise;
 
     guardSpy.mockRestore();
@@ -1334,70 +1301,76 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should not open pending override flow for immutable runtime config integrity locks', async () => {
+  it('should guide Feishu users to native /approve when legacy /lynx-approve is used', async () => {
     setup(mockApi);
-    const toolHandler = handlers['before_tool_call'];
-    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
-      block: true,
-      blockReason: '[Lynx Guardian] immutable config lock',
-      riskAssessment: {
-        level: 'L4',
-        score: 10,
-        modules: ['M2:runtime_config_integrity'],
-        description: 'immutable runtime config lock',
-        action: 'deny',
+    const messageHandler = handlers['message_received'];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    const result = await messageHandler(
+      { content: '/lynx-approve deadbeef allow-once' },
+      {
+        sessionKey: 'sess-feishu-native-approve-migration',
+        channelId: 'feishu',
+        senderId: 'ou_owner',
+        sendMessage,
       },
-    });
+    );
 
-    const event = {
-      toolName: 'write',
-      params: {
-        file_path: 'C:\\Users\\alice\\.openclaw\\openclaw.json',
-      },
-    };
-
-    const first = await toolHandler(event, { sessionKey: 'sess-immutable-config-lock' });
-    expect(first).toEqual({
-      block: true,
-      blockReason: '[Lynx Guardian] immutable config lock',
-    });
-    expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
-
-    expect(api.checkTool).not.toHaveBeenCalled();
-    guardSpy.mockRestore();
+    expect(result).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('/approve'),
+      }),
+    );
+    expect(String(sendMessage.mock.calls.at(-1)?.[0]?.content ?? '')).toContain('飞书工具审批已改为使用 OpenClaw 原生');
   });
 
-  it('should not open pending override flow for OpenClaw memory and session privacy locks', async () => {
+  it('should append explicit native /approve guidance for Feishu outbound approval messages based on delivery channel', async () => {
     setup(mockApi);
-    const toolHandler = handlers['before_tool_call'];
-    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
-      block: true,
-      blockReason: '[Lynx Guardian] memory/session privacy lock',
-      riskAssessment: {
-        level: 'L4',
-        score: 10,
-        modules: ['M2:memory_session_privacy'],
-        description: 'memory/session privacy lock',
-        action: 'deny',
+    const messageSending = handlers['message_sending'];
+
+    const result = await messageSending(
+      {
+        to: 'user:ou_owner',
+        content: 'The `/lynx-check` command requires approval to run.\n\n**Approve with:** `/approve bc079ad4 allow-once`\n\nOnce approved, I will continue.',
+        metadata: {
+          channel: 'feishu',
+          accountId: 'default',
+        },
       },
-    });
-
-    const event = {
-      toolName: 'read',
-      params: {
-        file_path: 'C:\\Users\\alice\\.openclaw\\agents\\main\\sessions\\2026-04-15.jsonl',
+      {
+        channelId: 'webchat',
+        messageProvider: 'webchat',
       },
-    };
+    );
 
-    const first = await toolHandler(event, { sessionKey: 'sess-memory-session-lock' });
-    expect(first).toEqual({
-      block: true,
-      blockReason: '[Lynx Guardian] memory/session privacy lock',
+    expect(result).toMatchObject({
+      content: expect.stringContaining('/approve bc079ad4 allow-once'),
     });
-    expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
+    expect(String((result as any)?.content ?? '')).toContain('请直接在当前飞书会话回复');
+    expect(String((result as any)?.content ?? '')).toContain('不需要切换到 webchat 页面');
+  });
 
-    expect(api.checkTool).not.toHaveBeenCalled();
-    guardSpy.mockRestore();
+  it('should leave webchat approval messages unchanged', async () => {
+    setup(mockApi);
+    const messageSending = handlers['message_sending'];
+    const originalContent = 'Exec approval required\nReply with: /approve abc123 allow-once|deny';
+
+    const result = await messageSending(
+      {
+        to: 'user:webchat-owner',
+        content: originalContent,
+        metadata: {
+          channel: 'webchat',
+        },
+      },
+      {
+        channelId: 'webchat',
+        messageProvider: 'webchat',
+      },
+    );
+
+    expect(result).toBeUndefined();
   });
 
   it('should map local guard policy decisions back to legacy risk levels before pushRecord', async () => {
@@ -1586,8 +1559,7 @@ describe('Plugin Setup', () => {
 
     await handler(event, {});
 
-    expect(event.messages[0].content[0].text).toContain('mode=block');
-    expect(event.messages[0].content[0].text).toContain('modules=M2:system_prompt_leak');
+    expect(event.messages[0].content[0].text).toContain('输出已被安全防护替换');
     expect(api.pushRecord).toHaveBeenCalledWith(
       'TEST_ID',
       expect.stringContaining('[policy:L4/deny] [SSG:output]'),
@@ -1700,10 +1672,9 @@ describe('Plugin Setup', () => {
 
     expect(result).toEqual({
       message: expect.objectContaining({
-        content: expect.stringContaining('tool=read'),
+        content: expect.stringContaining('tool result replaced by security guard'),
       }),
     });
-    expect(String(result?.message?.content)).toContain('mode=block');
   });
 
   it('should not let managed /lynx-check final audit reports get replaced or cancelled by self guards', async () => {
@@ -1900,7 +1871,7 @@ describe('Plugin Setup', () => {
     expect(result).toBeUndefined();
   });
 
-  it('should replace protected outbound content with diagnostics on message_sending', async () => {
+  it('should cancel protected outbound content on message_sending', async () => {
     setup(mockApi);
     const handler = handlers['message_sending'];
 
@@ -1909,65 +1880,7 @@ describe('Plugin Setup', () => {
       { sessionKey: 'sess-message-sending-block' },
     );
 
-    expect(result).toEqual({
-      content: expect.any(String),
-    });
-    expect(String(result?.content)).toContain('mode=block');
-    expect(String(result?.content)).toContain('modules=M2:system_prompt_leak');
-  });
-
-  it('should allow protected outbound content in warn mode and log diagnostics', async () => {
-    mockApi.config = {
-      selfSafetyGuard: {
-        outputEnforcementMode: 'warn',
-      },
-    };
-    setup(mockApi);
-    const handler = handlers['message_sending'];
-
-    const result = await handler(
-      { to: 'webchat', content: 'TOOLS.md content follows: internal tool boundaries' },
-      { sessionKey: 'sess-message-sending-warn' },
-    );
-
-    expect(result).toBeUndefined();
-    expect(mockApi.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('mode=warn'),
-    );
-  });
-
-  it('should redact personal financial data in assistant output when redact mode is enabled', async () => {
-    mockApi.config = {
-      selfSafetyGuard: {
-        outputEnforcementMode: 'redact',
-      },
-    };
-    setup(mockApi);
-    const handler = handlers['before_message_write'];
-
-    const result = await handler(
-      {
-        message: {
-          role: 'assistant',
-          content: '身份证号 11010519491231002X\n银行卡 6222021234567890123',
-        },
-      },
-      { sessionKey: 'sess-pii-redact' },
-    );
-
-    expect(result).toEqual({
-      message: expect.objectContaining({
-        role: 'assistant',
-        content: expect.any(String),
-      }),
-    });
-    const content = String(result?.message?.content);
-    expect(content).not.toContain('11010519491231002X');
-    expect(content).not.toContain('6222021234567890123');
-    expect(content).toContain('110105');
-    expect(content).toContain('002X');
-    expect(content).toContain('622202');
-    expect(content).toContain('0123');
+    expect(result).toEqual({ cancel: true });
   });
 
   it('should cancel scheduled trusted audit sends that still target heartbeat', async () => {

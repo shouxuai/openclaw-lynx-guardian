@@ -408,9 +408,9 @@ export default function setup(api: OpenClawPluginApi) {
     }
   }
 
-  function shouldOfferFeishuLocalToolApproval(ctx: any, approverOuIds: string[]): boolean {
-    const channelId = normalizeString(ctx?.channelId ?? ctx?.channel).toLowerCase();
-    return channelId === "feishu" && approverOuIds.length > 0;
+  function shouldPreferNativeToolApproval(ctx: any): boolean {
+    const channelId = normalizeString(ctx?.messageProvider ?? ctx?.channelId ?? ctx?.channel).toLowerCase();
+    return channelId === "feishu";
   }
 
   function canActorResolveLocalToolApproval(actorOuId: string, approval: {
@@ -445,6 +445,90 @@ export default function setup(api: OpenClawPluginApi) {
       `${LOCAL_TOOL_APPROVAL_COMMAND} ${params.approvalToken} deny`,
       "仅接受配置的 owner/approver ou_id 审批回复，群里其他人的消息不会消费这次审批。",
     ].join("\n");
+  }
+
+  function resolveOutboundPromptChannel(
+    event: any,
+    ctx: any,
+    routeHint?: RecentActiveDeliverySnapshot | null,
+  ): "webchat" | "feishu" | "generic" {
+    const outboundTarget = buildOutboundDeliveryTarget(event, ctx);
+    const candidates = [
+      normalizeString(event?.metadata?.channel),
+      normalizeString(event?.channel),
+      normalizeString(outboundTarget.messageProvider),
+      normalizeString(outboundTarget.channelId),
+      normalizeString(ctx?.messageProvider),
+      normalizeString(ctx?.channelId),
+      normalizeString(ctx?.source),
+      normalizeString(routeHint?.messageProvider),
+      normalizeString(routeHint?.channelId),
+    ]
+      .filter(Boolean)
+      .map((value) => value.toLowerCase());
+
+    if (candidates.some((value) => value.includes("feishu"))) {
+      return "feishu";
+    }
+    if (candidates.some((value) => value.includes("webchat"))) {
+      return "webchat";
+    }
+    return "generic";
+  }
+
+  function extractApproveCommand(text: string): {
+    approvalId: string;
+    allowDecision?: string;
+    denyDecision?: string;
+  } | null {
+    const match = normalizeString(text).match(
+      /\/approve\s+([a-z0-9-]+)\s+([a-z-]+(?:\|[a-z-]+)*)/i,
+    );
+    if (!match) {
+      return null;
+    }
+
+    const approvalId = match[1];
+    const allowedDecisions = match[2]
+      .split("|")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+
+    return {
+      approvalId,
+      allowDecision: allowedDecisions.find((value) => value === "allow-once")
+        ?? allowedDecisions.find((value) => value.startsWith("allow-")),
+      denyDecision: allowedDecisions.find((value) => value === "deny"),
+    };
+  }
+
+  function appendFeishuNativeApprovalGuidance(text: string): string {
+    if (
+      text.includes("请直接在当前飞书会话回复")
+      || text.includes("不需要切换到 webchat 页面")
+    ) {
+      return text;
+    }
+
+    const approveCommand = extractApproveCommand(text);
+    if (!approveCommand) {
+      return text;
+    }
+
+    const lines = [
+      text.trimEnd(),
+      "",
+      "飞书审批提示：",
+      approveCommand.allowDecision
+        ? `请直接在当前飞书会话回复 \`/approve ${approveCommand.approvalId} ${approveCommand.allowDecision}\` 处理这次审批。`
+        : "",
+      approveCommand.denyDecision
+        ? `如需拒绝，回复 \`/approve ${approveCommand.approvalId} ${approveCommand.denyDecision}\`。`
+        : "",
+      "不需要切换到 webchat 页面，也不要再使用 `/lynx-approve`。",
+    ].filter(Boolean);
+
+    return lines.join("\n");
   }
 
   async function prepareToolApprovalHandlers(params: {
@@ -486,7 +570,11 @@ export default function setup(api: OpenClawPluginApi) {
       });
     };
 
-    if (!shouldOfferFeishuLocalToolApproval(params.ctx, params.approverOuIds)) {
+    if (shouldPreferNativeToolApproval(params.ctx)) {
+      return { resolveApproval };
+    }
+
+    if (params.approverOuIds.length === 0) {
       return { resolveApproval };
     }
 
@@ -960,6 +1048,13 @@ export default function setup(api: OpenClawPluginApi) {
         }
 
         if (!localApproval) {
+          if (normalizeString(ctx?.channelId ?? ctx?.channel).toLowerCase() === "feishu") {
+            await sendHookFeedback(
+              ctx,
+              "[Lynx Guardian] 飞书工具审批已改为使用 OpenClaw 原生 `/approve`。请直接回复审批提示里的 `/approve <id> allow-once|deny`，不再使用 `/lynx-approve`。",
+            );
+            return;
+          }
           await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待审批操作或审批已过期。");
           return;
         }
@@ -1811,8 +1906,9 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("message_sending", async (event, ctx) => {
     appendLifecycleProbe("message_sending", event, ctx);
     let shapedContent: string | undefined;
-    if (typeof event.content === "string" && resolveManagedLynxCheckPromptChannel(ctx) === "feishu") {
-      const nextContent = shapeTextForProvider(event.content, "feishu");
+    if (typeof event.content === "string" && resolveOutboundPromptChannel(event, ctx) === "feishu") {
+      let nextContent = shapeTextForProvider(event.content, "feishu");
+      nextContent = appendFeishuNativeApprovalGuidance(nextContent);
       if (nextContent !== event.content) {
         event.content = nextContent;
         shapedContent = nextContent;
