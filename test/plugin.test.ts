@@ -380,6 +380,78 @@ describe('Plugin Setup', () => {
     });
   });
 
+  it('claims group requester provenance in dispatch order instead of latest sender overwrite', async () => {
+    setup(mockApi);
+    const now = Date.now();
+
+    await handlers['before_dispatch'](
+      {
+        content: 'owner first message',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-group-queue-1',
+        senderId: 'ou_owner',
+        isGroup: true,
+        timestamp: now,
+      },
+      {
+        sessionKey: 'sess-feishu-group-queue-1',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-group-queue-1',
+        threadId: 'thread-queue-1',
+      },
+    );
+
+    await handlers['before_dispatch'](
+      {
+        content: 'other user follow-up',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-group-queue-1',
+        senderId: 'ou_other',
+        isGroup: true,
+        timestamp: now + 1,
+      },
+      {
+        sessionKey: 'sess-feishu-group-queue-1',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-group-queue-1',
+        threadId: 'thread-queue-1',
+      },
+    );
+
+    await handlers['before_agent_start'](
+      { prompt: 'first run prompt' },
+      {
+        sessionKey: 'sess-feishu-group-queue-1',
+        channelId: 'feishu',
+        accountId: 'default',
+        runId: 'run-approval-queue-1',
+      },
+    );
+
+    await handlers['before_agent_start'](
+      { prompt: 'second run prompt' },
+      {
+        sessionKey: 'sess-feishu-group-queue-1',
+        channelId: 'feishu',
+        accountId: 'default',
+        runId: 'run-approval-queue-2',
+      },
+    );
+
+    expect(readRunApprovalContext('run-approval-queue-1')).toMatchObject({
+      requesterOuId: 'ou_owner',
+      conversationId: 'chat-group-queue-1',
+      threadId: 'thread-queue-1',
+    });
+    expect(readRunApprovalContext('run-approval-queue-2')).toMatchObject({
+      requesterOuId: 'ou_other',
+      conversationId: 'chat-group-queue-1',
+      threadId: 'thread-queue-1',
+    });
+  });
+
   it('directly blocks risky non-tool prompts instead of asking for free-text approval', async () => {
     vi.spyOn(safetyGuard, 'guardInput').mockReturnValue({
       block: true,

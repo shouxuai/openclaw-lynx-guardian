@@ -14,6 +14,7 @@ export const REQUESTER_PROVENANCE_TTL_MS = 10 * 60 * 1000;
 
 const provenanceBySession = new Map<string, RequesterProvenance>();
 const provenanceByChannel = new Map<string, RequesterProvenance>();
+const pendingProvenanceBySession = new Map<string, RequesterProvenance[]>();
 
 function isExpired(record: RequesterProvenance, now: number): boolean {
   return record.timestamp + REQUESTER_PROVENANCE_TTL_MS <= now;
@@ -31,6 +32,15 @@ function prune(now: number = Date.now()): void {
       provenanceByChannel.delete(key);
     }
   }
+
+  for (const [key, records] of pendingProvenanceBySession) {
+    const active = records.filter((record) => !isExpired(record, now));
+    if (active.length === 0) {
+      pendingProvenanceBySession.delete(key);
+      continue;
+    }
+    pendingProvenanceBySession.set(key, active);
+  }
 }
 
 export function rememberRequesterProvenance(record: RequesterProvenance): void {
@@ -39,10 +49,37 @@ export function rememberRequesterProvenance(record: RequesterProvenance): void {
   const normalized = { ...record };
   if (normalized.sessionKey) {
     provenanceBySession.set(normalized.sessionKey, normalized);
+    const current = pendingProvenanceBySession.get(normalized.sessionKey) ?? [];
+    pendingProvenanceBySession.set(normalized.sessionKey, [...current, normalized]);
   }
   if (normalized.channelId) {
     provenanceByChannel.set(normalized.channelId, normalized);
   }
+}
+
+export function claimRequesterProvenance(input: {
+  sessionKey?: string;
+}): RequesterProvenance | undefined {
+  prune();
+
+  if (!input.sessionKey) {
+    return undefined;
+  }
+
+  const current = pendingProvenanceBySession.get(input.sessionKey) ?? [];
+  if (current.length === 0) {
+    pendingProvenanceBySession.delete(input.sessionKey);
+    return undefined;
+  }
+
+  const [claimed, ...remaining] = current;
+  if (remaining.length === 0) {
+    pendingProvenanceBySession.delete(input.sessionKey);
+  } else {
+    pendingProvenanceBySession.set(input.sessionKey, remaining);
+  }
+
+  return claimed;
 }
 
 export function readRequesterProvenance(input: {
@@ -66,4 +103,5 @@ export function readRequesterProvenance(input: {
 export function clearRequesterProvenanceStore(): void {
   provenanceBySession.clear();
   provenanceByChannel.clear();
+  pendingProvenanceBySession.clear();
 }

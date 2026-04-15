@@ -33,6 +33,7 @@ import {
   hasManagedLynxCheckAuthorization,
 } from "./src/runtime/managed-lynx-check-authorization-store.js";
 import {
+  claimRequesterProvenance,
   readRequesterProvenance,
   rememberRequesterProvenance,
 } from "./src/runtime/requester-provenance-store.js";
@@ -858,14 +859,18 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       if (!event.prompt && !event.messages) return;
       rememberRecentActiveDeliveryTarget(ctx);
-      const requester = readRequesterProvenance({
-        sessionKey: normalizeString(ctx.sessionKey) || undefined,
-        channelId: normalizeString(ctx.channelId) || undefined,
+      const sessionKey = normalizeString(ctx.sessionKey) || undefined;
+      const channelId = normalizeString(ctx.channelId) || undefined;
+      const requester = claimRequesterProvenance({
+        sessionKey,
+      }) ?? readRequesterProvenance({
+        sessionKey,
+        channelId,
       });
       if (ctx.runId) {
         saveRunApprovalContext({
           runId: ctx.runId,
-          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          sessionKey,
           requesterId: requester?.requesterId,
           requesterOuId: requester?.requesterOuId,
           accountId: requester?.accountId ?? (normalizeString(ctx.accountId) || undefined),
