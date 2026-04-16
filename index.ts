@@ -388,6 +388,7 @@ function extractScopedActorId(value: unknown): string | undefined {
   const trimmed = normalizeString(candidate);
   return trimmed ? trimmed.toLowerCase() : undefined;
 }
+
 function normalizeOuIdList(values: unknown): string[] {
   if (!Array.isArray(values)) {
     return [];
@@ -549,6 +550,7 @@ function mergeApprovalContextSeed(
     isGroup: current.isGroup === true || fallback?.isGroup === true,
   };
 }
+
 function parseLocalToolApprovalReply(text: string): {
   token?: string;
   resolution: Extract<ToolApprovalResolution, "allow-once" | "deny">;
@@ -984,6 +986,7 @@ export default function setup(api: OpenClawPluginApi) {
     }
     return { block: true, blockReason: "Approval timed out" };
   }
+
   async function prepareToolApprovalHandlers(params: {
     ctx: any;
     runId?: string;

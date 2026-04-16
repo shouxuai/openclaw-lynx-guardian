@@ -225,6 +225,7 @@ export function discardLocalToolApproval(token?: string): void {
   clearTimeout(entry.timer);
   removeApprovalEntry(entry);
 }
+
 export function clearLocalToolApprovals(): void {
   for (const entry of approvalsByToken.values()) {
     clearTimeout(entry.timer);

@@ -60,6 +60,7 @@ function prune(now: number = Date.now()): void {
       provenanceByConversation.delete(key);
     }
   }
+
   for (const [key, records] of pendingProvenanceBySession) {
     const active = records.filter((record) => !isExpired(record, now));
     if (active.length === 0) {

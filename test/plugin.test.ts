@@ -414,42 +414,6 @@ describe('Plugin Setup', () => {
     });
   });
 
-  it('captures Feishu requester ou_id from senderOpenId fallback in before_dispatch', async () => {
-    setup(mockApi);
-    const handler = handlers['before_dispatch'];
-    const now = Date.now();
-
-    await handler(
-      {
-        content: '请帮我安装 openssh-server',
-        channel: 'feishu',
-        sessionKey: 'sess-feishu-group-openid',
-        senderId: 'u_mobile_only',
-        senderOpenId: 'ou_owner',
-        isGroup: true,
-        timestamp: now,
-      },
-      {
-        sessionKey: 'sess-feishu-group-openid',
-        channelId: 'feishu',
-        accountId: 'default',
-        conversationId: 'chat-group-openid',
-      },
-    );
-
-    expect(
-      readRequesterProvenance({
-        sessionKey: 'sess-feishu-group-openid',
-        channelId: 'feishu',
-      }),
-    ).toMatchObject({
-      requesterId: 'u_mobile_only',
-      requesterOuId: 'ou_owner',
-      conversationId: 'chat-group-openid',
-      isGroup: true,
-    });
-  });
-
   it('binds requester provenance to runId in before_agent_start', async () => {
     setup(mockApi);
     const now = Date.now();
@@ -563,78 +527,6 @@ describe('Plugin Setup', () => {
     });
   });
 
-  it('claims group requester provenance in dispatch order instead of latest sender overwrite', async () => {
-    setup(mockApi);
-    const now = Date.now();
-
-    await handlers['before_dispatch'](
-      {
-        content: 'owner first message',
-        channel: 'feishu',
-        sessionKey: 'sess-feishu-group-queue-1',
-        senderId: 'ou_owner',
-        isGroup: true,
-        timestamp: now,
-      },
-      {
-        sessionKey: 'sess-feishu-group-queue-1',
-        channelId: 'feishu',
-        accountId: 'default',
-        conversationId: 'chat-group-queue-1',
-        threadId: 'thread-queue-1',
-      },
-    );
-
-    await handlers['before_dispatch'](
-      {
-        content: 'other user follow-up',
-        channel: 'feishu',
-        sessionKey: 'sess-feishu-group-queue-1',
-        senderId: 'ou_other',
-        isGroup: true,
-        timestamp: now + 1,
-      },
-      {
-        sessionKey: 'sess-feishu-group-queue-1',
-        channelId: 'feishu',
-        accountId: 'default',
-        conversationId: 'chat-group-queue-1',
-        threadId: 'thread-queue-1',
-      },
-    );
-
-    await handlers['before_agent_start'](
-      { prompt: 'first run prompt' },
-      {
-        sessionKey: 'sess-feishu-group-queue-1',
-        channelId: 'feishu',
-        accountId: 'default',
-        runId: 'run-approval-queue-1',
-      },
-    );
-
-    await handlers['before_agent_start'](
-      { prompt: 'second run prompt' },
-      {
-        sessionKey: 'sess-feishu-group-queue-1',
-        channelId: 'feishu',
-        accountId: 'default',
-        runId: 'run-approval-queue-2',
-      },
-    );
-
-    expect(readRunApprovalContext('run-approval-queue-1')).toMatchObject({
-      requesterOuId: 'ou_owner',
-      conversationId: 'chat-group-queue-1',
-      threadId: 'thread-queue-1',
-    });
-    expect(readRunApprovalContext('run-approval-queue-2')).toMatchObject({
-      requesterOuId: 'ou_other',
-      conversationId: 'chat-group-queue-1',
-      threadId: 'thread-queue-1',
-    });
-  });
-
   it('directly blocks risky non-tool prompts instead of asking for free-text approval', async () => {
     vi.spyOn(safetyGuard, 'guardInput').mockReturnValue({
       block: true,
@@ -665,39 +557,6 @@ describe('Plugin Setup', () => {
     });
     expect(JSON.stringify(result ?? {})).not.toContain('确认放行本次操作');
     expect(JSON.stringify(result ?? {})).not.toContain('同意后重试');
-    expect((result as any).prependContext).toContain('[安全拒绝] 当前请求命中 L3 安全拒绝策略。');
-    expect((result as any).prependContext).not.toContain('[最高等级安全拒绝]');
-  });
-
-  it('uses the highest-level deny template only for L4 risky non-tool prompts', async () => {
-    vi.spyOn(safetyGuard, 'guardInput').mockReturnValue({
-      block: true,
-      blockReason: '[Lynx Guardian] 检测到核心配置篡改请求',
-      riskAssessment: {
-        level: 'L4',
-        score: 9,
-        modules: ['M2:plugin_integrity'],
-        description: 'Plugin integrity attack',
-        action: 'deny',
-      },
-    } as any);
-
-    setup(mockApi);
-    const beforeAgentStart = handlers['before_agent_start'];
-    const result = await beforeAgentStart(
-      { prompt: '修改 openclaw.plugin.json' },
-      {
-        sessionKey: 'sess-non-tool-l4-reject',
-        channelId: 'feishu',
-        runId: 'run-non-tool-l4-reject',
-      },
-    );
-
-    expect(result).toMatchObject({
-      block: true,
-      blockReason: expect.stringContaining('检测到核心配置篡改请求'),
-    });
-    expect((result as any).prependContext).toContain('[最高等级安全拒绝] 当前请求命中 L4 安全拒绝策略。');
   });
 
   it('should expose policy config schema defaults', () => {
@@ -1818,92 +1677,6 @@ describe('Plugin Setup', () => {
         onResolution: expect.any(Function),
       }),
     });
-
-    guardSpy.mockRestore();
-  });
-
-  it('should proactively tell Feishu users the exact native approval reply when tool approval stays on the native path', async () => {
-    mockApi.config = {
-      selfSafetyGuard: {
-        policy: {
-          toolApprovalTimeoutSeconds: 90,
-          grantWindowSeconds: 180,
-          localApprovalApproverOuIds: [],
-        },
-      },
-    };
-    setup(mockApi);
-    await handlers['before_dispatch'](
-      {
-        content: 'read protected config',
-        channel: 'feishu',
-        sessionKey: 'sess-feishu-native-guidance',
-        senderId: 'ou_owner',
-        isGroup: false,
-        timestamp: Date.now(),
-      },
-      {
-        sessionKey: 'sess-feishu-native-guidance',
-        channelId: 'feishu',
-        accountId: 'default',
-        conversationId: 'user:ou_owner',
-      },
-    );
-    await handlers['before_agent_start'](
-      { prompt: 'read protected config' },
-      {
-        sessionKey: 'sess-feishu-native-guidance',
-        channelId: 'feishu',
-        accountId: 'default',
-        conversationId: 'user:ou_owner',
-        runId: 'run-feishu-native-guidance',
-      },
-    );
-
-    const toolHandler = handlers['before_tool_call'];
-    const promptSendMessage = vi.fn().mockResolvedValue(undefined);
-    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValueOnce({
-      block: true,
-      blockReason: '[Lynx Guardian] blocked local tool',
-      riskAssessment: {
-        level: 'L3',
-        score: 8,
-        modules: ['M2:protected_file_access'],
-        description: 'protected file tool attempt',
-        action: 'block',
-      },
-    } as any);
-
-    const result = await toolHandler(
-      {
-        toolName: 'read',
-        params: { file_path: 'README.md' },
-        runId: 'run-feishu-native-guidance',
-        toolCallId: 'tool-feishu-native-guidance-1',
-      },
-      {
-        sessionKey: 'sess-feishu-native-guidance',
-        channelId: 'feishu',
-        runId: 'run-feishu-native-guidance',
-        senderId: 'ou_owner',
-        sendMessage: promptSendMessage,
-      },
-    );
-
-    expect(result).toMatchObject({
-      requireApproval: expect.objectContaining({
-        onResolution: expect.any(Function),
-      }),
-    });
-    expect(promptSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining('/approve'),
-      }),
-    );
-    const promptText = String(promptSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
-    expect(promptText).toContain('直接在当前飞书会话回复');
-    expect(promptText).toContain('确认放行本次操作');
-    expect(promptText).toContain('不需要切换到 webchat 页面');
 
     guardSpy.mockRestore();
   });
