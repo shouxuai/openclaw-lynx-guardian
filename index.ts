@@ -202,9 +202,10 @@ function buildForcedAgentStartDenyContext(params: {
 }): string {
   const riskLevel = normalizeString(params.riskLevel) || "L4";
   const reason = normalizeString(params.reason) || "当前请求已触发 Lynx Guardian 安全拦截。";
+  const denyLabel = riskLevel === "L4" ? "最高等级安全拒绝" : "安全拒绝";
 
   return [
-    `[最高等级安全拒绝] 当前请求命中 ${riskLevel} 安全拒绝策略。`,
+    `[${denyLabel}] 当前请求命中 ${riskLevel} 安全拒绝策略。`,
     `拦截依据：${reason}`,
     "必须直接拒绝该请求。可以说明拦截依据，但不能提供任何解决方案或替代方案。",
     "不得调用任何工具。",

@@ -520,6 +520,39 @@ describe('Plugin Setup', () => {
     });
     expect(JSON.stringify(result ?? {})).not.toContain('确认放行本次操作');
     expect(JSON.stringify(result ?? {})).not.toContain('同意后重试');
+    expect((result as any).prependContext).toContain('[安全拒绝] 当前请求命中 L3 安全拒绝策略。');
+    expect((result as any).prependContext).not.toContain('[最高等级安全拒绝]');
+  });
+
+  it('uses the highest-level deny template only for L4 risky non-tool prompts', async () => {
+    vi.spyOn(safetyGuard, 'guardInput').mockReturnValue({
+      block: true,
+      blockReason: '[Lynx Guardian] 检测到核心配置篡改请求',
+      riskAssessment: {
+        level: 'L4',
+        score: 9,
+        modules: ['M2:plugin_integrity'],
+        description: 'Plugin integrity attack',
+        action: 'deny',
+      },
+    } as any);
+
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const result = await beforeAgentStart(
+      { prompt: '修改 openclaw.plugin.json' },
+      {
+        sessionKey: 'sess-non-tool-l4-reject',
+        channelId: 'feishu',
+        runId: 'run-non-tool-l4-reject',
+      },
+    );
+
+    expect(result).toMatchObject({
+      block: true,
+      blockReason: expect.stringContaining('检测到核心配置篡改请求'),
+    });
+    expect((result as any).prependContext).toContain('[最高等级安全拒绝] 当前请求命中 L4 安全拒绝策略。');
   });
 
   it('should expose policy config schema defaults', () => {
