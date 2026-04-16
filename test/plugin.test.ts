@@ -1822,6 +1822,92 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
+  it('should proactively tell Feishu users the exact native approval reply when tool approval stays on the native path', async () => {
+    mockApi.config = {
+      selfSafetyGuard: {
+        policy: {
+          toolApprovalTimeoutSeconds: 90,
+          grantWindowSeconds: 180,
+          localApprovalApproverOuIds: [],
+        },
+      },
+    };
+    setup(mockApi);
+    await handlers['before_dispatch'](
+      {
+        content: 'read protected config',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-native-guidance',
+        senderId: 'ou_owner',
+        isGroup: false,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-feishu-native-guidance',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'user:ou_owner',
+      },
+    );
+    await handlers['before_agent_start'](
+      { prompt: 'read protected config' },
+      {
+        sessionKey: 'sess-feishu-native-guidance',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'user:ou_owner',
+        runId: 'run-feishu-native-guidance',
+      },
+    );
+
+    const toolHandler = handlers['before_tool_call'];
+    const promptSendMessage = vi.fn().mockResolvedValue(undefined);
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValueOnce({
+      block: true,
+      blockReason: '[Lynx Guardian] blocked local tool',
+      riskAssessment: {
+        level: 'L3',
+        score: 8,
+        modules: ['M2:protected_file_access'],
+        description: 'protected file tool attempt',
+        action: 'block',
+      },
+    } as any);
+
+    const result = await toolHandler(
+      {
+        toolName: 'read',
+        params: { file_path: 'README.md' },
+        runId: 'run-feishu-native-guidance',
+        toolCallId: 'tool-feishu-native-guidance-1',
+      },
+      {
+        sessionKey: 'sess-feishu-native-guidance',
+        channelId: 'feishu',
+        runId: 'run-feishu-native-guidance',
+        senderId: 'ou_owner',
+        sendMessage: promptSendMessage,
+      },
+    );
+
+    expect(result).toMatchObject({
+      requireApproval: expect.objectContaining({
+        onResolution: expect.any(Function),
+      }),
+    });
+    expect(promptSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('/approve'),
+      }),
+    );
+    const promptText = String(promptSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
+    expect(promptText).toContain('直接在当前飞书会话回复');
+    expect(promptText).toContain('确认放行本次操作');
+    expect(promptText).toContain('不需要切换到 webchat 页面');
+
+    guardSpy.mockRestore();
+  });
+
   it('should ignore local Feishu approval replies from non-approver ou_id and keep waiting for the configured approver', async () => {
     mockApi.config = {
       selfSafetyGuard: {

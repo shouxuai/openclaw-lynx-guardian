@@ -729,6 +729,27 @@ export default function setup(api: OpenClawPluginApi) {
     ].join("\n");
   }
 
+  function buildFeishuNativeToolApprovalReplyPrompt(params: {
+    approvalId: string;
+    module: string;
+    riskLevel: string;
+    toolName: string;
+    timeoutMs: number;
+    confirmationPhrase: string;
+  }): string {
+    const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
+    return [
+      `[Lynx Guardian] ${params.toolName} 已进入原生审批窗口。`,
+      `模块: ${params.module}`,
+      `风险: ${params.riskLevel}`,
+      `请在 ${timeoutSeconds}s 内直接在当前飞书会话回复以下命令之一：`,
+      `/approve ${params.approvalId} allow-once`,
+      `/approve ${params.approvalId} deny`,
+      `如果你之前习惯回复“${params.confirmationPhrase}”，本次请直接回复上面的 /approve 命令。`,
+      "不需要切换到 webchat 页面。",
+    ].join("\n");
+  }
+
   function buildLocalToolApprovalDeliveryRouteHint(params: {
     ctx: any;
     approvalId: string;
@@ -833,6 +854,27 @@ export default function setup(api: OpenClawPluginApi) {
     });
 
     return sendResult.delivered;
+  }
+
+  async function sendFeishuNativeToolApprovalPrompt(params: {
+    ctx: any;
+    approvalId: string;
+    requesterOuId?: string;
+    conversationId?: string;
+    accountId?: string;
+    threadId?: string | number;
+    content: string;
+  }): Promise<boolean> {
+    return await sendLocalToolApprovalPrompt({
+      ctx: params.ctx,
+      approvalId: params.approvalId,
+      preferredTransport: "native",
+      requesterOuId: params.requesterOuId,
+      conversationId: params.conversationId,
+      accountId: params.accountId,
+      threadId: params.threadId,
+      content: params.content,
+    });
   }
   function resolveOutboundPromptChannel(
     event: any,
@@ -2542,6 +2584,27 @@ export default function setup(api: OpenClawPluginApi) {
           if (transport === "local") {
             return await waitForPendingToolApprovalResolution(pendingApproval?.pending);
           }
+          if (
+            (effectiveRunApprovalContext.channelProfile
+              ?? resolveChannelProfile(ctx?.messageProvider ?? ctx?.channelId ?? ctx?.channel)) === "feishu"
+          ) {
+            await sendFeishuNativeToolApprovalPrompt({
+              ctx,
+              approvalId,
+              requesterOuId: effectiveRunApprovalContext.requesterOuId,
+              conversationId: effectiveRunApprovalContext.conversationId,
+              accountId: effectiveRunApprovalContext.accountId,
+              threadId: effectiveRunApprovalContext.threadId,
+              content: buildFeishuNativeToolApprovalReplyPrompt({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                toolName,
+                timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
+              }),
+            });
+          }
           return {
             requireApproval: buildToolApprovalRequest({
               toolName,
@@ -2838,6 +2901,27 @@ export default function setup(api: OpenClawPluginApi) {
           });
           if (transport === "local") {
             return await waitForPendingToolApprovalResolution(pendingApproval?.pending);
+          }
+          if (
+            (effectiveRunApprovalContext.channelProfile
+              ?? resolveChannelProfile(ctx?.messageProvider ?? ctx?.channelId ?? ctx?.channel)) === "feishu"
+          ) {
+            await sendFeishuNativeToolApprovalPrompt({
+              ctx,
+              approvalId,
+              requesterOuId: effectiveRunApprovalContext.requesterOuId,
+              conversationId: effectiveRunApprovalContext.conversationId,
+              accountId: effectiveRunApprovalContext.accountId,
+              threadId: effectiveRunApprovalContext.threadId,
+              content: buildFeishuNativeToolApprovalReplyPrompt({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                toolName,
+                timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
+                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
+              }),
+            });
           }
           return {
             requireApproval: buildToolApprovalRequest({
