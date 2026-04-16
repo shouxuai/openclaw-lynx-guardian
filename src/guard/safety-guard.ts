@@ -8,6 +8,8 @@
 
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
+import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
+import { SensitiveDataBlocker } from "./sensitive.js";
 import {
   findObfuscatedLynxPluginPath,
   findObfuscatedProtectedReferenceLabels,
@@ -181,6 +183,7 @@ interface SessionState {
   lastTopicCategory: string;
   lastActiveTime: number;
   operationHistory: OperationCategory[];  // last N operation categories for sequence detection
+  evasiveIntentCnFamilies: string[][];
   execMasquerade?: ExecMasqueradeState;
 }
 
@@ -216,6 +219,7 @@ function getSessionState(sessionKey: string): SessionState {
       lastTopicCategory: "normal",
       lastActiveTime: Date.now(),
       operationHistory: [],
+      evasiveIntentCnFamilies: [],
       execMasquerade: undefined,
     };
     sessionStates.set(sessionKey, state);
@@ -229,6 +233,7 @@ function getSessionState(sessionKey: string): SessionState {
 // workflow retries, NOT escalating attack attempts.
 const REJECTION_TRACKING_EXEMPT = new Set([
   "M0:identity_verification",
+  "M2:memory_session_privacy",
   "M2:plugin_integrity",
   "M2:protected_file_access",
   "M3:over_agency",
@@ -242,7 +247,11 @@ const OPERATION_HISTORY_MAX = 8;
 function inferOperationCategory(modules: string[]): OperationCategory {
   if (modules.includes("M7:pipe_execution")) return "pipe_exec";
   if (modules.some((m) => m.includes("credential"))) return "credential_access";
-  if (modules.includes("M2:plugin_integrity") || modules.includes("M2:protected_file_access")) return "file_access";
+  if (
+    modules.includes("M2:memory_session_privacy")
+    || modules.includes("M2:plugin_integrity")
+    || modules.includes("M2:protected_file_access")
+  ) return "file_access";
   if (modules.includes("M7:wildcard_obfuscation")) return "obfuscated_path";
   if (modules.includes("fatal_triangle")) return "external_output";
   if (modules.includes("sensitive_dir_entry")) return "sensitive_dir_entry";
@@ -347,6 +356,63 @@ function computeAnomalyAdjustment(sessionKey: string, baseScore: number, trigger
   return adjustment;
 }
 
+const EVASIVE_CN_HISTORY_MAX = 4;
+
+function computeChineseEvasiveConversationAdjustment(sessionKey: string, families: string[]): number {
+  if (!sessionKey || families.length === 0) return 0;
+
+  const state = getSessionState(sessionKey);
+  const currentFamilies = [...new Set(families)];
+  const history = state.evasiveIntentCnFamilies.slice(-EVASIVE_CN_HISTORY_MAX);
+  const recent = history.slice(-3);
+  const unionFamilies = new Set<string>(recent.flat());
+  const has = (family: string): boolean => unionFamilies.has(family);
+
+  let adjustment = 0;
+
+  if (
+    has("bypass_goal")
+    && has("masquerade_method")
+    && (has("wildcard_obfuscation") || has("dangerous_outcome"))
+  ) {
+    adjustment += 2;
+  } else if (
+    (has("bypass_goal") && has("masquerade_method"))
+    || (has("bypass_goal") && has("detector_target"))
+  ) {
+    adjustment += 1;
+  }
+
+  const detectorFocusTurns = recent.filter((turn) => turn.includes("detector_target")).length;
+  if (detectorFocusTurns >= 2) {
+    adjustment += 1;
+  }
+
+  if (recent.length >= 2) {
+    const firstBreadth = new Set(recent[0]).size;
+    const lastBreadth = new Set(recent[recent.length - 1]).size;
+    if (lastBreadth >= 3 && lastBreadth > firstBreadth) {
+      adjustment += 1;
+    }
+  }
+
+  state.evasiveIntentCnFamilies.push(currentFamilies);
+  if (state.evasiveIntentCnFamilies.length > EVASIVE_CN_HISTORY_MAX) {
+    state.evasiveIntentCnFamilies.shift();
+  }
+
+  return Math.min(adjustment, 2);
+}
+
+function isStandaloneWildcardLowSignal(
+  result: ReturnType<typeof detectChineseEvasiveIntent>,
+): boolean {
+  if (!result.detected) return false;
+  if (result.severity !== "low" || result.scoreDelta !== 1) return false;
+  return result.matchedFamilies.length === 1
+    && result.matchedFamilies[0] === "wildcard_obfuscation";
+}
+
 // ── Identity Verification (M0) ─────────────────────────────────────
 
 const DIRECT_OWNER_CLAIM_PATTERNS: { pattern: RegExp; label: string }[] = [
@@ -405,6 +471,17 @@ const PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\bopenclaw\.json\b/i, label: "openclaw.json" },
 ];
 
+const TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS = new Set([
+  "SOUL.md",
+  "IDENTITY.md",
+  "USER.md",
+  "AGENTS.md",
+  "TOOLS.md",
+  "SHIELD.md",
+  "SKILL.md",
+  "MEMORY.md",
+]);
+
 const PROTECTED_FILE_READ_PATTERNS: RegExp[] = [
   /\b(?:cat|less|more|head|tail|read|open|show|print|display|type|dump)\b/i,
   /(?:读取|查看|显示|打印|展示|列出|导出)/i,
@@ -413,8 +490,17 @@ const PROTECTED_FILE_READ_PATTERNS: RegExp[] = [
 const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
   /\b(?:write|edit|modify|update|append|overwrite|rewrite|rename|move|delete|remove|rm|mv|cp|tee)\b/i,
   /sed\s+-i/i,
+  /\b(?:Remove-Item|Move-Item|Copy-Item|Rename-Item|Set-Content|Add-Content|Out-File|New-Item)\b/i,
+  /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
+  /\b(?:File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|remove_tree)\b/i,
+  /\bopen\s*\([^)]*,\s*['"][^'"]*[wa+][^'"]*['"]\)/i,
   /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)/i,
 ];
+
+const IMMUTABLE_RUNTIME_CONFIG_LABELS = new Set([
+  "openclaw.json",
+  "openclaw.plugin.json",
+]);
 
 const LYNX_PLUGIN_ROOT_PATTERNS: RegExp[] = [
   /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$)/i,
@@ -439,8 +525,103 @@ const MUTATING_TOOL_PATTERNS: RegExp[] = [
   />>?/,
 ];
 
+const OPENCLAW_RUNTIME_NAME = String.raw`(?:openc(?:law|alaw)|open\s*claw)`;
+
+const OPENCLAW_MEMORY_SESSION_PATH_PATTERNS: RegExp[] = [
+  /(?:^|[\\/])\.openclaw[\\/]memory(?:[\\/]|$)/i,
+  /(?:^|[\\/])\.openclaw[\\/]agents[\\/][^\\/\s]+[\\/]sessions(?:[\\/]|$)/i,
+  /(?:^|[\\/])\.openclaw[\\/]docker-state[\\/]agents[\\/][^\\/\s]+[\\/]sessions(?:[\\/]|$)/i,
+];
+
+const OPENCLAW_MEMORY_SESSION_TARGET_PATTERNS: RegExp[] = [
+  new RegExp(`${OPENCLAW_RUNTIME_NAME}[^\\n\\r]{0,40}\\bmemory\\b`, "i"),
+  new RegExp(`\\bmemory\\b[^\\n\\r]{0,40}${OPENCLAW_RUNTIME_NAME}`, "i"),
+  new RegExp(`${OPENCLAW_RUNTIME_NAME}[^\\n\\r]{0,40}\\bsession(?:\\s+(?:records?|history|logs?))?\\b`, "i"),
+  new RegExp(`${OPENCLAW_RUNTIME_NAME}[^\\n\\r]{0,40}\\bconversation(?:\\s+(?:records?|history|logs?))\\b`, "i"),
+  new RegExp(`(?:${OPENCLAW_RUNTIME_NAME})[^\\n\\r]{0,20}(?:记忆|内存|会话记录|会话历史|聊天记录)`, "i"),
+];
+
+const OPENCLAW_MEMORY_SESSION_READ_PATTERNS: RegExp[] = [
+  ...PROTECTED_FILE_READ_PATTERNS,
+  /\b(?:ls|dir|find|grep|rg|list|export)\b/i,
+  /\b(?:Get-Content|Get-ChildItem|Select-String)\b/i,
+  /(?:列出|导出)/i,
+];
+
+const OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS: RegExp[] = [
+  ...PROTECTED_FILE_WRITE_PATTERNS,
+  /\b(?:clear|erase|wipe|purge|reset)\b/i,
+  /(?:清空|擦除|抹掉|重置)/i,
+];
+
+const OPENCLAW_MEMORY_SESSION_TOOL_NAMES = new Set([
+  "sessions_list",
+  "sessions_history",
+  "session_status",
+  "memory_search",
+  "memory_get",
+]);
+
+const OPENCLAW_MEMORY_SESSION_TRANSCRIPT_PATTERNS: RegExp[] = [
+  /"message"\s*:\s*\{\s*"role"\s*:\s*"(?:system|user|assistant|tool)"/i,
+  /"role"\s*:\s*"(?:system|user|assistant|tool)"[\s\S]{0,160}"content"\s*:/i,
+];
+
 function normalizeGuardPath(text: string): string {
   return text.replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function hasOpenClawMemorySessionTarget(text: string): boolean {
+  const normalized = normalizeGuardPath(text);
+  return OPENCLAW_MEMORY_SESSION_PATH_PATTERNS.some((pattern) => pattern.test(normalized))
+    || OPENCLAW_MEMORY_SESSION_TARGET_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function detectOpenClawMemorySessionRequest(text: string): boolean {
+  if (!hasOpenClawMemorySessionTarget(text)) {
+    return false;
+  }
+
+  return OPENCLAW_MEMORY_SESSION_READ_PATTERNS.some((pattern) => pattern.test(text))
+    || OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function detectOpenClawMemorySessionArtifactAccess(text: string, toolName?: string): boolean {
+  const normalizedToolName = (toolName ?? "").trim().toLowerCase();
+  if (OPENCLAW_MEMORY_SESSION_TOOL_NAMES.has(normalizedToolName)) {
+    return true;
+  }
+
+  const normalized = normalizeGuardPath(text);
+  const targetsDetected = OPENCLAW_MEMORY_SESSION_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
+
+  if (!targetsDetected) {
+    return false;
+  }
+
+  if (toolName === "read" || toolName === "write" || toolName === "edit") {
+    return true;
+  }
+
+  return OPENCLAW_MEMORY_SESSION_READ_PATTERNS.some((pattern) => pattern.test(text))
+    || OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function detectOpenClawMemorySessionLeak(text: string): boolean {
+  const normalized = normalizeGuardPath(text);
+  if (OPENCLAW_MEMORY_SESSION_PATH_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  if (/"scope"\s*:\s*"openclaw-memory"/i.test(text)) {
+    return true;
+  }
+
+  const explicitRuntimeReference = OPENCLAW_MEMORY_SESSION_TARGET_PATTERNS.some((pattern) => pattern.test(text))
+    || /\bopenclaw-memory\b/i.test(text);
+
+  return explicitRuntimeReference
+    && OPENCLAW_MEMORY_SESSION_TRANSCRIPT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function extractPluginTargets(text: string): string[] {
@@ -513,6 +694,37 @@ function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFi
 }
 
 // ── Credential Theft Detection (M5) ────────────────────────────────
+
+function hasToolStageMinBlockProtectedFile(access: ProtectedFileAccessResult): boolean {
+  return access.matchedFiles.some((label) => TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS.has(label));
+}
+
+function detectImmutableRuntimeConfigWrite(protectedAccess: ProtectedFileAccessResult): boolean {
+  return protectedAccess.operation === "write"
+    && protectedAccess.matchedFiles.some((label) => IMMUTABLE_RUNTIME_CONFIG_LABELS.has(label));
+}
+
+const DISABLE_LYNX_GUARDIAN_PATTERNS: RegExp[] = [
+  /(?:禁用|停用|关闭|卸载|移除)[^\n\r]{0,40}(?:lynx[-\s]*guardian|lynx[-\s]*plugin|openclaw[-\s]*lynx[-\s]*guardian|lynx[-\s]*插件|guardian[-\s]*插件)/i,
+  /\b(?:disable|deactivate|turn\s+off|uninstall|remove)\b[^\n\r]{0,60}\b(?:lynx[-\s]*guardian|lynx[-\s]*plugin|openclaw[-\s]*lynx[-\s]*guardian)\b/i,
+  /\bopenclaw\b[^\n\r]{0,40}\b(?:extension|plugin)\b[^\n\r]{0,20}\bdisable\b[^\n\r]{0,60}\b(?:openclaw-lynx-guardian|lynx-guardian)\b/i,
+];
+
+function detectLynxGuardianDisableRequest(text: string): boolean {
+  return DISABLE_LYNX_GUARDIAN_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+const OPENCLAW_AVAILABILITY_CONTROL_PATTERNS: RegExp[] = [
+  /(?:重启|关闭|停止|关停|停掉|杀掉)[^\n\r]{0,40}(?:openclaw(?:\s*gateway)?|openclaw\s*网关|openclaw\s*gateway)/i,
+  /\b(?:restart|stop|shutdown|kill)\b[^\n\r]{0,40}\bopenclaw(?:\s+gateway)?\b/i,
+  /\bopenclaw\b[^\n\r]{0,80}\b(?:gateway\b[^\n\r]{0,20})?(?:restart|stop|shutdown|kill|down)\b/i,
+  /\bdocker(?:\s+compose)?\b[^\n\r]{0,120}\b(?:restart|stop|down|kill)\b[^\n\r]*(?:openclaw|openclaw-gateway)\b/i,
+  /\b(?:Restart-Service|Stop-Service|taskkill|pkill|killall)\b[^\n\r]*(?:openclaw|openclaw-gateway)\b/i,
+];
+
+function detectOpenClawAvailabilityControl(text: string): boolean {
+  return OPENCLAW_AVAILABILITY_CONTROL_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 const CREDENTIAL_ACCESS_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /(?:cat|less|more|head|tail|read|open)\s+.*\.env\b/i, label: "env_file_read" },
@@ -782,6 +994,22 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     return buildInstantDenyForModules(instantModules, "system prompt extraction");
   }
 
+  if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
+    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+  }
+
+  if (detectLynxGuardianDisableRequest(text)) {
+    return buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian");
+  }
+
+  if (detectOpenClawAvailabilityControl(text)) {
+    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+  }
+
+  if (detectOpenClawMemorySessionRequest(text)) {
+    return buildInstantDeny("M2:memory_session_privacy", "attempt to access or clear OpenClaw memory/session records");
+  }
+
   // M5: 主要凭证/系统敏感文件
   const credentialTheft = detectCredentialTheft(text);
   if (credentialTheft.some((label) => PRIMARY_SECRETS.has(label))) {
@@ -797,6 +1025,10 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
       return buildInstantDeny("M6:malicious_code", "恶意代码请求");
     }
   }
+
+  // M4: 中文规避意图（输入侧）
+  const evasiveIntentCn = detectChineseEvasiveIntent(text);
+  const suppressVisibleM4 = isStandaloneWildcardLowSignal(evasiveIntentCn);
 
   // === 评分通道 ===
 
@@ -867,6 +1099,35 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     pushDim(accum, "clarity", 2);
   }
 
+  // M4: 中文规避意图（模块化加权 + 有界增益）
+  if (evasiveIntentCn.detected && !suppressVisibleM4) {
+    modules.push("M4:evasive_intent_cn");
+    if (evasiveIntentCn.severity === "high") {
+      pushDim(accum, "harm", 2);
+      pushDim(accum, "rev", 1);
+      pushDim(accum, "auth", 2);
+      pushDim(accum, "pattern", 2);
+      pushDim(accum, "clarity", 2);
+    } else if (evasiveIntentCn.severity === "medium") {
+      pushDim(accum, "harm", 2);
+      pushDim(accum, "auth", 1);
+      pushDim(accum, "pattern", 2);
+      pushDim(accum, "clarity", 2);
+    } else {
+      pushDim(accum, "harm", 1);
+      pushDim(accum, "pattern", 1);
+      pushDim(accum, "clarity", 1);
+    }
+
+    if (evasiveIntentCn.matchedFamilies.includes("dangerous_outcome")) {
+      pushDim(accum, "harm", 2);
+      pushDim(accum, "rev", 2);
+    }
+    if (evasiveIntentCn.matchedFamilies.length >= 3) {
+      pushDim(accum, "pattern", 2);
+    }
+  }
+
   // M0 + M2/M3 组合：叠加额外 auth 信号
   if (!verifiedOwner && identityClaims.detected && (
     modules.includes("M2:protected_file_access") || modules.includes("M3:over_agency")
@@ -896,10 +1157,21 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   let score = computeWeightedScore(accum);
+  if (evasiveIntentCn.detected && !suppressVisibleM4) {
+    score = Math.min(score + Math.min(evasiveIntentCn.scoreDelta, 2), 10);
+  }
 
   if (sessionKey) {
-    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
+    const sharedAnomalyModules = modules.filter((m) => m !== "M4:evasive_intent_cn");
+    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, sharedAnomalyModules);
     score = Math.min(score + anomalyAdj, 10);
+    if (evasiveIntentCn.detected && !suppressVisibleM4) {
+      const cnConversationAdj = computeChineseEvasiveConversationAdjustment(
+        sessionKey,
+        evasiveIntentCn.matchedFamilies,
+      );
+      score = Math.min(score + cnConversationAdj, 10);
+    }
   }
 
   if (verifiedOwner && score > 0) {
@@ -962,10 +1234,23 @@ const SECRET_VALUE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/, label: "private_key" },
 ];
 
+const outputSensitiveDataBlocker = new SensitiveDataBlocker();
+
 function detectSecretsInOutput(text: string): string[] {
   return SECRET_VALUE_PATTERNS
     .filter(({ pattern }) => pattern.test(text))
     .map(({ label }) => label);
+}
+
+function detectPersonalFinancialDataInOutput(text: string): string[] {
+  return Array.from(
+    new Set(
+      outputSensitiveDataBlocker
+        .findSensitiveData(text, { includePersonalFinancial: true })
+        .map((match) => match.type)
+        .filter((type) => type === "cn_resident_id" || type === "bank_card"),
+    ),
+  );
 }
 
 // ── Public API: Output Guard ───────────────────────────────────────
@@ -982,6 +1267,10 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
         action: "allow",
       },
     };
+  }
+
+  if (detectOpenClawMemorySessionLeak(output)) {
+    return buildInstantDeny("M2:memory_session_privacy", "attempt to reveal OpenClaw memory/session records");
   }
 
   const modules: string[] = [];
@@ -1001,6 +1290,16 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
     modules.push("M5:secrets_in_output");
     pushDim(accum, "harm", 3);
     pushDim(accum, "rev", 2);
+    pushDim(accum, "auth", 2);
+    pushDim(accum, "pattern", 2);
+    pushDim(accum, "clarity", 2);
+  }
+
+  const personalFinancialData = detectPersonalFinancialDataInOutput(output);
+  if (personalFinancialData.length > 0) {
+    modules.push("M5:pii_in_output");
+    pushDim(accum, "harm", 2);
+    pushDim(accum, "rev", 1);
     pushDim(accum, "auth", 2);
     pushDim(accum, "pattern", 2);
     pushDim(accum, "clarity", 2);
@@ -1088,14 +1387,47 @@ export function guardToolCall(
   const trustedInternalProtectedRead = context?.trustedInternalProtectedRead === true;
   const trustedManagedLynxCheckToolCall = context?.trustedManagedLynxCheckToolCall === true;
 
+  const toolAction = (params?.action ?? "") as string;
+  const note = (params?.note ?? "") as string;
+  const raw = (params?.raw ?? "") as string;
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? "") as string;
-  const combined = `${command} ${filePath}`;
+  const normalizedToolName = toolName.trim().toLowerCase();
+  const normalizedToolAction = toolAction.trim().toLowerCase();
+  const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
+  const protectedAccess = detectProtectedFileAccess(combined, toolName);
   let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
+
+  if (normalizedToolName === "gateway" && /^config\.(?:patch|set|replace|update)$/i.test(normalizedToolAction)) {
+    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+  }
+
+  if (
+    normalizedToolName === "gateway"
+    && /(?:^|\.)(?:restart|stop|shutdown|close|kill|down|quit|exit)(?:$|\.)/i.test(normalizedToolAction)
+  ) {
+    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+  }
 
   // === 即时危险通道 ===
 
   // M5: 主要凭证 via tool
+  if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
+    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+  }
+
+  if (detectLynxGuardianDisableRequest(combined)) {
+    return buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian");
+  }
+
+  if (detectOpenClawAvailabilityControl(combined)) {
+    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+  }
+
+  if (detectOpenClawMemorySessionArtifactAccess(combined, toolName)) {
+    return buildInstantDeny("M2:memory_session_privacy", "attempt to access or modify OpenClaw memory/session artifacts");
+  }
+
   if (detectPluginIntegrityViolation(combined, toolName)) {
     return buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory");
   }
@@ -1144,7 +1476,6 @@ export function guardToolCall(
     masqueradeTaintLevel = updateExecMasqueradeState(sessionKey, "soft", masqueradeHint);
   }
 
-  const protectedAccess = detectProtectedFileAccess(combined, toolName);
   if (
     protectedAccess.matchedFiles.length > 0
     && !trustedInternalProtectedRead
@@ -1211,6 +1542,14 @@ export function guardToolCall(
     score = Math.max(0, score - 2);
   }
 
+  if (
+    !trustedInternalProtectedRead
+    && !trustedManagedLynxCheckToolCall
+    && hasToolStageMinBlockProtectedFile(protectedAccess)
+  ) {
+    score = Math.max(score, 6);
+  }
+
   score = Math.min(score, 10);
 
   const level = scoreToLevel(score);
@@ -1250,7 +1589,9 @@ function buildDescription(modules: string[], level: RiskLevel): string {
   if (modules.length === 0) return "安全";
 
   const moduleNames: Record<string, string> = {
+    "M2:memory_session_privacy": "OpenClaw memory/session privacy",
     "M2:plugin_integrity": "Lynx plugin integrity",
+    "M2:runtime_config_integrity": "immutable OpenClaw/Lynx config",
     "M3:remote_access_control": "SSH remote login control",
     "M3:system_availability": "system shutdown/reboot control",
     "M0:identity_verification": "身份冒充/未验证身份声明",
@@ -1259,6 +1600,7 @@ function buildDescription(modules: string[], level: RiskLevel): string {
     "M2:protected_file_access": "核心配置文件访问",
     "M2:system_prompt_leak": "系统提示泄露",
     "M3:over_agency": "过度代理/权限提升",
+    "M4:evasive_intent_cn": "中文规避意图输入",
     "M5:credential_theft": "凭证窃取风险",
     "M6:malicious_code": "恶意代码请求",
     "fatal_triangle": "致命三角风险",

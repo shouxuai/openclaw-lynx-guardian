@@ -88,13 +88,18 @@ test-results/
 # 性能分析文件
 *.cpuprofile
 *.heapprofile
-/docs
 /.
 /test
 /test/**
 /test-temp
 /docs/**
+!/docs/
+!/docs/superpowers/
+!/docs/superpowers/specs/
+!/docs/superpowers/specs/**
 .worktrees/
 /scripts-dev
 /AGENTS.md
 /CLAUDE.md
+/notes
+/skills/openclaw-plugin-dev-workflow

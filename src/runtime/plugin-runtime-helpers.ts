@@ -1,6 +1,10 @@
 import { homedir } from "os";
 import { normalize, resolve } from "path";
 import type { GuardContext } from "../guard/safety-guard.js";
+import {
+  buildEnvironmentProfile,
+  type EnvironmentProfile,
+} from "../guard/policy/environment-profile.js";
 
 export function canonicalizePath(raw: string): string {
   if (typeof raw !== "string" || raw.length === 0) {
@@ -35,6 +39,13 @@ export function resolveRuntimeHomeDir(): string {
   }
 
   return homedir();
+}
+
+export function resolveRuntimeEnvironmentProfile(cwd: string): EnvironmentProfile {
+  return buildEnvironmentProfile({
+    cwd,
+    pluginSourceRoot: cwd,
+  });
 }
 
 const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [
@@ -232,16 +243,28 @@ export function isTrustedManagedLynxCheckReportText(value: unknown): boolean {
 export function buildGuardContext(config: any, event: any, ctx: any): GuardContext {
   const ownerVerification = config?.selfSafetyGuard?.ownerVerification ?? {};
   const requesterId = normalizeString(
-    event?.sender?.id
+    event?.sender?.sender_id?.open_id
+    ?? event?.sender?.id
+    ?? event?.metadata?.sender?.sender_id?.open_id
+    ?? event?.metadata?.senderOpenId
+    ?? event?.senderOpenId
+    ?? event?.senderId
     ?? event?.userId
     ?? ctx?.userId
-    ?? ctx?.senderId,
+    ?? ctx?.senderId
+    ?? ctx?.senderOpenId
+    ?? ctx?.requesterId
+    ?? ctx?.requesterOuId,
   );
   const channel = normalizeString(
     event?.channel
     ?? event?.source
+    ?? event?.metadata?.originatingChannel
+    ?? event?.metadata?.provider
     ?? ctx?.channel
-    ?? ctx?.source,
+    ?? ctx?.source
+    ?? ctx?.channelId
+    ?? ctx?.messageProvider,
   );
 
   const trustedUserIds = new Set(

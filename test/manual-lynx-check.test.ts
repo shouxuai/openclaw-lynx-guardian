@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../src/api.js";
 import { buildManualLynxCheckReport } from "../src/discovery/manual-lynx-check.js";
 import * as discoveryUtils from "../src/discovery/discovery-hook-utils.js";
+import { runManagedLynxAuditBoundaryCheck } from "../src/runtime/lynx-audit-runtime.js";
 import * as securityAuditRunner from "../src/runtime/security-audit-runner.js";
 import * as skillGuard from "../src/skills/skill-guard.js";
 
@@ -106,5 +107,14 @@ describe("buildManualLynxCheckReport", () => {
     });
 
     expect(report).not.toMatch(/check-runs|report\.md|result\.json|查看文件路径|inspect local files/i);
+  });
+  it("allows managed /lynx-check report delivery inside the audit runtime boundary", () => {
+    expect(
+      runManagedLynxAuditBoundaryCheck({
+        action: "deliver_report",
+        target: "current-channel",
+        managed: true,
+      }),
+    ).toEqual({ allowed: true });
   });
 });

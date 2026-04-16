@@ -125,6 +125,30 @@ describe('P1 Regression Tests', () => {
       // This is a long hex string that could be a key
       expect(blocker.containsSensitiveData(longHex)).toBe(true);
     });
+
+    it('should redact Chinese resident identity numbers when requested', () => {
+      const blocker = new SensitiveDataBlocker();
+      const result = blocker.redactSensitiveData('身份证号 11010519491231002X', {
+        includePersonalFinancial: true,
+      });
+
+      expect(result.changed).toBe(true);
+      expect(result.text).not.toContain('11010519491231002X');
+      expect(result.text).toContain('110105');
+      expect(result.text).toContain('002X');
+    });
+
+    it('should redact bank card numbers when requested', () => {
+      const blocker = new SensitiveDataBlocker();
+      const result = blocker.redactSensitiveData('银行卡 6222021234567890123', {
+        includePersonalFinancial: true,
+      });
+
+      expect(result.changed).toBe(true);
+      expect(result.text).not.toContain('6222021234567890123');
+      expect(result.text).toContain('622202');
+      expect(result.text).toContain('0123');
+    });
   });
 
   describe('P1-9: override pattern should not false-positive', () => {

@@ -3,7 +3,11 @@ import type { RiskAssessment, RiskLevel } from "./safety-guard.js";
 export interface RiskPolicyConfig {
   absoluteRejectScore?: number;
   confirmationPhrase?: string;
+  approvableRiskLevels?: RiskLevel[];
   allowOneTimeOverrideLevels?: RiskLevel[];
+  toolApprovalTimeoutSeconds?: number;
+  grantWindowSeconds?: number;
+  workflowAuthWindowSeconds?: number;
   moduleOverrides?: {
     M2?: {
       protectedFileAccess?: { allowOneTimeOverride?: boolean };
@@ -45,7 +49,9 @@ export interface RiskPolicyResult {
 const MODULE_OVERRIDE_ELIGIBLE: Record<string, boolean> = {
   // Potentially legitimate access by the workspace owner
   "M0:identity_verification":  true,
+  "M2:memory_session_privacy": false,
   "M2:protected_file_access":  true,
+  "M2:runtime_config_integrity": false,
   // Self-modification / privilege escalation — configurable, default on
   "M2:plugin_integrity":       false,
   "M3:over_agency":            false,
@@ -105,7 +111,7 @@ export function resolveRiskPolicy(
     // Score still drives the level; level is checked against allowOneTimeOverrideLevels.
     // absoluteRejectScore is intentionally NOT re-checked here: anomaly-driven score
     // inflation on overridable modules should not silence the confirmation prompt.
-    const allowedLevels = config.allowOneTimeOverrideLevels ?? [];
+    const allowedLevels = config.approvableRiskLevels ?? config.allowOneTimeOverrideLevels ?? [];
     overrideAllowed = allowedLevels.includes(assessment.level);
     if (!overrideAllowed) {
       reason = "level_not_allowed";

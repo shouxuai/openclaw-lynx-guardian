@@ -63,7 +63,7 @@
           },
           "policy": {
             "type": "object",
-            "description": "Risk policy configuration for one-time overrides",
+            "description": "Risk policy configuration for native tool approvals and short-lived same-run grants",
             "additionalProperties": false,
             "properties": {
               "absoluteRejectScore": {
@@ -71,10 +71,25 @@
                 "default": 10,
                 "description": "Score threshold for hard reject decisions"
               },
+              "toolApprovalTimeoutSeconds": {
+                "type": "integer",
+                "default": 120,
+                "description": "Seconds to wait for native tool approval before denying the blocked tool call"
+              },
+              "grantWindowSeconds": {
+                "type": "integer",
+                "default": 180,
+                "description": "Seconds that same-run, same-module, same-or-lower-risk tool calls may continue after approval"
+              },
+              "localApprovalApproverOuIds": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Feishu ou_id allowlist for Lynx local chat approval replies. When empty, local reply approval is disabled and only native OpenClaw approval remains."
+              },
               "confirmationPhrase": {
                 "type": "string",
                 "default": "确认放行本次操作",
-                "description": "Exact phrase required to approve a one-time override"
+                "description": "Deprecated. Free-text approval is no longer used by Lynx native tool approvals."
               },
               "allowOneTimeOverrideLevels": {
                 "type": "array",
@@ -82,7 +97,11 @@
                   "type": "string",
                   "enum": ["L2", "L3", "L4"]
                 },
-                "description": "Risk levels that can request a one-time override"
+                "description": "Deprecated compatibility alias for approvable risk levels"
+              },
+              "workflowAuthWindowSeconds": {
+                "type": "integer",
+                "description": "Deprecated compatibility alias for grantWindowSeconds"
               },
               "moduleOverrides": {
                 "type": "object",

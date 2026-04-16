@@ -201,10 +201,35 @@ describe("Lynx Delivery Intent Storage", () => {
           {
             id: "intent-invalid-infinity",
             source: "scheduled",
-            trigger: "keyword_request",
+            trigger: "lynx_command",
             preferredTargetKind: "bound",
             reportPath: "/tmp/report.md",
             createdAtMs: Number.POSITIVE_INFINITY,
+          },
+          { path: storePath },
+        ),
+      ).toThrow("Invalid LynxDeliveryIntent");
+
+      expect(readLynxDeliveryIntent({ path: storePath })).toBeNull();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects the removed keyword_request trigger", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lynx-delivery-intent-invalid-trigger-"));
+    const storePath = join(tempDir, "intent.json");
+
+    try {
+      expect(() =>
+        writeLynxDeliveryIntent(
+          {
+            id: "intent-invalid-trigger",
+            source: "manual",
+            trigger: "keyword_request" as any,
+            preferredTargetKind: "recent",
+            reportPath: "/tmp/report.md",
+            createdAtMs: 1712700000000,
           },
           { path: storePath },
         ),

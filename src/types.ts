@@ -16,6 +16,7 @@ export interface PluginConfig {
     outputGuard?: boolean;
     toolGuard?: boolean;
     resultGuard?: boolean;
+    outputEnforcementMode?: "warn" | "redact" | "block";
     ownerVerification?: {
       enabled?: boolean;
       trustedUserIds?: string[];
@@ -25,6 +26,7 @@ export interface PluginConfig {
       absoluteRejectScore?: number;
       confirmationPhrase?: string;
       allowOneTimeOverrideLevels?: Array<"L2" | "L3" | "L4">;
+      localApprovalApproverOuIds?: string[];
       moduleOverrides?: {
         M2?: {
           protectedFileAccess?: { allowOneTimeOverride?: boolean };
@@ -136,6 +138,8 @@ export interface EventContext {
 export interface ToolCallEvent {
   toolName: string;
   params: Record<string, any>;
+  runId?: string;
+  toolCallId?: string;
 }
 
 export interface MessageReceivedEvent {
@@ -172,6 +176,21 @@ export interface MessageSendingResult {
   cancel?: boolean;
 }
 
+export interface BeforeDispatchEvent {
+  content: string;
+  body?: string;
+  channel?: string;
+  sessionKey?: string;
+  senderId?: string;
+  isGroup?: boolean;
+  timestamp?: number;
+}
+
+export interface BeforeDispatchResult {
+  handled: boolean;
+  text?: string;
+}
+
 export interface BeforeMessageWriteEvent {
   message: Message;
   sessionKey?: string;
@@ -182,6 +201,29 @@ export interface BeforeMessageWriteEvent {
 export interface BeforeMessageWriteResult {
   block?: boolean;
   message?: Message;
+}
+
+export type ToolApprovalResolution =
+  | "allow-once"
+  | "allow-always"
+  | "deny"
+  | "timeout"
+  | "cancelled";
+
+export interface ToolApprovalRequest {
+  title: string;
+  description: string;
+  severity?: "info" | "warning" | "critical";
+  timeoutMs?: number;
+  timeoutBehavior?: "allow" | "deny";
+  onResolution?: (decision: ToolApprovalResolution) => Promise<void> | void;
+}
+
+export interface BeforeToolCallResult {
+  block?: boolean;
+  blockReason?: string;
+  params?: Record<string, unknown>;
+  requireApproval?: ToolApprovalRequest;
 }
 
 export interface ToolResultPersistEvent {
@@ -236,6 +278,13 @@ export interface OpenClawPluginApi {
   logger: Logger;
   config: PluginConfig;
   on(
+    event: "before_dispatch",
+    handler: (
+      event: BeforeDispatchEvent,
+      ctx: EventContext
+    ) => Promise<void | BeforeDispatchResult> | void
+  ): void;
+  on(
     event: "message_received",
     handler: (
       event: MessageReceivedEvent,
@@ -247,7 +296,7 @@ export interface OpenClawPluginApi {
     handler: (
       event: ToolCallEvent,
       ctx: EventContext
-    ) => Promise<void | { block: boolean; blockReason?: string }>
+    ) => Promise<void | BeforeToolCallResult>
   ): void;
   on(
     event: "before_agent_start",
