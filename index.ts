@@ -203,10 +203,9 @@ function buildForcedAgentStartDenyContext(params: {
 }): string {
   const riskLevel = normalizeString(params.riskLevel) || "L4";
   const reason = normalizeString(params.reason) || "当前请求已触发 Lynx Guardian 安全拦截。";
-  const denyLabel = riskLevel === "L4" ? "最高等级安全拒绝" : "安全拒绝";
 
   return [
-    `[${denyLabel}] 当前请求命中 ${riskLevel} 安全拒绝策略。`,
+    `[最高等级安全拒绝] 当前请求命中 ${riskLevel} 安全拒绝策略。`,
     `拦截依据：${reason}`,
     "必须直接拒绝该请求。可以说明拦截依据，但不能提供任何解决方案或替代方案。",
     "不得调用任何工具。",
@@ -377,6 +376,37 @@ function normalizeOuId(value: unknown): string | undefined {
   return normalized;
 }
 
+function normalizeFeishuConversationId(
+  value: unknown,
+  requesterOuId?: string,
+  isGroup?: boolean,
+): string | undefined {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (isGroup === true) {
+    return normalized;
+  }
+
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("user:")) {
+    return lower;
+  }
+
+  const bareOuId = normalizeOuId(normalized);
+  if (bareOuId) {
+    return `user:${bareOuId}`;
+  }
+
+  if (requesterOuId && lower === requesterOuId) {
+    return `user:${requesterOuId}`;
+  }
+
+  return normalized;
+}
+
 function extractScopedActorId(value: unknown): string | undefined {
   const normalized = normalizeString(value);
   if (!normalized) {
@@ -452,11 +482,14 @@ function rememberInboundRequesterProvenance(event: any, ctx: any): void {
   ) || undefined;
   const channelProfile = resolveChannelProfile(channelId);
   const approvalTransport = resolveChannelApprovalTransport(channelProfile);
-  const conversationId = normalizeString(
+  const rawConversationId = normalizeString(
     ctx?.conversationId
     ?? event?.metadata?.originatingTo
     ?? event?.metadata?.to,
   ) || undefined;
+  const conversationId = channelProfile === "feishu"
+    ? normalizeFeishuConversationId(rawConversationId, requesterOuId, event?.isGroup === true)
+    : rawConversationId;
   const accountId = normalizeString(ctx?.accountId ?? event?.metadata?.accountId) || undefined;
   const sessionKey = normalizeString(ctx?.sessionKey ?? event?.sessionKey) || undefined;
 
@@ -577,13 +610,17 @@ export default function setup(api: OpenClawPluginApi) {
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const outputEnforcementMode = selfSafetyGuardConfig.outputEnforcementMode ?? "block";
   const riskPolicyConfig = normalizePolicyConfig((selfSafetyGuardConfig as any).policy ?? {});
+  const trustedOwnerOuIds = normalizeOuIdList((selfSafetyGuardConfig as any)?.ownerVerification?.trustedUserIds);
   const localApprovalApproverOuIds = (() => {
     const explicitApprovers = normalizeOuIdList((selfSafetyGuardConfig as any)?.policy?.localApprovalApproverOuIds);
     if (explicitApprovers.length > 0) {
       return explicitApprovers;
     }
-    return normalizeOuIdList((selfSafetyGuardConfig as any)?.ownerVerification?.trustedUserIds);
+    return trustedOwnerOuIds;
   })();
+  log.info(
+    `[lynx-guardian] Approval identity config trustedOwnerOuIds=${JSON.stringify(trustedOwnerOuIds)} localApprovalApproverOuIds=${JSON.stringify(localApprovalApproverOuIds)}`,
+  );
   const securityAuditConfig = config.securityAudit ?? {};
   const skillGuardConfig = config.skillGuard ?? {};
   const tokenOptimizerConfig = config.tokenOptimizer ?? {};
@@ -769,14 +806,23 @@ export default function setup(api: OpenClawPluginApi) {
     const senderId = normalizeString(
       params.requesterOuId
       ?? params.ctx?.senderId
+      ?? params.ctx?.senderOpenId
       ?? params.ctx?.userId,
     ) || undefined;
-    const to = normalizeString(
+    const rawTo = normalizeString(
       params.conversationId
       ?? params.ctx?.conversationId
       ?? params.ctx?.to
       ?? params.ctx?.recipientId,
     ) || undefined;
+    const channelProfile = resolveChannelProfile(messageProvider ?? channelId);
+    const to = channelProfile === "feishu"
+      ? normalizeFeishuConversationId(
+          rawTo,
+          normalizeOuId(senderId ?? params.requesterOuId),
+          params.ctx?.isGroup === true,
+        )
+      : rawTo;
     const accountId = normalizeString(params.accountId ?? params.ctx?.accountId) || undefined;
     const threadId = params.threadId ?? resolveDeliveryThreadId(params.ctx);
     const sessionKey = normalizeString(params.ctx?.sessionKey) || undefined;
@@ -814,8 +860,13 @@ export default function setup(api: OpenClawPluginApi) {
     content: string;
   }): Promise<boolean> {
     if (params.content.trim().length === 0) {
+      log.warn(`[lynx-guardian] Local tool approval prompt skipped because content is empty approvalId=${params.approvalId}`);
       return false;
     }
+
+    log.info(
+      `[lynx-guardian] Local tool approval prompt start approvalId=${params.approvalId} preferredTransport=${params.preferredTransport ?? "auto"} hasCtxSendMessage=${String(typeof params.ctx?.sendMessage === "function")}`,
+    );
 
     if (typeof params.ctx?.sendMessage === "function") {
       try {
@@ -831,8 +882,10 @@ export default function setup(api: OpenClawPluginApi) {
 
     const routeHint = buildLocalToolApprovalDeliveryRouteHint(params);
     if (!routeHint) {
+      log.warn(`[lynx-guardian] Local tool approval prompt has no delivery route approvalId=${params.approvalId}`);
       return false;
     }
+    log.info(`[lynx-guardian] Local tool approval prompt routeHint approvalId=${params.approvalId} route=${JSON.stringify(routeHint)}`);
 
     const sendResult = await sendAssistantMessageWithRetry({
       ctx: {
@@ -854,6 +907,10 @@ export default function setup(api: OpenClawPluginApi) {
         content: params.content,
       },
     });
+
+    log.info(
+      `[lynx-guardian] Local tool approval prompt delivery result approvalId=${params.approvalId} delivered=${String(sendResult.delivered)} transport=${sendResult.transport}`,
+    );
 
     return sendResult.delivered;
   }
@@ -1692,13 +1749,16 @@ export default function setup(api: OpenClawPluginApi) {
       rememberRecentActiveDeliveryTarget(ctx);
       const sessionKey = normalizeString(ctx.sessionKey) || undefined;
       const channelId = normalizeString(ctx.channelId) || undefined;
+      const normalizedConversationIdInput = resolveChannelProfile(channelId) === "feishu"
+        ? normalizeFeishuConversationId(normalizeString((ctx as any).conversationId) || undefined)
+        : (normalizeString((ctx as any).conversationId) || undefined);
       const requester = claimRequesterProvenance({
         sessionKey,
       }) ?? readRequesterProvenance({
         sessionKey,
         channelId,
         accountId: normalizeString((ctx as any).accountId) || undefined,
-        conversationId: normalizeString((ctx as any).conversationId) || undefined,
+        conversationId: normalizedConversationIdInput,
       });
       const approvalContextSeed = mergeApprovalContextSeed(
         {
@@ -1715,9 +1775,16 @@ export default function setup(api: OpenClawPluginApi) {
       );
       const channelProfile = approvalContextSeed.channelProfile ?? resolveChannelProfile(channelId);
       const approvalTransport = approvalContextSeed.approvalTransport ?? resolveChannelApprovalTransport(channelProfile);
+      const normalizedApprovalConversationId = channelProfile === "feishu"
+        ? normalizeFeishuConversationId(
+            approvalContextSeed.conversationId,
+            approvalContextSeed.requesterOuId,
+            approvalContextSeed.isGroup,
+          )
+        : approvalContextSeed.conversationId;
       if (!requester?.requesterOuId && approvalContextSeed.requesterOuId) {
         log.info(
-          `[lynx-guardian] Recovered Feishu approval context before_agent_start run=${ctx.runId ?? "no-run"} requester=${approvalContextSeed.requesterOuId} conversation=${approvalContextSeed.conversationId ?? "none"}`,
+          `[lynx-guardian] Recovered Feishu approval context before_agent_start run=${ctx.runId ?? "no-run"} requester=${approvalContextSeed.requesterOuId} conversation=${normalizedApprovalConversationId ?? approvalContextSeed.conversationId ?? "none"}`,
         );
       }
       if (ctx.runId) {
@@ -1729,7 +1796,7 @@ export default function setup(api: OpenClawPluginApi) {
           requesterId: approvalContextSeed.requesterId,
           requesterOuId: approvalContextSeed.requesterOuId,
           accountId: approvalContextSeed.accountId,
-          conversationId: approvalContextSeed.conversationId,
+          conversationId: normalizedApprovalConversationId,
           threadId: approvalContextSeed.threadId,
           isGroup: approvalContextSeed.isGroup,
           createdAt: Date.now(),
@@ -1833,6 +1900,15 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.inputGuard !== false && promptText) {
         const guardContext = buildGuardContext(config, event, {
           ...ctx,
+          requesterId: approvalContextSeed.requesterId ?? approvalContextSeed.requesterOuId,
+          requesterOuId: approvalContextSeed.requesterOuId,
+          senderId: normalizeString(ctx?.senderId) || approvalContextSeed.requesterId || approvalContextSeed.requesterOuId,
+          senderOpenId: normalizeString((ctx as any)?.senderOpenId) || approvalContextSeed.requesterOuId,
+          channelId: normalizeString(ctx?.channelId) || (channelProfile === "other" ? undefined : channelProfile),
+          messageProvider: normalizeString((ctx as any)?.messageProvider ?? ctx?.source) || (channelProfile === "other" ? undefined : channelProfile),
+          verifiedOwner: approvalContextSeed.requesterOuId
+            ? localApprovalApproverOuIds.includes(approvalContextSeed.requesterOuId)
+            : ctx?.verifiedOwner,
           managedLynxCheckRun: managedLynxCheckSource != null,
           managedLynxCheckPreauthorized,
         });
@@ -1852,16 +1928,22 @@ export default function setup(api: OpenClawPluginApi) {
         }
         if (decision.block && !managedLynxCheckPreauthorized && !deferProtectedToolApproval) {
           const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          const denyPrependContext = [
-            prependContext.trim(),
-            buildForcedAgentStartDenyContext({
-              riskLevel: decision.riskAssessment.level,
-              reason: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
-            }),
-          ]
-            .filter(Boolean)
-            .join("\n");
+          const shouldInjectForcedDenyContext = normalizeString(decision.riskAssessment.level) === "L4";
+          const denyPrependContext = shouldInjectForcedDenyContext
+            ? [
+              prependContext.trim(),
+              buildForcedAgentStartDenyContext({
+                riskLevel: decision.riskAssessment.level,
+                reason: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+              }),
+            ]
+              .filter(Boolean)
+              .join("\n")
+            : prependContext.trim() || undefined;
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
+          log.info(
+            `[lynx-guardian] before_agent_start denyContext injected=${String(shouldInjectForcedDenyContext)} risk=${decision.riskAssessment.level}`,
+          );
           try {
             await pushRecord(
               userId,
@@ -2446,6 +2528,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
+    log.info(`[lynx-guardian] before_tool_call tool=${JSON.stringify(toolName)} params=${JSON.stringify(params)}`);
     let execBlacklistContext: CheckExecBlacklistContext | undefined;
     let trustedManagedLynxCheckToolCall = false;
     const toolFingerprint = buildOperationFingerprint({
@@ -2471,11 +2554,14 @@ export default function setup(api: OpenClawPluginApi) {
       },
       recoverFeishuDmApprovalContextFromRecentRoute(),
     );
+    log.info(`[lynx-guardian] before_tool_call runApprovalContext=${JSON.stringify(runApprovalContext)}`);
+    log.info(`[lynx-guardian] before_tool_call effectiveRunApprovalContext=${JSON.stringify(effectiveRunApprovalContext)}`);
     if (!runApprovalContext?.requesterOuId && effectiveRunApprovalContext.requesterOuId) {
       log.info(
         `[lynx-guardian] Recovered Feishu approval context before_tool_call run=${ctx.runId ?? "no-run"} requester=${effectiveRunApprovalContext.requesterOuId} conversation=${effectiveRunApprovalContext.conversationId ?? "none"}`,
       );
     }
+    log.info(`[lynx-guardian] before_tool_call toolGuardEnabled=${String(selfSafetyGuardConfig.toolGuard !== false)}`);
     if (selfSafetyGuardConfig.toolGuard !== false) {
       try {
         const sessionKey = normalizeString(ctx.sessionKey);
@@ -2487,13 +2573,27 @@ export default function setup(api: OpenClawPluginApi) {
           : false;
         const managedGuardContext = {
           ...ctx,
+          requesterId: effectiveRunApprovalContext.requesterId ?? effectiveRunApprovalContext.requesterOuId,
+          requesterOuId: effectiveRunApprovalContext.requesterOuId,
+          senderId: normalizeString(ctx?.senderId) || effectiveRunApprovalContext.requesterId || effectiveRunApprovalContext.requesterOuId,
+          senderOpenId: normalizeString((ctx as any)?.senderOpenId) || effectiveRunApprovalContext.requesterOuId,
+          channelId: normalizeString(ctx?.channelId ?? ctx?.channel) || (effectiveRunApprovalContext.channelProfile === "other" ? undefined : effectiveRunApprovalContext.channelProfile),
+          messageProvider: normalizeString((ctx as any)?.messageProvider ?? ctx?.source) || (effectiveRunApprovalContext.channelProfile === "other" ? undefined : effectiveRunApprovalContext.channelProfile),
+          verifiedOwner: effectiveRunApprovalContext.requesterOuId
+            ? localApprovalApproverOuIds.includes(effectiveRunApprovalContext.requesterOuId)
+            : ctx?.verifiedOwner,
           managedLynxCheckRun: Boolean(activeManagedLynxCheckRun),
           managedLynxCheckPreauthorized,
         };
+        log.info(`[lynx-guardian] before_tool_call managedGuardContext=${JSON.stringify(managedGuardContext)}`);
+        log.info(`[lynx-guardian] before_tool_call managedLynxCheckPreauthorized=${JSON.stringify(managedLynxCheckPreauthorized)}`);
         const guardContext = buildGuardContext(config, event, managedGuardContext);
+        log.info(`[lynx-guardian] before_tool_call guardContext=${JSON.stringify(guardContext)}`);
         trustedManagedLynxCheckToolCall = guardContext.trustedManagedLynxCheckToolCall === true;
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
+        log.info(`[lynx-guardian] before_tool_call decision=${JSON.stringify(decision)}`);
         execBlacklistContext = decision.contextHints;
+        log.info(`[lynx-guardian] before_tool_call execBlacklistContext=${JSON.stringify(execBlacklistContext)}`);
         log.info(`[lynx-guardian]📌,Tool call risk detected: ${JSON.stringify(decision)}`);
 
         if (decision.block && managedLynxCheckPreauthorized) {
@@ -2797,6 +2897,7 @@ export default function setup(api: OpenClawPluginApi) {
     const ctxKeys = resolveOverrideKeys(ctx);
     const blacklistWorkflowAuth = getWorkflowAuth(ctxKeys, blacklistModules);
     if (blacklistWorkflowAuth) {
+      log.info(`[lynx-guardian] blacklist workflow auth hit=${JSON.stringify(blacklistWorkflowAuth)}`);
       recordWorkflowOperation(ctxKeys, {
         timestamp: Date.now(),
         toolName,
@@ -2862,6 +2963,7 @@ export default function setup(api: OpenClawPluginApi) {
           }
 
           const approvalId = `lynx:blacklist:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
+          log.info(`[lynx-guardian] blacklist approval approvalId=${approvalId}`);
           const pendingApproval = ctx.runId
             ? getOrCreatePendingToolApproval({
                 runId: ctx.runId,
@@ -2872,8 +2974,10 @@ export default function setup(api: OpenClawPluginApi) {
                 pendingId: approvalId,
               })
             : undefined;
+          log.info(`[lynx-guardian] blacklist approval pending=${JSON.stringify(pendingApproval)}`);
           if (pendingApproval?.pending && !pendingApproval.created) {
             const resolution = await pendingApproval.pending.wait();
+            log.info(`[lynx-guardian] blacklist approval reused resolution=${JSON.stringify(resolution)}`);
             if (resolution === "allow-once" || resolution === "allow-always") {
               return;
             }
@@ -2885,6 +2989,7 @@ export default function setup(api: OpenClawPluginApi) {
             }
             return { block: true, blockReason: "Approval timed out" };
           }
+          log.info(`[lynx-guardian] blacklist approval prepare handlers`);
           const { resolveApproval, transport } = await prepareToolApprovalHandlers({
             ctx,
             runId: ctx.runId,
@@ -2902,7 +3007,9 @@ export default function setup(api: OpenClawPluginApi) {
             grantWindowMs: riskPolicyConfig.grantWindowMs,
             pendingApproval,
           });
+          log.info(`[lynx-guardian] blacklist approval transport=${JSON.stringify(transport)}`);
           if (transport === "local") {
+            log.info(`[lynx-guardian] blacklist approval waiting for local resolution`);
             return await waitForPendingToolApprovalResolution(pendingApproval?.pending);
           }
           if (

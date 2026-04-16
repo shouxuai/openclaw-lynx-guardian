@@ -471,6 +471,17 @@ const PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\bopenclaw\.json\b/i, label: "openclaw.json" },
 ];
 
+const TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS = new Set([
+  "SOUL.md",
+  "IDENTITY.md",
+  "USER.md",
+  "AGENTS.md",
+  "TOOLS.md",
+  "SHIELD.md",
+  "SKILL.md",
+  "MEMORY.md",
+]);
+
 const PROTECTED_FILE_READ_PATTERNS: RegExp[] = [
   /\b(?:cat|less|more|head|tail|read|open|show|print|display|type|dump)\b/i,
   /(?:读取|查看|显示|打印|展示|列出|导出)/i,
@@ -683,6 +694,10 @@ function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFi
 }
 
 // ── Credential Theft Detection (M5) ────────────────────────────────
+
+function hasToolStageMinBlockProtectedFile(access: ProtectedFileAccessResult): boolean {
+  return access.matchedFiles.some((label) => TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS.has(label));
+}
 
 function detectImmutableRuntimeConfigWrite(protectedAccess: ProtectedFileAccessResult): boolean {
   return protectedAccess.operation === "write"
@@ -1525,6 +1540,14 @@ export function guardToolCall(
 
   if (verifiedOwner && score > 0) {
     score = Math.max(0, score - 2);
+  }
+
+  if (
+    !trustedInternalProtectedRead
+    && !trustedManagedLynxCheckToolCall
+    && hasToolStageMinBlockProtectedFile(protectedAccess)
+  ) {
+    score = Math.max(score, 6);
   }
 
   score = Math.min(score, 10);

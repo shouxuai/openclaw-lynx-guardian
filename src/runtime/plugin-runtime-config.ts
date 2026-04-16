@@ -1,5 +1,7 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
 import type { Logger, PluginConfig } from "../types.js";
+import { resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
 interface JsonSchemaNode {
   type?: string;
@@ -111,11 +113,31 @@ function loadPluginConfigDefaults(logger?: Pick<Logger, "warn">): Record<string,
   }
 }
 
+function loadHostPluginConfig(logger?: Pick<Logger, "warn">): Record<string, unknown> {
+  const openclawConfigPath = join(resolveRuntimeHomeDir(), ".openclaw", "openclaw.json");
+  if (!existsSync(openclawConfigPath)) {
+    return {};
+  }
+
+  try {
+    const openclawConfig = JSON.parse(readFileSync(openclawConfigPath, "utf8")) as Record<string, any>;
+    const pluginConfig = openclawConfig?.plugins?.entries?.["openclaw-lynx-guardian"]?.config;
+    return isPlainObject(pluginConfig) ? cloneJsonValue(pluginConfig) : {};
+  } catch (error: any) {
+    logger?.warn?.(`[lynx-guardian] Failed to read host openclaw.json plugin config: ${error.message}`);
+    return {};
+  }
+}
+
 export function resolvePluginRuntimeConfig(
   inlineConfig?: PluginConfig,
   logger?: Pick<Logger, "warn">,
 ): PluginConfig {
   const defaults = loadPluginConfigDefaults(logger);
+  const hostPluginConfig = loadHostPluginConfig(logger);
   const explicitConfig = isPlainObject(inlineConfig) ? inlineConfig : {};
-  return mergeDefinedValues(defaults, explicitConfig) as PluginConfig;
+  return mergeDefinedValues(
+    defaults,
+    mergeDefinedValues(hostPluginConfig, explicitConfig),
+  ) as PluginConfig;
 }

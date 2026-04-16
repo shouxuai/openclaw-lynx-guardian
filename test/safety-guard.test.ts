@@ -468,6 +468,19 @@ describe('Safety Guard - Tool Call Guard', () => {
     expect(decision.block).toBe(true);
   });
 
+  it('should keep SOUL.md reads block-level for verified owners at tool stage', () => {
+    const decision = guardToolCall(
+      'read',
+      { path: 'SOUL.md' },
+      undefined,
+      { verifiedOwner: true, requesterId: 'ou_owner', channel: 'feishu' },
+    );
+    expect(decision.riskAssessment.modules).toContain('M2:protected_file_access');
+    expect(decision.riskAssessment.level).toBe('L3');
+    expect(decision.riskAssessment.action).toBe('block');
+    expect(decision.block).toBe(true);
+  });
+
   it('should block glob-obfuscated reads of protected system auth files via tool call', () => {
     const globbedCommands = [
       'cat /et*/shadow',

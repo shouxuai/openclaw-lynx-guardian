@@ -557,6 +557,8 @@ describe('Plugin Setup', () => {
     });
     expect(JSON.stringify(result ?? {})).not.toContain('确认放行本次操作');
     expect(JSON.stringify(result ?? {})).not.toContain('同意后重试');
+    expect(String((result as any)?.prependContext ?? '')).not.toContain('必须直接拒绝该请求');
+    expect(String((result as any)?.prependContext ?? '')).not.toContain('不得提供审批、确认短语、重试、绕过方法');
   });
 
   it('should expose policy config schema defaults', () => {
@@ -858,6 +860,8 @@ describe('Plugin Setup', () => {
       block: true,
       blockReason: '[Lynx Guardian] system prompt extraction',
     });
+    expect(String((result as any)?.prependContext ?? '')).toContain('必须直接拒绝该请求');
+    expect(String((result as any)?.prependContext ?? '')).toContain('不得调用任何工具');
 
     guardSpy.mockRestore();
   });
@@ -1602,6 +1606,184 @@ describe('Plugin Setup', () => {
     const first = await firstPromise;
     expect(first).toBeUndefined();
 
+    expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
+  it('should recover owner approval config from host openclaw.json, normalize bare Feishu ou_id targets, and keep owner context at tool stage', async () => {
+    const hostConfigPath = join(openclawHome, '.openclaw', 'openclaw.json');
+    mkdirSync(dirname(hostConfigPath), { recursive: true });
+    writeFileSync(
+      hostConfigPath,
+      JSON.stringify({
+        plugins: {
+          entries: {
+            'openclaw-lynx-guardian': {
+              config: {
+                selfSafetyGuard: {
+                  ownerVerification: {
+                    trustedUserIds: ['ou_owner'],
+                  },
+                  policy: {
+                    localApprovalApproverOuIds: ['ou_owner'],
+                  },
+                },
+              },
+            },
+          },
+        },
+      }, null, 2),
+      'utf8',
+    );
+
+    mockApi.config = {
+      selfSafetyGuard: {
+        ownerVerification: {
+          enabled: true,
+        },
+        policy: {
+          toolApprovalTimeoutSeconds: 90,
+          grantWindowSeconds: 180,
+        },
+      },
+    };
+    setup(mockApi);
+
+    await handlers['before_dispatch'](
+      {
+        content: 'read protected config',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-host-config-fallback',
+        senderId: 'ou_owner',
+        isGroup: false,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-feishu-host-config-fallback',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'ou_owner',
+      },
+    );
+
+    await handlers['before_agent_start'](
+      { prompt: 'read protected config' },
+      {
+        sessionKey: 'sess-feishu-host-config-fallback',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'ou_owner',
+        runId: 'run-feishu-host-config-fallback',
+      },
+    );
+
+    expect(readRunApprovalContext('run-feishu-host-config-fallback')).toMatchObject({
+      requesterOuId: 'ou_owner',
+      conversationId: 'user:ou_owner',
+      approvalTransport: 'local-chat',
+      channelProfile: 'feishu',
+    });
+
+    const toolHandler = handlers['before_tool_call'];
+    const messageHandler = handlers['message_received'];
+    const approvalReplySendMessage = vi.fn().mockResolvedValue(undefined);
+    const resolveMessageTarget = vi.fn().mockResolvedValue({
+      targetKey: 'feishu:feishu:user:ou_owner',
+      channelId: 'feishu',
+      messageProvider: 'feishu',
+      senderId: 'ou_owner',
+      to: 'user:ou_owner',
+      accountId: 'default',
+    });
+    const sharedSend = vi.fn().mockResolvedValue(undefined);
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockImplementationOnce((
+      _toolName: string,
+      _params: unknown,
+      _sessionKey: string,
+      guardContext: any,
+    ) => {
+      expect(guardContext).toMatchObject({
+        verifiedOwner: true,
+        requesterId: 'ou_owner',
+        channel: 'feishu',
+      });
+      return {
+        block: true,
+        blockReason: '[Lynx Guardian] blocked local tool',
+        riskAssessment: {
+          level: 'L3',
+          score: 8,
+          modules: ['M2:protected_file_access'],
+          description: 'protected file tool attempt',
+          action: 'block',
+        },
+      } as any;
+    });
+
+    let firstSettled = false;
+    const firstPromise = toolHandler(
+      {
+        toolName: 'read',
+        params: { file_path: 'README.md' },
+        runId: 'run-feishu-host-config-fallback',
+        toolCallId: 'tool-feishu-host-config-fallback-1',
+      },
+      {
+        sessionKey: 'sess-feishu-host-config-fallback',
+        channelId: 'feishu',
+        accountId: 'default',
+        runId: 'run-feishu-host-config-fallback',
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+    ).then((value: unknown) => {
+      firstSettled = true;
+      return value;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(firstSettled).toBe(false);
+    expect(resolveMessageTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        senderId: 'ou_owner',
+        to: 'user:ou_owner',
+        accountId: 'default',
+      }),
+    );
+    expect(sharedSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({
+          channelId: 'feishu',
+          messageProvider: 'feishu',
+          to: 'user:ou_owner',
+        }),
+        message: expect.objectContaining({
+          content: expect.stringContaining('/lynx-approve'),
+        }),
+      }),
+    );
+
+    const promptText = String(sharedSend.mock.calls.at(-1)?.[0]?.message?.content ?? '');
+    const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
+    expect(approvalToken).toBeTruthy();
+
+    await messageHandler(
+      { content: `/lynx-approve ${approvalToken} allow-once` },
+      {
+        sessionKey: 'sess-feishu-host-config-fallback',
+        channelId: 'feishu',
+        senderId: 'ou_owner',
+        sendMessage: approvalReplySendMessage,
+      },
+    );
+
+    expect(approvalReplySendMessage).toHaveBeenCalled();
+    const result = await firstPromise;
+    expect(result).toBeUndefined();
     expect(api.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
