@@ -210,6 +210,21 @@ export function listLocalToolApprovalsForSession(input: {
     .map((entry) => toPublicApproval(entry));
 }
 
+export function discardLocalToolApproval(token?: string): void {
+  prune();
+
+  if (!token) {
+    return;
+  }
+
+  const entry = approvalsByToken.get(token.toLowerCase());
+  if (!entry) {
+    return;
+  }
+
+  clearTimeout(entry.timer);
+  removeApprovalEntry(entry);
+}
 export function clearLocalToolApprovals(): void {
   for (const entry of approvalsByToken.values()) {
     clearTimeout(entry.timer);

@@ -82,9 +82,30 @@ function buildTargetKey(parts: {
   channelId?: string;
   messageProvider?: string;
   senderId?: string;
+  bindingId?: string;
+  to?: string;
+  accountId?: string;
+  threadId?: string | number;
 }): string {
   if (parts.sessionKey) {
     return parts.sessionKey;
+  }
+
+  const directTarget = normalizeString(parts.to) || normalizeString(parts.bindingId);
+  if (directTarget) {
+    return [parts.messageProvider, parts.channelId, directTarget]
+      .map((item) => normalizeString(item))
+      .filter(Boolean)
+      .join(":");
+  }
+
+  const accountId = normalizeString(parts.accountId);
+  const threadId = normalizeThreadId(parts.threadId);
+  if (accountId && threadId !== undefined) {
+    return [parts.messageProvider, parts.channelId, accountId, String(threadId)]
+      .map((item) => normalizeString(item))
+      .filter(Boolean)
+      .join(":");
   }
 
   return [parts.messageProvider, parts.channelId, parts.senderId]
@@ -310,7 +331,7 @@ function buildSnapshotWithOptions(
     messageProvider: normalizeString((ctx as any).messageProvider ?? (ctx as any).source) || undefined,
     senderId: normalizeString((ctx as any).senderId ?? (ctx as any).userId) || undefined,
     bindingId: normalizeString((ctx as any).bindingId) || undefined,
-    to: normalizeString((ctx as any).to ?? (ctx as any).recipientId) || undefined,
+    to: normalizeString((ctx as any).to ?? (ctx as any).recipientId ?? (ctx as any).conversationId) || undefined,
     accountId: normalizeString((ctx as any).accountId) || undefined,
     threadId:
       typeof (ctx as any).messageThreadId === "number" && Number.isFinite((ctx as any).messageThreadId)

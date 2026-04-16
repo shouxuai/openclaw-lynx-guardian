@@ -1,6 +1,13 @@
+import type {
+  ApprovalTransportProfile,
+  ChannelProfile,
+} from "./requester-provenance-store.js";
+
 export type RunApprovalContext = {
   runId: string;
   sessionKey?: string;
+  channelProfile?: ChannelProfile;
+  approvalTransport?: ApprovalTransportProfile;
   requesterId?: string;
   requesterOuId?: string;
   accountId?: string;
