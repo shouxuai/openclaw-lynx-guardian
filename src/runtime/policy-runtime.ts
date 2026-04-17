@@ -1,4 +1,8 @@
 import { decidePolicy } from "../guard/policy/policy-engine.js";
+import type { GuardEvidenceBundle } from "../guard/policy/evidence-bundle.js";
+import { scoreEvidence } from "../guard/policy/evidence-scorer.js";
+import type { EvidenceScoreResult } from "../guard/policy/evidence-scorer.js";
+import { resolveRiskLevel } from "../guard/policy/policy-engine.js";
 import type { PolicyDecisionKind, ResolvedRiskLevel, RiskLevelLabel } from "../guard/policy/policy-types.js";
 import type { RiskAssessment } from "../guard/safety-guard.js";
 import { toLegacyRiskLevel } from "./api-risk-adapter.js";
@@ -21,6 +25,24 @@ export interface PolicyRuntimeEvaluation extends ResolvedRiskLevel {
     kind: PolicyDecisionKind;
   };
   legacyRiskLevel: 0 | 1 | 2 | 3 | 4;
+}
+
+export interface EvidenceBundleRuntimeEvaluation extends PolicyRuntimeEvaluation {
+  score: EvidenceScoreResult;
+  compatibilityAssessment: CompatibilityRiskAssessment;
+}
+
+export interface GuardPolicyResolution {
+  legacyEvaluation: PolicyRuntimeEvaluation;
+  bundleEvaluation?: EvidenceBundleRuntimeEvaluation;
+  finalDecision: {
+    kind: PolicyDecisionKind;
+  };
+  effectiveAssessment: RiskAssessment;
+}
+
+export interface CompatibilityRiskAssessment extends RiskAssessment {
+  policyDecisionKind: PolicyDecisionKind;
 }
 
 export function normalizePolicyConfig(policy: any = {}) {
@@ -98,6 +120,28 @@ function pickStricterPolicyKind(
     : right;
 }
 
+function pickFinalPolicyKind(
+  legacyKind: PolicyDecisionKind,
+  bundleKind: PolicyDecisionKind,
+): PolicyDecisionKind {
+  const legacyPriority = POLICY_DECISION_PRIORITY[legacyKind];
+  const bundlePriority = POLICY_DECISION_PRIORITY[bundleKind];
+
+  if (bundlePriority > legacyPriority) {
+    return bundleKind;
+  }
+
+  if (bundlePriority < legacyPriority) {
+    return legacyKind;
+  }
+
+  if (legacyKind === "confirm" && bundleKind === "workflow_auth") {
+    return bundleKind;
+  }
+
+  return legacyKind;
+}
+
 export function evaluateRiskAssessment(
   assessment: RiskAssessment,
   options?: {
@@ -129,6 +173,102 @@ export function evaluateRiskAssessment(
       kind: bridgedDecisionKind,
     },
     legacyRiskLevel: toLegacyRiskLevel(riskLevelValue),
+  };
+}
+
+function mapPolicyKindToAssessmentAction(
+  policyKind: PolicyDecisionKind,
+): RiskAssessment["action"] {
+  switch (policyKind) {
+    case "allow":
+      return "allow";
+    case "deny":
+      return "deny";
+    case "block":
+      return "block";
+    default:
+      return "warn";
+  }
+}
+
+export function evaluateEvidenceBundle(
+  bundle: GuardEvidenceBundle,
+): EvidenceBundleRuntimeEvaluation {
+  const score = scoreEvidence(bundle.evidenceItems);
+  const resolvedRisk = resolveRiskLevel({
+    summaryHeat: score.summaryHeat,
+    dimensionScores: score.dimensionScores,
+    chainProgress: bundle.chainProgress,
+    isAuditWhitelisted: bundle.isAuditWhitelisted ?? false,
+  });
+  const decision = decidePolicy({
+    ...resolvedRisk,
+    workflowCandidate: bundle.workflowCandidate,
+    workflowAuthorized: bundle.workflowAuthorized,
+    isAuditWhitelisted: bundle.isAuditWhitelisted ?? false,
+    auditBoundaryExceeded: bundle.auditBoundaryExceeded,
+  });
+
+  return {
+    ...resolvedRisk,
+    decision,
+    legacyRiskLevel: toLegacyRiskLevel(resolvedRisk.riskLevelValue),
+    score,
+    compatibilityAssessment: {
+      level: resolvedRisk.riskLevelLabel,
+      score: score.compatibilityScore,
+      modules: bundle.modules,
+      description: bundle.summary,
+      action: mapPolicyKindToAssessmentAction(decision.kind),
+      policyDecisionKind: decision.kind,
+    },
+  };
+}
+
+export function evaluateGuardDecisionPolicy(input: {
+  assessment: RiskAssessment;
+  evidenceBundle?: GuardEvidenceBundle;
+  options?: {
+    workflowCandidate?: boolean;
+    workflowAuthorized?: boolean;
+    isAuditWhitelisted?: boolean;
+    auditBoundaryExceeded?: boolean;
+  };
+}): GuardPolicyResolution {
+  const legacyEvaluation = evaluateRiskAssessment(input.assessment, input.options);
+
+  if (!input.evidenceBundle) {
+    return {
+      legacyEvaluation,
+      finalDecision: legacyEvaluation.decision,
+      effectiveAssessment: input.assessment,
+    };
+  }
+
+  const bundleEvaluation = evaluateEvidenceBundle({
+    ...input.evidenceBundle,
+    workflowCandidate: input.evidenceBundle.workflowCandidate ?? input.options?.workflowCandidate,
+    workflowAuthorized: input.evidenceBundle.workflowAuthorized ?? input.options?.workflowAuthorized,
+    isAuditWhitelisted: input.evidenceBundle.isAuditWhitelisted ?? input.options?.isAuditWhitelisted,
+    auditBoundaryExceeded:
+      input.evidenceBundle.auditBoundaryExceeded ?? input.options?.auditBoundaryExceeded,
+  });
+  const finalKind = pickFinalPolicyKind(legacyEvaluation.decision.kind, bundleEvaluation.decision.kind);
+  const bundleIsSelected = finalKind === bundleEvaluation.decision.kind
+    && (
+      finalKind !== legacyEvaluation.decision.kind
+      || bundleEvaluation.decision.kind === "workflow_auth"
+    );
+
+  return {
+    legacyEvaluation,
+    bundleEvaluation,
+    finalDecision: {
+      kind: finalKind,
+    },
+    effectiveAssessment: bundleIsSelected
+      ? bundleEvaluation.compatibilityAssessment
+      : input.assessment,
   };
 }
 

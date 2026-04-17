@@ -17,7 +17,13 @@ import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import type { CheckExecBlacklistContext } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
-import { guardAssistantPersistence, guardOutputText, guardToolResultPersistence } from "./src/guard/result-guard.js";
+import type { GuardDecision } from "./src/guard/safety-guard.js";
+import {
+  enforceGuardDecisionText,
+  guardAssistantPersistence,
+  guardOutputText,
+  guardToolResultPersistence,
+} from "./src/guard/result-guard.js";
 import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
@@ -93,6 +99,7 @@ import {
   buildPolicyRecordContent,
   buildOverridePrompt,
   buildParamSummary,
+  evaluateGuardDecisionPolicy,
   evaluateRiskAssessment,
   formatWorkflowAuthSummary,
   normalizePolicyConfig,
@@ -239,6 +246,33 @@ function resolveManagedLynxCheckCommandText(event: any): string {
   }
 
   return "";
+}
+
+function shouldRunGuardPolicyAction(kind: string): boolean {
+  return kind === "deny" || kind === "block" || kind === "confirm" || kind === "workflow_auth";
+}
+
+function resolveGuardPolicyState(decision: GuardDecision) {
+  const policyResolution = evaluateGuardDecisionPolicy({
+    assessment: decision.riskAssessment,
+    evidenceBundle: decision.evidenceBundle,
+  });
+  const effectiveAssessment = policyResolution.effectiveAssessment;
+  const legacyAssessmentSelected = effectiveAssessment === decision.riskAssessment;
+  const policyEvaluation = policyResolution.bundleEvaluation
+    && effectiveAssessment === policyResolution.bundleEvaluation.compatibilityAssessment
+    ? policyResolution.bundleEvaluation
+    : policyResolution.legacyEvaluation;
+
+  return {
+    policyResolution,
+    policyEvaluation,
+    effectiveAssessment,
+    blockReason: legacyAssessmentSelected && decision.blockReason
+      ? decision.blockReason
+      : `[Lynx Guardian] ${effectiveAssessment.description}`,
+    guardActionRequired: shouldRunGuardPolicyAction(policyResolution.finalDecision.kind),
+  };
 }
 
 const LOCAL_TOOL_APPROVAL_COMMAND = "/lynx-approve";
@@ -1696,10 +1730,67 @@ export default function setup(api: OpenClawPluginApi) {
 
       rememberInboundRequesterProvenance(event, ctx);
 
+      if (selfSafetyGuardConfig.inputGuard !== false) {
+        const inputFingerprint = buildOperationFingerprint({
+          sessionKey: ctx.sessionKey,
+          actionType: "input",
+          payload: text,
+        });
+        const approvedInputOverride = consumeApprovedOverrideFull(ctx, inputFingerprint);
+        log.info(`[lynx-guardian]📌,approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
+        const guardContext = buildGuardContext(config, event, ctx);
+        const decision = guardInput(text, ctx.sessionKey, guardContext);
+        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
+        log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
+        if (guardActionRequired && !approvedInputOverride) {
+          const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
+          try {
+            await pushRecord(
+              userId,
+              buildPolicyRecordContent(
+                policyEvaluation,
+                `[SSG] ${effectiveAssessment.modules.join(",")}`,
+              ),
+              policyEvaluation.legacyRiskLevel,
+            );
+          } catch {
+
+          }
+          if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
+            savePendingOverrideFull(ctx, {
+              operationFingerprint: inputFingerprint,
+              createdAt: Date.now(),
+              expiresAt: Date.now() + riskPolicyConfig.overrideTtlMs,
+              actionType: "input",
+              replayPayload: { text },
+              riskScore: effectiveAssessment.score,
+              riskLevel: effectiveAssessment.level,
+              matchedModules: effectiveAssessment.modules,
+              sourceKeys: resolveOverrideKeys(ctx),
+            });
+            await sendHookFeedback(
+              ctx,
+              buildOverridePrompt(
+                blockReason,
+                policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
+              ),
+            );
+            return;
+          }
+          await sendHookFeedback(ctx, blockReason);
+          return;
+        }
+        if (decision.warning) {
+          log.warn(`[lynx-guardian] Self-safety-guard warning: ${decision.warning}`);
+        }
+      }
+
       // Free-text approval is disabled. Critical non-tool review now happens
       // in the awaited before_agent_start hook so group chat messages do not
       // accidentally consume approval state.
       return;
+      if (false) {
 
       const confirmLookupKey = resolveOverrideKey(ctx);
       if (
@@ -1774,17 +1865,17 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.inputGuard !== false) {
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardInput(text, ctx.sessionKey, guardContext);
+        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
-        if (decision.block && !approvedInputOverride) {
-          const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
-          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${decision.riskAssessment.description} (${decision.riskAssessment.level}, score=${decision.riskAssessment.score})`);
+        if (guardActionRequired && !approvedInputOverride) {
+          const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
           try {
             await pushRecord(
               userId,
               buildPolicyRecordContent(
                 policyEvaluation,
-                `[SSG] ${decision.riskAssessment.modules.join(",")}`,
+                `[SSG] ${effectiveAssessment.modules.join(",")}`,
               ),
               policyEvaluation.legacyRiskLevel,
             );
@@ -1798,15 +1889,15 @@ export default function setup(api: OpenClawPluginApi) {
               expiresAt: Date.now() + riskPolicyConfig.overrideTtlMs,
               actionType: "input",
               replayPayload: { text },
-              riskScore: decision.riskAssessment.score,
-              riskLevel: decision.riskAssessment.level,
-              matchedModules: decision.riskAssessment.modules,
+              riskScore: effectiveAssessment.score,
+              riskLevel: effectiveAssessment.level,
+              matchedModules: effectiveAssessment.modules,
               sourceKeys: resolveOverrideKeys(ctx),
             });
             await sendHookFeedback(
               ctx,
               buildOverridePrompt(
-                decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+                blockReason,
                 policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
               ),
             );
@@ -1814,21 +1905,22 @@ export default function setup(api: OpenClawPluginApi) {
             return {
               block: true,
               blockReason: buildOverridePrompt(
-                decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+                blockReason,
                 policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
               ),
             };
           }
-          await sendHookFeedback(ctx, decision.blockReason!);
+          await sendHookFeedback(ctx, blockReason);
           return;
           return {
             block: true,
-            blockReason: decision.blockReason!,
+            blockReason,
           };
         }
         if (decision.warning) {
           log.warn(`[lynx-guardian] Self-safety-guard warning: ${decision.warning}`);
         }
+      }
       }
     } catch (err: any) {
       log.error(`[lynx-guardian] message_received handler failed: ${err.message}`);
@@ -2005,6 +2097,7 @@ export default function setup(api: OpenClawPluginApi) {
           managedLynxCheckPreauthorized,
         });
         const decision = guardInput(promptText, ctx.sessionKey, guardContext);
+        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
         const deferProtectedToolApproval = shouldDeferProtectedToolRequestToToolApproval({
           promptText,
           ctx,
@@ -2012,36 +2105,35 @@ export default function setup(api: OpenClawPluginApi) {
           channelProfile,
           approvalTransport,
           approverOuIds: localApprovalApproverOuIds,
-          riskModules: decision.riskAssessment?.modules,
+          riskModules: effectiveAssessment.modules,
         });
         if (deferProtectedToolApproval) {
           log.info("[lynx-guardian] Deferring trusted Feishu protected read request to tool-stage approval");
           prependContext += `${buildDeferredProtectedToolApprovalInstruction()}\n`;
         }
-        if (decision.block && !managedLynxCheckPreauthorized && !deferProtectedToolApproval) {
-          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          const shouldInjectForcedDenyContext = normalizeString(decision.riskAssessment.level) === "L4";
+        if (guardActionRequired && !managedLynxCheckPreauthorized && !deferProtectedToolApproval) {
+          const shouldInjectForcedDenyContext = normalizeString(effectiveAssessment.level) === "L4";
           const denyPrependContext = shouldInjectForcedDenyContext
             ? [
               prependContext.trim(),
               buildForcedAgentStartDenyContext({
-                riskLevel: decision.riskAssessment.level,
-                reason: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+                riskLevel: effectiveAssessment.level,
+                reason: blockReason,
               }),
             ]
               .filter(Boolean)
               .join("\n")
             : prependContext.trim() || undefined;
-          log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
           log.info(
-            `[lynx-guardian] before_agent_start denyContext injected=${String(shouldInjectForcedDenyContext)} risk=${decision.riskAssessment.level}`,
+            `[lynx-guardian] before_agent_start denyContext injected=${String(shouldInjectForcedDenyContext)} risk=${effectiveAssessment.level}`,
           );
           try {
             await pushRecord(
               userId,
               buildPolicyRecordContent(
                 policyEvaluation,
-                `[SSG:agent_start] ${decision.riskAssessment.modules.join(",")}`,
+                `[SSG:agent_start] ${effectiveAssessment.modules.join(",")}`,
               ),
               policyEvaluation.legacyRiskLevel,
             );
@@ -2050,25 +2142,24 @@ export default function setup(api: OpenClawPluginApi) {
           }
           return {
             block: true,
-            blockReason: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+            blockReason,
             prependContext: denyPrependContext,
           } as any;
         }
         log.info(`[lynx-guardian]📌,guardInput decision: ${JSON.stringify(decision)}`);
-        if (decision.block && deferProtectedToolApproval) {
+        if (guardActionRequired && deferProtectedToolApproval) {
           log.info("[lynx-guardian] Explicit protected tool request will continue at tool approval stage");
-        } else if (decision.block && managedLynxCheckPreauthorized) {
+        } else if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
-        } else if (decision.block && !approvedAgentStartOverride) {
-          const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
-          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${decision.riskAssessment.description}`);
+        } else if (guardActionRequired && !approvedAgentStartOverride) {
+          const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
           try {
             await pushRecord(
               userId,
               buildPolicyRecordContent(
                 policyEvaluation,
-                `[SSG:agent_start] ${decision.riskAssessment.modules.join(",")}`,
+                `[SSG:agent_start] ${effectiveAssessment.modules.join(",")}`,
               ),
               policyEvaluation.legacyRiskLevel,
             );
@@ -2082,35 +2173,35 @@ export default function setup(api: OpenClawPluginApi) {
               expiresAt: Date.now() + riskPolicyConfig.overrideTtlMs,
               actionType: "agent_start",
               replayPayload: { promptText },
-              riskScore: decision.riskAssessment.score,
-              riskLevel: decision.riskAssessment.level,
-              matchedModules: decision.riskAssessment.modules,
+              riskScore: effectiveAssessment.score,
+              riskLevel: effectiveAssessment.level,
+              matchedModules: effectiveAssessment.modules,
               sourceKeys: resolveOverrideKeys(ctx),
             });
             return {
               block: true,
               blockReason: buildOverridePrompt(
-                decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+                blockReason,
                 policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
               ),
             } as any;
           }
           return {
             block: true,
-            blockReason: decision.blockReason!,
+            blockReason,
           } as any;
         }
         if (decision.warning) {
           prependContext += `${decision.warning}\n`;
         }
         // 弱信号预警注入：L1/L2 不阻断时，向模型注入安全上下文让模型参与防御
-        if (!decision.block || deferProtectedToolApproval) {
-          const lvl = decision.riskAssessment.level;
-          if ((lvl === "L1" || lvl === "L2") && decision.riskAssessment.modules.length > 0) {
-            const injection = buildSecurityAwarenessInjection(decision.riskAssessment.modules);
+        if (!guardActionRequired || deferProtectedToolApproval) {
+          const lvl = effectiveAssessment.level;
+          if ((lvl === "L1" || lvl === "L2") && effectiveAssessment.modules.length > 0) {
+            const injection = buildSecurityAwarenessInjection(effectiveAssessment.modules);
             if (injection?.hasContent) {
               prependContext += injection.injectionText;
-              log.info(`[lynx-guardian] 安全预警注入：modules=${decision.riskAssessment.modules.join(",")}`);
+              log.info(`[lynx-guardian] 安全预警注入：modules=${effectiveAssessment.modules.join(",")}`);
             }
           }
         }
@@ -2442,15 +2533,24 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.outputGuard !== false && output && !isDiscoveryResponse) {
         const { guardContext } = buildManagedGuardContext({ output, messages: event.messages }, ctx);
         const decision = guardOutput(output, ctx.sessionKey, guardContext);
+        const { guardActionRequired, policyEvaluation, effectiveAssessment } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian]📌,Output risk detected: ${JSON.stringify(decision)}`);
-        if (decision.block) {
-          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          const enforcement = guardOutputText(output, ctx.sessionKey, {
-            ...guardContext,
-            enforcementMode: outputEnforcementMode,
-          }, {
-            subject: "assistant output",
-          });
+        if (guardActionRequired) {
+          const enforcement = enforceGuardDecisionText(
+            output,
+            {
+              block: true,
+              warning: decision.warning,
+              riskAssessment: effectiveAssessment,
+            },
+            {
+              ...guardContext,
+              enforcementMode: outputEnforcementMode,
+            },
+            {
+              subject: "assistant output",
+            },
+          );
           if (enforcement.warning) {
             log.warn(`[lynx-guardian] Output guard diagnostic: ${enforcement.warning}`);
           }
@@ -2462,7 +2562,7 @@ export default function setup(api: OpenClawPluginApi) {
               userId,
               buildPolicyRecordContent(
                 policyEvaluation,
-                `[SSG:output] ${decision.riskAssessment.modules.join(",")}`,
+                `[SSG:output] ${effectiveAssessment.modules.join(",")}`,
               ),
               policyEvaluation.legacyRiskLevel,
             );
@@ -2683,12 +2783,13 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian] before_tool_call guardContext=${JSON.stringify(guardContext)}`);
         trustedManagedLynxCheckToolCall = guardContext.trustedManagedLynxCheckToolCall === true;
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
+        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian] before_tool_call decision=${JSON.stringify(decision)}`);
         execBlacklistContext = decision.contextHints;
         log.info(`[lynx-guardian] before_tool_call execBlacklistContext=${JSON.stringify(execBlacklistContext)}`);
         log.info(`[lynx-guardian]📌,Tool call risk detected: ${JSON.stringify(decision)}`);
 
-        if (decision.block && managedLynxCheckPreauthorized) {
+        if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info(`[lynx-guardian] Managed /lynx-check blocked extra tool call outside whitelist: ${toolName}`);
           return {
             block: true,
@@ -2696,16 +2797,15 @@ export default function setup(api: OpenClawPluginApi) {
           };
         }
 
-        if (decision.block) {
-          const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
-          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${decision.riskAssessment.description}`);
+        if (guardActionRequired) {
+          const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${effectiveAssessment.description}`);
           try {
             await pushRecord(
               userId,
               buildPolicyRecordContent(
                 policyEvaluation,
-                `[SSG:tool] ${toolName} ${decision.riskAssessment.modules.join(",")}`,
+                `[SSG:tool] ${toolName} ${effectiveAssessment.modules.join(",")}`,
               ),
               policyEvaluation.legacyRiskLevel,
             );
@@ -2713,12 +2813,12 @@ export default function setup(api: OpenClawPluginApi) {
 
           }
 
-          const approvalRiskLevel = toApprovalRiskLevel(decision.riskAssessment.level);
-          const primaryModule = decision.riskAssessment.modules[0];
+          const approvalRiskLevel = toApprovalRiskLevel(effectiveAssessment.level);
+          const primaryModule = effectiveAssessment.modules[0];
           if (!policyResult.override.allowed || !approvalRiskLevel || !primaryModule) {
             return {
               block: true,
-              blockReason: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+              blockReason,
             };
           }
 
@@ -2830,39 +2930,38 @@ export default function setup(api: OpenClawPluginApi) {
               toolName,
               module: primaryModule,
               riskLevel: approvalRiskLevel,
-              description: decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+              description: blockReason,
               timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
               onResolution: resolveApproval,
             }),
           };
         }
 
-        if (decision.block && !approvedToolOverride) {
+        if (guardActionRequired && !approvedToolOverride) {
           const ctxKeys = resolveOverrideKeys(ctx);
-          const workflowAuth = getWorkflowAuth(ctxKeys, decision.riskAssessment.modules);
+          const workflowAuth = getWorkflowAuth(ctxKeys, effectiveAssessment.modules);
           if (workflowAuth) {
             recordWorkflowOperation(ctxKeys, {
               timestamp: Date.now(),
               toolName,
               paramSummary: buildParamSummary(toolName, params ?? {}),
-              triggeredModules: decision.riskAssessment.modules,
-              riskScore: decision.riskAssessment.score,
-              riskLevel: decision.riskAssessment.level,
+              triggeredModules: effectiveAssessment.modules,
+              riskScore: effectiveAssessment.score,
+              riskLevel: effectiveAssessment.level,
             });
-            log.info(`[lynx-guardian] 已有待确认操作，本次操作${toolName}将在确认后一并放行。(modules: ${decision.riskAssessment.modules.join(",")})`);
+            log.info(`[lynx-guardian] 已有待确认操作，本次操作${toolName}将在确认后一并放行。(modules: ${effectiveAssessment.modules.join(",")})`);
           }
         }
 
-        if (decision.block && !approvedToolOverride && !getWorkflowAuth(resolveOverrideKeys(ctx), decision.riskAssessment.modules)) {
-          const policyResult = resolveRiskPolicy(decision.riskAssessment, riskPolicyConfig);
-          const policyEvaluation = evaluateRiskAssessment(decision.riskAssessment);
-          log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${decision.riskAssessment.description}`);
+        if (guardActionRequired && !approvedToolOverride && !getWorkflowAuth(resolveOverrideKeys(ctx), effectiveAssessment.modules)) {
+          const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
+          log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${effectiveAssessment.description}`);
           try {
             await pushRecord(
               userId,
               buildPolicyRecordContent(
                 policyEvaluation,
-                `[SSG:tool] ${toolName} ${decision.riskAssessment.modules.join(",")}`,
+                `[SSG:tool] ${toolName} ${effectiveAssessment.modules.join(",")}`,
               ),
               policyEvaluation.legacyRiskLevel,
             );
@@ -2880,9 +2979,9 @@ export default function setup(api: OpenClawPluginApi) {
                 toolName,
                 params: params ?? null,
               },
-              riskScore: decision.riskAssessment.score,
-              riskLevel: decision.riskAssessment.level,
-              matchedModules: decision.riskAssessment.modules,
+              riskScore: effectiveAssessment.score,
+              riskLevel: effectiveAssessment.level,
+              matchedModules: effectiveAssessment.modules,
               sourceKeys: resolveOverrideKeys(ctx),
             });
 
@@ -2896,14 +2995,14 @@ export default function setup(api: OpenClawPluginApi) {
             return {
               block: true,
               blockReason: buildOverridePrompt(
-                decision.blockReason ?? `[Lynx Guardian] ${decision.riskAssessment.description}`,
+                blockReason,
                 policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
               ),
             };
           }
           return {
             block: true,
-            blockReason: decision.blockReason!,
+            blockReason,
           };
         }
       } catch (err: any) {

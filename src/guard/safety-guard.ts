@@ -11,6 +11,20 @@ import { detectSystemPromptLeak } from "./system-prompt-guard.js";
 import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
 import { SensitiveDataBlocker } from "./sensitive.js";
 import {
+  buildInputEvidenceBundle,
+  buildOutputEvidenceBundle,
+  buildToolEvidenceBundle,
+} from "./policy/evidence-bundle-builder.js";
+import type { GuardEvidenceBundle } from "./policy/evidence-bundle.js";
+import { advanceAttackGraph, type AttackGraphEvent, type AttackGraphState } from "./policy/attack-graph.js";
+import {
+  advanceAttackGraphState,
+  clearGuardPolicyState,
+  markGuardArtifactTaint,
+  readAttackGraphState,
+  readGuardArtifactTaint,
+} from "../runtime/guard-policy-state.js";
+import {
   findObfuscatedLynxPluginPath,
   findObfuscatedProtectedReferenceLabels,
   findObfuscatedSystemAuthPath,
@@ -33,6 +47,7 @@ export interface GuardDecision {
   blockReason?: string;
   warning?: string;
   riskAssessment: RiskAssessment;
+  evidenceBundle?: GuardEvidenceBundle;
   overrideHint?: {
     allowed: boolean;
     confirmationPhrase?: string;
@@ -966,17 +981,276 @@ function checkFatalTriangle(
   return { accessesSensitiveData, inputFromUntrusted, outputToExternal, hitCount };
 }
 
+function isLikelyArtifactPathToken(token: string): boolean {
+  return /^(?:\.{1,2}[\\/]|~[\\/]|[A-Za-z]:[\\/]|\/)/.test(token);
+}
+
+function tokenizeCommandHead(command: string, maxTokens: number): string[] {
+  const tokens: string[] = [];
+  const tokenPattern = /"([^"]+)"|'([^']+)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+
+  while (tokens.length < maxTokens && (match = tokenPattern.exec(command)) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+
+  return tokens;
+}
+
+function inferExecArtifactPath(command: string): string | undefined {
+  const trimmedCommand = command.trim();
+  if (!trimmedCommand) {
+    return undefined;
+  }
+
+  const tokens = tokenizeCommandHead(trimmedCommand, 2)
+    .map((token) => token.replace(/[;|&]+$/, "").trim())
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return undefined;
+  }
+
+  if (isLikelyArtifactPathToken(tokens[0])) {
+    return tokens[0];
+  }
+
+  if (
+    /^(?:bash|sh|python(?:3)?|node(?:js)?)(?:\.exe)?$/i.test(tokens[0])
+    && tokens[1]
+    && isLikelyArtifactPathToken(tokens[1])
+  ) {
+    return tokens[1];
+  }
+
+  return undefined;
+}
+
+function inferToolArtifactPath(
+  normalizedToolName: string,
+  filePath: string,
+  command: string,
+): string | undefined {
+  const explicitPath = filePath.trim();
+  if (explicitPath.length > 0) {
+    return explicitPath;
+  }
+
+  if (normalizedToolName !== "exec") {
+    return undefined;
+  }
+
+  return inferExecArtifactPath(command);
+}
+
+function deriveToolAttackGraphEvent(input: {
+  normalizedToolName: string;
+  protectedAccess: ProtectedFileAccessResult;
+  credTheftLabels: string[];
+  memorySessionAccess: boolean;
+  triangle: FatalTriangleResult;
+  trustedInternalProtectedRead: boolean;
+  trustedManagedLynxCheckToolCall: boolean;
+  artifactPath?: string;
+}): AttackGraphEvent | undefined {
+  if (input.trustedManagedLynxCheckToolCall) {
+    return undefined;
+  }
+
+  const sensitiveRead = (
+    (
+      input.protectedAccess.matchedFiles.length > 0
+      && input.protectedAccess.operation !== "write"
+      && !input.trustedInternalProtectedRead
+    )
+    || input.credTheftLabels.length > 0
+    || input.memorySessionAccess
+  );
+  const artifactWrite = Boolean(input.artifactPath)
+    && (input.normalizedToolName === "write" || input.normalizedToolName === "edit");
+  const artifactExec = Boolean(input.artifactPath) && input.normalizedToolName === "exec";
+
+  if (input.triangle.outputToExternal) {
+    return { action: "external_send" };
+  }
+  if (artifactExec) {
+    return { action: "artifact_exec" };
+  }
+  if (artifactWrite) {
+    return { action: "artifact_write" };
+  }
+  if (sensitiveRead) {
+    return { action: "sensitive_read" };
+  }
+  return undefined;
+}
+
+function shouldPersistToolAttackEvent(
+  input: {
+    decision: GuardDecision;
+    attackEvent: AttackGraphEvent | undefined;
+    priorChainState: AttackGraphState | null;
+    chainProgress: AttackGraphState | null;
+  },
+): boolean {
+  if (!input.attackEvent || !input.chainProgress) {
+    return false;
+  }
+
+  if (
+    input.priorChainState?.stage === input.chainProgress.stage
+    || (!input.priorChainState && input.chainProgress.stage === "idle")
+  ) {
+    return false;
+  }
+
+  if (!input.decision.block) {
+    return true;
+  }
+
+  return input.attackEvent.action === "sensitive_read";
+}
+
+function deriveToolTaintWriteLabels(input: {
+  normalizedToolName: string;
+  artifactPath?: string;
+  priorChainState: AttackGraphState | null;
+  taintReadLabels: string[];
+}): string[] {
+  if (
+    !input.artifactPath
+    || (input.normalizedToolName !== "write" && input.normalizedToolName !== "edit")
+  ) {
+    return [];
+  }
+
+  const labels = new Set<string>(input.taintReadLabels);
+  if (input.priorChainState?.stage && input.priorChainState.stage !== "idle") {
+    labels.add(`chain:${input.priorChainState.stage}`);
+  }
+
+  return [...labels];
+}
+
 // ── Public API: Input Guard ────────────────────────────────────────
+
+const OUTPUT_QUOTED_ARTIFACT_PATH_PATTERNS: readonly RegExp[] = [
+  /"((?:[A-Za-z]:\\|\/|\.{1,2}[\\/])[^"\r\n]+)"/g,
+  /'((?:[A-Za-z]:\\|\/|\.{1,2}[\\/])[^'\r\n]+)'/g,
+  /`((?:[A-Za-z]:\\|\/|\.{1,2}[\\/])[^`\r\n]+)`/g,
+];
+const OUTPUT_BARE_ARTIFACT_PATH_PATTERN = /((?:[A-Za-z]:\\|\/|\.{1,2}[\\/])[^\s"'`<>|]+)/g;
+const OUTPUT_EXTERNAL_SEND_PATTERNS: readonly RegExp[] = [
+  /\bhttps?:\/\/\S+/i,
+  /\b(?:upload|exfiltrat|webhook|curl|wget)\b/i,
+  /(?:外发|外部|上传|泄露)/,
+];
+
+function normalizeExtractedOutputArtifactPath(path: string): string {
+  return path.trim().replace(/[),.;:!?]+$/g, "");
+}
+
+function extractOutputArtifactPaths(output: string): string[] {
+  const unique = new Set<string>();
+
+  let bareSearchText = output;
+  for (const pattern of OUTPUT_QUOTED_ARTIFACT_PATH_PATTERNS) {
+    for (const match of bareSearchText.matchAll(pattern)) {
+      const normalized = normalizeExtractedOutputArtifactPath(match[1] ?? "");
+      if (normalized.length > 0) {
+        unique.add(normalized);
+      }
+    }
+    bareSearchText = bareSearchText.replace(pattern, " ");
+  }
+
+  for (const match of bareSearchText.matchAll(OUTPUT_BARE_ARTIFACT_PATH_PATTERN)) {
+    const normalized = normalizeExtractedOutputArtifactPath(match[1] ?? "");
+    if (normalized.length > 0) {
+      unique.add(normalized);
+    }
+  }
+
+  return [...unique];
+}
+
+function deriveOutputArtifactTaintReadLabels(
+  output: string,
+  sessionKey?: string,
+): string[] {
+  const labels = new Set<string>();
+
+  for (const path of extractOutputArtifactPaths(output)) {
+    const taintRecord = readGuardArtifactTaint(sessionKey, path);
+    for (const taint of taintRecord?.taints ?? []) {
+      labels.add(taint);
+    }
+  }
+
+  return [...labels];
+}
+
+function deriveOutputTaintReadLabels(
+  artifactTaintReadLabels: string[],
+  priorChainState?: AttackGraphState | null,
+): string[] {
+  const labels = new Set<string>(artifactTaintReadLabels);
+
+  if (priorChainState?.stage && priorChainState.stage !== "idle") {
+    labels.add(`chain:${priorChainState.stage}`);
+  }
+
+  return [...labels];
+}
+
+function deriveOutputAttackGraphEvent(input: {
+  output: string;
+  priorChainState?: AttackGraphState | null;
+  artifactTaintReadLabels: string[];
+}): AttackGraphEvent | undefined {
+  const stage = input.priorChainState?.stage;
+  if (stage !== "artifact_prepared" && stage !== "execution_ready") {
+    return undefined;
+  }
+
+  const hasExternalSendSignal = OUTPUT_EXTERNAL_SEND_PATTERNS.some((pattern) => pattern.test(input.output));
+  if (!hasExternalSendSignal || input.artifactTaintReadLabels.length === 0) {
+    return undefined;
+  }
+
+  return { action: "external_send" };
+}
+
+function shouldPersistOutputAttackEvent(input: {
+  attackEvent: AttackGraphEvent | undefined;
+  priorChainState: AttackGraphState | null;
+  chainProgress: AttackGraphState | null;
+}): boolean {
+  if (!input.attackEvent || !input.chainProgress) {
+    return false;
+  }
+
+  return input.priorChainState?.stage !== input.chainProgress.stage;
+}
 
 export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
+  const atMs = Date.now();
+  const finalizeInputDecision = (decision: GuardDecision): GuardDecision => ({
+    ...decision,
+    evidenceBundle: buildInputEvidenceBundle({
+      text,
+      assessment: decision.riskAssessment,
+      sessionKey,
+      atMs,
+    }),
+  });
 
   // === 即时危险通道（early-return，直接 L4）===
 
   // M1: 高置信度提示注入 / indirect_injection
   const injection = detectPromptInjection(text);
   if (injection.detected && (injection.confidence >= 0.85 || injection.category === "indirect_injection")) {
-    return buildInstantDeny("M1:prompt_injection", "提示注入攻击（高置信度）");
+    return finalizeInputDecision(buildInstantDeny("M1:prompt_injection", "提示注入攻击（高置信度）"));
   }
 
   // M2: 系统提示探测（所有置信度）
@@ -991,29 +1265,29 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     if (identityClaims.detected && !verifiedOwner) {
       instantModules.push("M0:identity_verification");
     }
-    return buildInstantDenyForModules(instantModules, "system prompt extraction");
+    return finalizeInputDecision(buildInstantDenyForModules(instantModules, "system prompt extraction"));
   }
 
   if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
-    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+    return finalizeInputDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
   }
 
   if (detectLynxGuardianDisableRequest(text)) {
-    return buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian");
+    return finalizeInputDecision(buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian"));
   }
 
   if (detectOpenClawAvailabilityControl(text)) {
-    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+    return finalizeInputDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
   }
 
   if (detectOpenClawMemorySessionRequest(text)) {
-    return buildInstantDeny("M2:memory_session_privacy", "attempt to access or clear OpenClaw memory/session records");
+    return finalizeInputDecision(buildInstantDeny("M2:memory_session_privacy", "attempt to access or clear OpenClaw memory/session records"));
   }
 
   // M5: 主要凭证/系统敏感文件
   const credentialTheft = detectCredentialTheft(text);
   if (credentialTheft.some((label) => PRIMARY_SECRETS.has(label))) {
-    return buildInstantDeny("M5:credential_theft", "主要凭证/系统敏感文件访问");
+    return finalizeInputDecision(buildInstantDeny("M5:credential_theft", "主要凭证/系统敏感文件访问"));
   }
 
   // M6: 恶意代码（无合法上下文，或有上下文但非纯 exploit 类）
@@ -1022,7 +1296,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     const legalCtx = hasLegalSecurityContext(text);
     const pureExploitOnly = maliciousCode.every((label) => label.includes("exploit_request"));
     if (!legalCtx || !pureExploitOnly) {
-      return buildInstantDeny("M6:malicious_code", "恶意代码请求");
+      return finalizeInputDecision(buildInstantDeny("M6:malicious_code", "恶意代码请求"));
     }
   }
 
@@ -1192,33 +1466,33 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   };
 
   if (action === "deny") {
-    return {
+    return finalizeInputDecision({
       block: true,
       blockReason: `[Lynx Guardian] 🛡️ 安全防护拦截 (${level}, score=${score}): ${assessment.description}`,
       riskAssessment: assessment,
-    };
+    });
   }
 
   if (action === "block") {
-    return {
+    return finalizeInputDecision({
       block: true,
       blockReason: `[Lynx Guardian] ⚠️ 高风险操作被阻止 (${level}, score=${score}): ${assessment.description}`,
       riskAssessment: assessment,
-    };
+    });
   }
 
   if (action === "warn") {
-    return {
+    return finalizeInputDecision({
       block: false,
       warning: `⚠️ 安全提醒: ${assessment.description}`,
       riskAssessment: assessment,
-    };
+    });
   }
 
-  return {
+  return finalizeInputDecision({
     block: false,
     riskAssessment: assessment,
-  };
+  });
 }
 
 // ── Output: Actual Secret Value Detection ─────────────────────────
@@ -1269,8 +1543,43 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
     };
   }
 
+  const atMs = Date.now();
+  const finalizeOutputDecision = (decision: GuardDecision): GuardDecision => {
+    const priorChainState = readAttackGraphState(sessionKey);
+    const artifactTaintReadLabels = deriveOutputArtifactTaintReadLabels(output, sessionKey);
+    const taintReadLabels = deriveOutputTaintReadLabels(artifactTaintReadLabels, priorChainState);
+    const attackEvent = deriveOutputAttackGraphEvent({
+      output,
+      priorChainState,
+      artifactTaintReadLabels,
+    });
+    const chainProgress = attackEvent
+      ? advanceAttackGraph(priorChainState ?? undefined, attackEvent)
+      : priorChainState;
+
+    if (!decision.block && attackEvent && shouldPersistOutputAttackEvent({
+      attackEvent,
+      priorChainState,
+      chainProgress: chainProgress ?? null,
+    })) {
+      advanceAttackGraphState(sessionKey, attackEvent);
+    }
+
+    return {
+      ...decision,
+      evidenceBundle: buildOutputEvidenceBundle({
+        output,
+        assessment: decision.riskAssessment,
+        sessionKey,
+        chainProgress,
+        taintReadLabels,
+        atMs,
+      }),
+    };
+  };
+
   if (detectOpenClawMemorySessionLeak(output)) {
-    return buildInstantDeny("M2:memory_session_privacy", "attempt to reveal OpenClaw memory/session records");
+    return finalizeOutputDecision(buildInstantDeny("M2:memory_session_privacy", "attempt to reveal OpenClaw memory/session records"));
   }
 
   const modules: string[] = [];
@@ -1354,25 +1663,25 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
   };
 
   if (action === "block" || action === "deny") {
-    return {
+    return finalizeOutputDecision({
       block: true,
       blockReason: `[Lynx Guardian] 🛡️ 输出安全拦截 (${level}, score=${score}): ${assessment.description}`,
       riskAssessment: assessment,
-    };
+    });
   }
 
   if (action === "warn") {
-    return {
+    return finalizeOutputDecision({
       block: false,
       warning: `⚠️ 输出风险提醒 (${level}): ${assessment.description}`,
       riskAssessment: assessment,
-    };
+    });
   }
 
-  return {
+  return finalizeOutputDecision({
     block: false,
     riskAssessment: assessment,
-  };
+  });
 }
 
 // ── Public API: Tool Call Guard ─────────────────────────────────────
@@ -1395,62 +1704,118 @@ export function guardToolCall(
   const normalizedToolName = toolName.trim().toLowerCase();
   const normalizedToolAction = toolAction.trim().toLowerCase();
   const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
+  const atMs = Date.now();
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
+  const memorySessionAccess = detectOpenClawMemorySessionArtifactAccess(combined, toolName);
+  const credTheft = detectCredentialTheft(combined);
+  const triangle = checkFatalTriangle(toolName, params);
+  const artifactPath = inferToolArtifactPath(normalizedToolName, filePath, command);
+  const taintReadLabels = artifactPath
+    ? (readGuardArtifactTaint(sessionKey, artifactPath)?.taints ?? [])
+    : [];
+  const attackEvent = deriveToolAttackGraphEvent({
+    normalizedToolName,
+    protectedAccess,
+    credTheftLabels: credTheft,
+    memorySessionAccess,
+    triangle,
+    trustedInternalProtectedRead,
+    trustedManagedLynxCheckToolCall,
+    artifactPath,
+  });
   let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
 
+  const finalizeToolDecision = (decision: GuardDecision): GuardDecision => {
+    const priorChainState = readAttackGraphState(sessionKey);
+    const chainProgress = attackEvent
+      ? advanceAttackGraph(priorChainState ?? undefined, attackEvent)
+      : priorChainState;
+    const taintWriteLabels = deriveToolTaintWriteLabels({
+      normalizedToolName,
+      artifactPath,
+      priorChainState,
+      taintReadLabels,
+    });
+
+    if (shouldPersistToolAttackEvent({
+      decision,
+      attackEvent,
+      priorChainState,
+      chainProgress,
+    })) {
+      advanceAttackGraphState(sessionKey, attackEvent);
+    }
+
+    if (artifactPath && taintWriteLabels.length > 0 && !decision.block) {
+      markGuardArtifactTaint(sessionKey, artifactPath, taintWriteLabels, { atMs });
+    }
+
+    return {
+      ...decision,
+      evidenceBundle: buildToolEvidenceBundle({
+        toolName: normalizedToolName || toolName,
+        params,
+        assessment: decision.riskAssessment,
+        sessionKey,
+        chainProgress,
+        taintReadLabels,
+        taintWriteLabels,
+        atMs,
+      }),
+    };
+  };
+
   if (normalizedToolName === "gateway" && /^config\.(?:patch|set|replace|update)$/i.test(normalizedToolAction)) {
-    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+    return finalizeToolDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
   }
 
   if (
     normalizedToolName === "gateway"
     && /(?:^|\.)(?:restart|stop|shutdown|close|kill|down|quit|exit)(?:$|\.)/i.test(normalizedToolAction)
   ) {
-    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+    return finalizeToolDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
   }
 
   // === 即时危险通道 ===
 
   // M5: 主要凭证 via tool
   if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
-    return buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config");
+    return finalizeToolDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
   }
 
   if (detectLynxGuardianDisableRequest(combined)) {
-    return buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian");
+    return finalizeToolDecision(buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian"));
   }
 
   if (detectOpenClawAvailabilityControl(combined)) {
-    return buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw");
+    return finalizeToolDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
   }
 
-  if (detectOpenClawMemorySessionArtifactAccess(combined, toolName)) {
-    return buildInstantDeny("M2:memory_session_privacy", "attempt to access or modify OpenClaw memory/session artifacts");
+  if (memorySessionAccess) {
+    return finalizeToolDecision(buildInstantDeny("M2:memory_session_privacy", "attempt to access or modify OpenClaw memory/session artifacts"));
   }
 
   if (detectPluginIntegrityViolation(combined, toolName)) {
-    return buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory");
+    return finalizeToolDecision(buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory"));
   }
 
   if (findObfuscatedSystemAuthPath(combined)) {
-    return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
+    return finalizeToolDecision(buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件"));
   }
 
-  const credTheft = detectCredentialTheft(combined);
   if (credTheft.some((label) => PRIMARY_SECRETS.has(label))) {
-    return buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件");
+    return finalizeToolDecision(buildInstantDeny("M5:credential_theft", "工具调用访问主要凭证/系统敏感文件"));
   }
 
   // M3: 过度代理 via tool（直接执行侧，立即拒绝）
   const overAgency = detectOverAgency(combined);
   if (overAgency.length > 0) {
-    return buildInstantDeny("M3:over_agency", "工具调用过度代理/权限提升");
+    return finalizeToolDecision(buildInstantDeny("M3:over_agency", "工具调用过度代理/权限提升"));
   }
 
   // Fatal Triangle: 全三角命中
-  const triangle = checkFatalTriangle(toolName, params);
   if (triangle.hitCount >= 3) {
-    return buildInstantDeny("fatal_triangle", "致命三角：敏感数据访问+外部输出+不可信输入同时命中");
+    return finalizeToolDecision(buildInstantDeny("fatal_triangle", "致命三角：敏感数据访问+外部输出+不可信输入同时命中"));
   }
 
   // === 评分通道 ===
@@ -1564,23 +1929,23 @@ export function guardToolCall(
   };
 
   if (action === "deny" || action === "block") {
-    return {
+    return finalizeToolDecision({
       block: true,
       blockReason: `[Lynx Guardian] 🛡️ 工具调用安全拦截 (${level}): ${assessment.description}`,
       riskAssessment: assessment,
       contextHints: {
         masqueradeTaintLevel,
       },
-    };
+    });
   }
 
-  return {
+  return finalizeToolDecision({
     block: false,
     riskAssessment: assessment,
     contextHints: {
       masqueradeTaintLevel,
     },
-  };
+  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -1612,4 +1977,5 @@ function buildDescription(modules: string[], level: RiskLevel): string {
 
 export function clearSessionState(sessionKey: string): void {
   sessionStates.delete(sessionKey);
+  clearGuardPolicyState(sessionKey);
 }

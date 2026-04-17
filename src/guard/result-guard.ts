@@ -186,6 +186,30 @@ export function guardOutputText(
   }
 
   const decision = guardOutput(text, sessionKey, options);
+  return enforceGuardDecisionText(
+    text,
+    decision,
+    options,
+    extra,
+  );
+}
+
+export function enforceGuardDecisionText(
+  text: string,
+  decision: Pick<GuardDecision, "block" | "warning" | "riskAssessment">,
+  options?: ResultGuardOptions,
+  extra?: {
+    subject?: string;
+    toolName?: string;
+  },
+): TextGuardDecision {
+  if (!text) {
+    return {
+      changed: false,
+      content: text,
+    };
+  }
+
   if (!decision.block) {
     return {
       changed: false,
