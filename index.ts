@@ -112,6 +112,8 @@ import { buildManualLynxCheckReport } from "./src/discovery/manual-lynx-check.js
 import {
   clearRecentActiveDeliveryTargetForContext,
   hasConcreteDeliveryTarget,
+  getRecentActiveDeliveryTargets,
+  readRecentActiveDeliverySnapshots,
   readRecentActiveDeliverySnapshot,
   getRecentActiveDeliveryTarget,
   rememberRecentActiveDeliveryTarget,
@@ -524,41 +526,43 @@ type ApprovalContextSeed = {
 };
 
 function recoverFeishuDmApprovalContextFromRecentRoute(now: number = Date.now()): ApprovalContextSeed | undefined {
-  const snapshot = readRecentActiveDeliverySnapshot();
-  if (!snapshot || now - snapshot.updatedAtMs > RECENT_FEISHU_DM_APPROVAL_CONTEXT_TTL_MS) {
-    return undefined;
+  const snapshots = readRecentActiveDeliverySnapshots()
+    .filter((snapshot) => now - snapshot.updatedAtMs <= RECENT_FEISHU_DM_APPROVAL_CONTEXT_TTL_MS);
+
+  for (const snapshot of snapshots) {
+    const channelProfile = resolveChannelProfile(snapshot.channelId ?? snapshot.messageProvider);
+    if (channelProfile !== "feishu") {
+      continue;
+    }
+
+    const conversationId = normalizeString(snapshot.to ?? snapshot.bindingId) || undefined;
+    const fallbackOuId = normalizeOuId(
+      extractScopedActorId(conversationId)
+      ?? snapshot.senderId,
+    );
+    if (!fallbackOuId || !conversationId?.startsWith("user:")) {
+      continue;
+    }
+
+    const recoveredProvenance = readRequesterProvenance({
+      channelId: snapshot.channelId,
+      accountId: snapshot.accountId,
+      conversationId,
+    });
+
+    return {
+      channelProfile,
+      approvalTransport: "local-chat",
+      requesterId: recoveredProvenance?.requesterId ?? fallbackOuId,
+      requesterOuId: recoveredProvenance?.requesterOuId ?? fallbackOuId,
+      accountId: recoveredProvenance?.accountId ?? snapshot.accountId,
+      conversationId: recoveredProvenance?.conversationId ?? conversationId,
+      threadId: recoveredProvenance?.threadId ?? snapshot.threadId,
+      isGroup: recoveredProvenance?.isGroup === true ? true : false,
+    };
   }
 
-  const channelProfile = resolveChannelProfile(snapshot.channelId ?? snapshot.messageProvider);
-  if (channelProfile !== "feishu") {
-    return undefined;
-  }
-
-  const conversationId = normalizeString(snapshot.to ?? snapshot.bindingId) || undefined;
-  const fallbackOuId = normalizeOuId(
-    extractScopedActorId(conversationId)
-    ?? snapshot.senderId,
-  );
-  if (!fallbackOuId || !conversationId?.startsWith("user:")) {
-    return undefined;
-  }
-
-  const recoveredProvenance = readRequesterProvenance({
-    channelId: snapshot.channelId,
-    accountId: snapshot.accountId,
-    conversationId,
-  });
-
-  return {
-    channelProfile,
-    approvalTransport: "local-chat",
-    requesterId: recoveredProvenance?.requesterId ?? fallbackOuId,
-    requesterOuId: recoveredProvenance?.requesterOuId ?? fallbackOuId,
-    accountId: recoveredProvenance?.accountId ?? snapshot.accountId,
-    conversationId: recoveredProvenance?.conversationId ?? conversationId,
-    threadId: recoveredProvenance?.threadId ?? snapshot.threadId,
-    isGroup: recoveredProvenance?.isGroup === true ? true : false,
-  };
+  return undefined;
 }
 
 function mergeApprovalContextSeed(
@@ -849,6 +853,85 @@ export default function setup(api: OpenClawPluginApi) {
     };
   }
 
+  function matchesApprovalDeliveryRoute(
+    target: RecentActiveDeliveryTarget,
+    routeHint: RecentActiveDeliverySnapshot | null,
+    ctx: any,
+  ): boolean {
+    const sessionKey = normalizeString(routeHint?.sessionKey ?? ctx?.sessionKey);
+    if (sessionKey && normalizeString(target.sessionKey) === sessionKey) {
+      return true;
+    }
+
+    const targetKey = normalizeString(routeHint?.targetKey);
+    if (targetKey && normalizeString(target.targetKey) === targetKey) {
+      return true;
+    }
+
+    const routeChannelId = normalizeString(routeHint?.channelId ?? ctx?.channelId ?? ctx?.channel);
+    const routeProvider = normalizeString(routeHint?.messageProvider ?? ctx?.messageProvider ?? ctx?.source);
+    const matchesChannel = !routeChannelId || normalizeString(target.channelId) === routeChannelId;
+    const matchesProvider = !routeProvider || normalizeString(target.messageProvider) === routeProvider;
+    if (!matchesChannel || !matchesProvider) {
+      return false;
+    }
+
+    const routeTo = normalizeString(routeHint?.to ?? ctx?.to ?? ctx?.recipientId ?? ctx?.conversationId);
+    if (routeTo && normalizeString(target.to) === routeTo) {
+      return true;
+    }
+
+    const routeSenderId = normalizeString(routeHint?.senderId ?? ctx?.senderId ?? ctx?.senderOpenId ?? ctx?.userId);
+    if (routeSenderId && normalizeString(target.senderId) === routeSenderId) {
+      return true;
+    }
+
+    const routeAccountId = normalizeString(routeHint?.accountId ?? ctx?.accountId);
+    const routeThreadId = normalizeString(routeHint?.threadId ?? ctx?.threadId ?? ctx?.messageThreadId);
+    if (
+      routeAccountId
+      && routeThreadId
+      && normalizeString(target.accountId) === routeAccountId
+      && normalizeString(target.threadId) === routeThreadId
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function canUseLocalToolApprovalTransport(params: {
+    ctx: any;
+    approvalId: string;
+    preferredTransport?: "native" | "local-chat" | "none";
+    requesterOuId?: string;
+    conversationId?: string;
+    accountId?: string;
+    threadId?: string | number;
+  }): boolean {
+    if (shouldPreferNativeToolApproval(params.ctx, params.preferredTransport)) {
+      return false;
+    }
+
+    if (typeof params.ctx?.sendMessage === "function") {
+      return true;
+    }
+
+    if (
+      typeof params.ctx?.resolveMessageTarget === "function"
+      && typeof params.ctx?.sharedMessageSender?.send === "function"
+    ) {
+      return true;
+    }
+
+    const routeHint = buildLocalToolApprovalDeliveryRouteHint(params);
+    if (!routeHint) {
+      return false;
+    }
+
+    return getRecentActiveDeliveryTargets().some((target) => matchesApprovalDeliveryRoute(target, routeHint, params.ctx));
+  }
+
   async function sendLocalToolApprovalPrompt(params: {
     ctx: any;
     approvalId: string;
@@ -1066,7 +1149,8 @@ export default function setup(api: OpenClawPluginApi) {
     };
   }): Promise<{
     resolveApproval: (resolution: ToolApprovalResolution) => void;
-    transport: "native" | "local";
+    transport: "native" | "local" | "blocked";
+    blockReason?: string;
   }> {
     let resolved = false;
     const resolveApproval = (resolution: ToolApprovalResolution) => {
@@ -1137,9 +1221,17 @@ export default function setup(api: OpenClawPluginApi) {
       });
       if (!promptDelivered) {
         discardLocalToolApproval(localApproval.approval.approvalToken);
+        resolveApproval("cancelled");
         log.warn(
-          `[lynx-guardian] Local tool approval prompt delivery failed; falling back to native approval approvalId=${params.approvalId}`,
+          `[lynx-guardian] Local tool approval prompt delivery failed approvalId=${params.approvalId} preferredTransport=${params.preferredTransport ?? "auto"}`,
         );
+        if (params.preferredTransport === "local-chat") {
+          return {
+            resolveApproval,
+            transport: "blocked",
+            blockReason: "[Lynx Guardian] 飞书审批提示发送失败，已拒绝本次操作。",
+          };
+        }
         return {
           resolveApproval,
           transport: "native",
@@ -1746,7 +1838,6 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("before_agent_start", async (event, ctx) => {
     try {
       if (!event.prompt && !event.messages) return;
-      rememberRecentActiveDeliveryTarget(ctx);
       const sessionKey = normalizeString(ctx.sessionKey) || undefined;
       const channelId = normalizeString(ctx.channelId) || undefined;
       const normalizedConversationIdInput = resolveChannelProfile(channelId) === "feishu"
@@ -1803,6 +1894,7 @@ export default function setup(api: OpenClawPluginApi) {
           expiresAt: Date.now() + 30 * 60 * 1000,
         });
       }
+      rememberRecentActiveDeliveryTarget(ctx);
       let prependContext = "";
       let publicAccessResult: any = null;
       const ipInfo = await baseIpInfo();
@@ -2644,6 +2736,25 @@ export default function setup(api: OpenClawPluginApi) {
           }
 
           const approvalId = `lynx:ssg:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
+          const preferredToolApprovalTransport = canUseLocalToolApprovalTransport({
+            ctx,
+            approvalId,
+            preferredTransport: effectiveRunApprovalContext.approvalTransport,
+            requesterOuId: effectiveRunApprovalContext.requesterOuId,
+            conversationId: effectiveRunApprovalContext.conversationId,
+            accountId: effectiveRunApprovalContext.accountId,
+            threadId: effectiveRunApprovalContext.threadId,
+          })
+            ? (effectiveRunApprovalContext.approvalTransport ?? "local-chat")
+            : "native";
+          if (
+            effectiveRunApprovalContext.approvalTransport === "local-chat"
+            && preferredToolApprovalTransport === "native"
+          ) {
+            log.info(
+              `[lynx-guardian] Downgrading Feishu tool approval to native approvalId=${approvalId} run=${ctx.runId ?? "no-run"} reason=local-transport-unavailable`,
+            );
+          }
           const pendingApproval = ctx.runId
             ? getOrCreatePendingToolApproval({
                 runId: ctx.runId,
@@ -2667,14 +2778,14 @@ export default function setup(api: OpenClawPluginApi) {
             }
             return { block: true, blockReason: "Approval timed out" };
           }
-          const { resolveApproval, transport } = await prepareToolApprovalHandlers({
+          const { resolveApproval, transport, blockReason } = await prepareToolApprovalHandlers({
             ctx,
             runId: ctx.runId,
             requesterOuId: effectiveRunApprovalContext.requesterOuId,
             conversationId: effectiveRunApprovalContext.conversationId,
             accountId: effectiveRunApprovalContext.accountId,
             threadId: effectiveRunApprovalContext.threadId,
-            preferredTransport: effectiveRunApprovalContext.approvalTransport,
+            preferredTransport: preferredToolApprovalTransport,
             approverOuIds: localApprovalApproverOuIds,
             approvalId,
             toolName,
@@ -2684,6 +2795,12 @@ export default function setup(api: OpenClawPluginApi) {
             grantWindowMs: riskPolicyConfig.grantWindowMs,
             pendingApproval,
           });
+          if (transport === "blocked") {
+            return {
+              block: true,
+              blockReason: blockReason ?? "Approval unavailable",
+            };
+          }
           if (transport === "local") {
             return await waitForPendingToolApprovalResolution(pendingApproval?.pending);
           }
@@ -2964,6 +3081,25 @@ export default function setup(api: OpenClawPluginApi) {
 
           const approvalId = `lynx:blacklist:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
           log.info(`[lynx-guardian] blacklist approval approvalId=${approvalId}`);
+          const preferredToolApprovalTransport = canUseLocalToolApprovalTransport({
+            ctx,
+            approvalId,
+            preferredTransport: effectiveRunApprovalContext.approvalTransport,
+            requesterOuId: effectiveRunApprovalContext.requesterOuId,
+            conversationId: effectiveRunApprovalContext.conversationId,
+            accountId: effectiveRunApprovalContext.accountId,
+            threadId: effectiveRunApprovalContext.threadId,
+          })
+            ? (effectiveRunApprovalContext.approvalTransport ?? "local-chat")
+            : "native";
+          if (
+            effectiveRunApprovalContext.approvalTransport === "local-chat"
+            && preferredToolApprovalTransport === "native"
+          ) {
+            log.info(
+              `[lynx-guardian] Downgrading Feishu blacklist approval to native approvalId=${approvalId} run=${ctx.runId ?? "no-run"} reason=local-transport-unavailable`,
+            );
+          }
           const pendingApproval = ctx.runId
             ? getOrCreatePendingToolApproval({
                 runId: ctx.runId,
@@ -2990,14 +3126,14 @@ export default function setup(api: OpenClawPluginApi) {
             return { block: true, blockReason: "Approval timed out" };
           }
           log.info(`[lynx-guardian] blacklist approval prepare handlers`);
-          const { resolveApproval, transport } = await prepareToolApprovalHandlers({
+          const { resolveApproval, transport, blockReason } = await prepareToolApprovalHandlers({
             ctx,
             runId: ctx.runId,
             requesterOuId: effectiveRunApprovalContext.requesterOuId,
             conversationId: effectiveRunApprovalContext.conversationId,
             accountId: effectiveRunApprovalContext.accountId,
             threadId: effectiveRunApprovalContext.threadId,
-            preferredTransport: effectiveRunApprovalContext.approvalTransport,
+            preferredTransport: preferredToolApprovalTransport,
             approverOuIds: localApprovalApproverOuIds,
             approvalId,
             toolName,
@@ -3008,6 +3144,12 @@ export default function setup(api: OpenClawPluginApi) {
             pendingApproval,
           });
           log.info(`[lynx-guardian] blacklist approval transport=${JSON.stringify(transport)}`);
+          if (transport === "blocked") {
+            return {
+              block: true,
+              blockReason: blockReason ?? "Approval unavailable",
+            };
+          }
           if (transport === "local") {
             log.info(`[lynx-guardian] blacklist approval waiting for local resolution`);
             return await waitForPendingToolApprovalResolution(pendingApproval?.pending);

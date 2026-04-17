@@ -321,10 +321,6 @@ function buildSnapshotWithOptions(
     return null;
   }
 
-  if (normalizeString((ctx as any).subsystem).toLowerCase() === "plugins") {
-    return null;
-  }
-
   const snapshot: RecentActiveRouteHint = {
     sessionKey: normalizeString(ctx.sessionKey) || undefined,
     channelId: normalizeString((ctx as any).channelId ?? (ctx as any).channel) || undefined,
@@ -352,7 +348,16 @@ function buildSnapshotWithOptions(
     return null;
   }
 
-  if (!allowRouteOnly && !buildLiveTargetSender(ctx, snapshot)) {
+  const liveTargetSender = buildLiveTargetSender(ctx, snapshot);
+  if (
+    normalizeString((ctx as any).subsystem).toLowerCase() === "plugins"
+    && !liveTargetSender
+    && !hasConcreteDeliveryTarget(snapshot)
+  ) {
+    return null;
+  }
+
+  if (!allowRouteOnly && !liveTargetSender) {
     return null;
   }
 

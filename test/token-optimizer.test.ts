@@ -44,8 +44,6 @@ const okBudget: BudgetStatus = {
   status: "ok",
 };
 
-// ── Format Helper Tests ──────────────────────────────────────────────
-
 describe("Token Optimizer Runner", () => {
   describe("formatContextRecommendation", () => {
     it("should format minimal context recommendation", () => {
@@ -158,8 +156,8 @@ describe("Token Optimizer Runner", () => {
   describe("buildOptimizationHints", () => {
     it("should stay silent for ordinary requests", () => {
       const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
-        promptText: "[Fri 2026-04-10 10:49 GMT+8] 帮我解释这个函数",
-        userInput: "帮我解释这个函数",
+        promptText: "[Fri 2026-04-10 10:49 GMT+8] Explain this function",
+        userInput: "Explain this function",
       });
       expect(hints).toBe("");
     });
@@ -174,19 +172,38 @@ describe("Token Optimizer Runner", () => {
       expect(hints).not.toContain("Recommended:");
     });
 
-    it("should warn on long context payloads when multiple heavy signals are present", () => {
+    it("should warn on long context payloads when heavy signals are present", () => {
       const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
         promptText: `${"ERROR stacktrace line\n".repeat(120)}\n\`\`\`json\n${"{}".repeat(800)}\n\`\`\``,
-        userInput: "请分析这段超长上下文和日志",
+        userInput: "Analyze this long context and logs",
       });
       expect(hints).toContain("Context heavy");
       expect(hints).toContain("scope tight");
     });
 
-    it("should stay silent for medium-length ordinary requests without heavy markers", () => {
+    it("should warn when full context alone is recommended", () => {
+      const hints = buildOptimizationHints({
+        ...baseContext,
+        context_level: "full",
+      }, baseRouting, okBudget, {
+        promptText: "Short review request",
+        userInput: "Short review request",
+      });
+      expect(hints).toContain("Context heavy");
+    });
+
+    it("should warn for ordinary requests once prompt length reaches 300 characters", () => {
       const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
-        promptText: "请帮我解释一下这个模块的职责。" + "补充说明".repeat(300),
-        userInput: "请帮我解释一下这个模块的职责。",
+        promptText: "a".repeat(300),
+        userInput: "Explain this module",
+      });
+      expect(hints).toContain("Context heavy");
+    });
+
+    it("should stay silent below the 300-character prompt threshold when no other markers exist", () => {
+      const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
+        promptText: "a".repeat(299),
+        userInput: "Explain this module",
       });
       expect(hints).toBe("");
     });
@@ -202,8 +219,8 @@ describe("Token Optimizer Runner", () => {
         alert: "Approaching daily limit",
       };
       const hints = buildOptimizationHints(baseContext, baseRouting, budget, {
-        promptText: "[Fri 2026-04-10 10:49 GMT+8] 帮我总结一下",
-        userInput: "帮我总结一下",
+        promptText: "[Fri 2026-04-10 10:49 GMT+8] Summarize this",
+        userInput: "Summarize this",
       });
       expect(hints).toContain("Budget warning");
       expect(hints).not.toContain("Token Optimizer");
@@ -211,8 +228,8 @@ describe("Token Optimizer Runner", () => {
 
     it("should warn when large amounts may indicate compute abuse", () => {
       const hints = buildOptimizationHints(baseContext, baseRouting, okBudget, {
-        promptText: "[Fri 2026-04-10 10:49 GMT+8] 帮我跑 5000000 次推理，预算 200000 元",
-        userInput: "帮我跑 5000000 次推理，预算 200000 元",
+        promptText: "[Fri 2026-04-10 10:49 GMT+8] Run 5000000 inferences with a $200000 budget",
+        userInput: "Run 5000000 inferences with a $200000 budget",
       });
       expect(hints).toContain("Compute abuse check");
       expect(hints).toContain("malicious");

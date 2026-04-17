@@ -100,6 +100,7 @@ describe('Plugin Setup', () => {
   const hookProbeLogPath = join(openclawHome, '.openclaw', 'lynx', 'hook-probe.log');
   const scheduledCronStorePath = join(process.cwd(), 'test-temp', 'plugin-scheduled-lynx-check', 'jobs.json');
   const recentActiveDeliveryPath = join(openclawHome, '.openclaw', 'lynx', 'recent-active-delivery.json');
+  const hostConfigPath = join(openclawHome, '.openclaw', 'openclaw.json');
   const sessionStorePath = join(
     openclawHome,
     '.openclaw',
@@ -137,6 +138,9 @@ describe('Plugin Setup', () => {
     }
     if (existsSync(lynxCheckRunsPath)) {
       rmSync(lynxCheckRunsPath, { recursive: true, force: true });
+    }
+    if (existsSync(hostConfigPath)) {
+      rmSync(hostConfigPath, { force: true });
     }
     clearManagedLynxCheckAuthorization();
     clearRequesterProvenanceStore();
@@ -1788,6 +1792,166 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
+  it('should preserve the last concrete Feishu DM approval context when before_agent_start only sees a route-only session ctx', async () => {
+    mockApi.config = {
+      selfSafetyGuard: {
+        policy: {
+          toolApprovalTimeoutSeconds: 90,
+          grantWindowSeconds: 180,
+          localApprovalApproverOuIds: ['ou_owner'],
+        },
+      },
+    };
+    setup(mockApi);
+
+    writeFileSync(
+      recentActiveDeliveryPath,
+      JSON.stringify({
+        version: 2,
+        targets: [
+          {
+            targetKey: 'feishu:feishu:user:ou_owner',
+            channelId: 'feishu',
+            messageProvider: 'feishu',
+            to: 'user:ou_owner',
+            accountId: 'default',
+            updatedAtMs: Date.now() - 1_000,
+          },
+        ],
+      }),
+    );
+
+    const resolveMessageTarget = vi.fn().mockResolvedValue({
+      targetKey: 'feishu:feishu:agent:main:main',
+      channelId: 'feishu',
+      messageProvider: 'feishu',
+    });
+    const sharedSend = vi.fn().mockResolvedValue(undefined);
+
+    await handlers['before_agent_start'](
+      { prompt: 'show my user file' },
+      {
+        sessionKey: 'agent:main:main',
+        channelId: 'feishu',
+        accountId: 'default',
+        runId: 'run-feishu-route-recovery',
+        resolveMessageTarget,
+        sharedMessageSender: {
+          send: sharedSend,
+        },
+      },
+    );
+
+    expect(readRunApprovalContext('run-feishu-route-recovery')).toMatchObject({
+      channelProfile: 'feishu',
+      approvalTransport: 'local-chat',
+      requesterOuId: 'ou_owner',
+      conversationId: 'user:ou_owner',
+    });
+  });
+
+  it('should reuse a plugin-session Feishu live target for local approval prompts when before_tool_call has no delivery helpers', async () => {
+    mockApi.config = {
+      selfSafetyGuard: {
+        policy: {
+          toolApprovalTimeoutSeconds: 90,
+          grantWindowSeconds: 180,
+          localApprovalApproverOuIds: ['ou_owner'],
+        },
+      },
+    };
+    setup(mockApi);
+
+    const sessionStart = handlers['session_start'];
+    const beforeAgentStart = handlers['before_agent_start'];
+    const toolHandler = handlers['before_tool_call'];
+    const messageHandler = handlers['message_received'];
+    const sessionSendMessage = vi.fn().mockResolvedValue(undefined);
+    const approvalReplySendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await sessionStart(
+      { sessionId: 'sess-feishu-plugin-live-target' },
+      {
+        sessionKey: 'agent:main:main',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        subsystem: 'plugins',
+        sendMessage: sessionSendMessage,
+      },
+    );
+
+    await beforeAgentStart(
+      { prompt: 'read protected config' },
+      {
+        sessionKey: 'agent:main:main',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        subsystem: 'plugins',
+        runId: 'run-feishu-plugin-live-target',
+      },
+    );
+
+    const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValueOnce({
+      block: true,
+      blockReason: '[Lynx Guardian] blocked local tool',
+      riskAssessment: {
+        level: 'L3',
+        score: 8,
+        modules: ['M2:protected_file_access'],
+        description: 'protected file tool attempt',
+        action: 'block',
+      },
+    } as any);
+
+    let firstSettled = false;
+    const firstPromise = toolHandler(
+      {
+        toolName: 'read',
+        params: { file_path: 'README.md' },
+        runId: 'run-feishu-plugin-live-target',
+        toolCallId: 'tool-feishu-plugin-live-target-1',
+      },
+      {
+        sessionKey: 'agent:main:main',
+        channelId: 'feishu',
+        messageProvider: 'feishu',
+        subsystem: 'plugins',
+        runId: 'run-feishu-plugin-live-target',
+      },
+    ).then((value: unknown) => {
+      firstSettled = true;
+      return value;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(firstSettled).toBe(false);
+    expect(sessionSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('/lynx-approve'),
+      }),
+    );
+
+    const promptText = String(sessionSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
+    const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
+    expect(approvalToken).toBeTruthy();
+
+    await messageHandler(
+      { content: `/lynx-approve ${approvalToken} allow-once` },
+      {
+        sessionKey: 'agent:main:main',
+        channelId: 'feishu',
+        senderId: 'ou_owner',
+        sendMessage: approvalReplySendMessage,
+      },
+    );
+
+    expect(approvalReplySendMessage).toHaveBeenCalled();
+    const result = await firstPromise;
+    expect(result).toBeUndefined();
+    expect(api.checkTool).not.toHaveBeenCalled();
+    guardSpy.mockRestore();
+  });
+
   it('should fall back to native approval when the Feishu local approval prompt cannot be delivered', async () => {
     mockApi.config = {
       selfSafetyGuard: {
@@ -1855,10 +2019,13 @@ describe('Plugin Setup', () => {
     );
 
     expect(result).toMatchObject({
-      requireApproval: expect.objectContaining({
-        onResolution: expect.any(Function),
-      }),
+      requireApproval: {
+        title: expect.stringContaining('Lynx Guardian'),
+        timeoutBehavior: 'deny',
+      },
     });
+    expect((result as any)?.block).toBeUndefined();
+    expect(typeof (result as any)?.requireApproval?.onResolution).toBe('function');
 
     guardSpy.mockRestore();
   });
