@@ -46,6 +46,7 @@ import {
   buildScheduledLynxCheckPrompt,
 } from '../src/runtime/lynx-check-prompt.js';
 import * as tokenOptimizerRunner from '../src/runtime/token-optimizer-runner.js';
+import { resetDirectFeishuApprovalDeliveryForTests } from '../src/runtime/lynx-feishu-direct-delivery.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
@@ -148,6 +149,7 @@ describe('Plugin Setup', () => {
     clearRunApprovalContexts();
     clearApprovalGrants();
     clearPendingToolApprovals();
+    resetDirectFeishuApprovalDeliveryForTests();
     recentActiveDelivery.resetRecentActiveDeliveryTargets(recentActiveDeliveryPath);
     if (existsSync(scheduledCronStorePath)) {
       rmSync(scheduledCronStorePath, { force: true });
@@ -1069,6 +1071,63 @@ describe('Plugin Setup', () => {
     expect(api.checkTool).not.toHaveBeenCalled();
   });
 
+  it('should allow creating non-Lynx skills without treating SKILL.md as a protected core file', async () => {
+    setup(mockApi);
+    const beforeAgentStart = handlers['before_agent_start'];
+    const toolHandler = handlers['before_tool_call'];
+    const customSkillPath = 'C:/Users/skill-owner/.openclaw/skills/my-custom-skill/SKILL.md';
+
+    const promptResult = await beforeAgentStart(
+      {
+        prompt: `请在 ${customSkillPath} 新建一个 skill，并先写入基础 frontmatter`,
+      },
+      {
+        sessionKey: 'sess-custom-skill-create',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect((promptResult as any)?.block).not.toBe(true);
+
+    const toolResult = await toolHandler(
+      {
+        toolName: 'write',
+        params: {
+          path: customSkillPath,
+          content: '---\nname: my-custom-skill\ndescription: test\n---\n',
+        },
+      },
+      {
+        sessionKey: 'sess-custom-skill-create',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(toolResult).toBeUndefined();
+  });
+
+  it('should keep Lynx-owned skill files protected even when they are addressed through relative skill paths', async () => {
+    setup(mockApi);
+    const handler = handlers['before_tool_call'];
+
+    const result = await handler(
+      {
+        toolName: 'write',
+        params: {
+          path: 'skills/openclaw-plugin-dev-workflow/SKILL.md',
+          content: 'tamper',
+        },
+      },
+      {
+        sessionKey: 'sess-lynx-skill-relative-write',
+        subsystem: 'plugins',
+      },
+    );
+
+    expect(result).not.toBeUndefined();
+    expect(Boolean((result as any)?.block || (result as any)?.requireApproval)).toBe(true);
+  });
+
   it('should allow trusted plugin-subsystem healthcheck reads during scheduled Lynx runs', async () => {
     setup(mockApi);
     const handler = handlers['before_tool_call'];
@@ -1122,7 +1181,8 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(orchestratorSkillRead).toEqual(expect.objectContaining({ block: true }));
+    expect(orchestratorSkillRead).not.toBeUndefined();
+    expect(Boolean((orchestratorSkillRead as any)?.block || (orchestratorSkillRead as any)?.requireApproval)).toBe(true);
   });
 
   it('should keep removed orchestrator skill reads blocked even without subsystem marker', async () => {
@@ -1518,9 +1578,8 @@ describe('Plugin Setup', () => {
     );
 
     const toolHandler = handlers['before_tool_call'];
-    const messageHandler = handlers['message_received'];
+    const beforeDispatchHandler = handlers['before_dispatch'];
     const promptSendMessage = vi.fn().mockResolvedValue(undefined);
-    const approvalReplySendMessage = vi.fn().mockResolvedValue(undefined);
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall');
     guardSpy
       .mockReturnValueOnce({
@@ -1574,20 +1633,31 @@ describe('Plugin Setup', () => {
     );
 
     const promptText = String(promptSendMessage.mock.calls.at(-1)?.[0]?.content ?? '');
+    expect(promptText).toContain('/lynx-approve');
     const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
     expect(approvalToken).toBeTruthy();
 
-    const approvalReply = await messageHandler(
-      { content: `/lynx-approve ${approvalToken} allow-once` },
+    const approvalReply = await beforeDispatchHandler(
+      {
+        content: `/lynx-approve ${approvalToken} allow-once`,
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-manual-approval',
+        senderId: 'ou_owner',
+        isGroup: true,
+        timestamp: Date.now(),
+      },
       {
         sessionKey: 'sess-feishu-manual-approval',
         channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-feishu-manual-approval',
         senderId: 'ou_owner',
-        sendMessage: approvalReplySendMessage,
       },
     );
-    expect(approvalReply).toBeUndefined();
-    expect(approvalReplySendMessage).toHaveBeenCalled();
+    expect(approvalReply).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('已批准'),
+    });
 
     const first = await firstPromise;
     expect(first).toBeUndefined();
@@ -1649,8 +1719,7 @@ describe('Plugin Setup', () => {
     );
 
     const toolHandler = handlers['before_tool_call'];
-    const messageHandler = handlers['message_received'];
-    const approvalReplySendMessage = vi.fn().mockResolvedValue(undefined);
+    const beforeDispatchHandler = handlers['before_dispatch'];
     const resolveMessageTarget = vi.fn().mockResolvedValue({
       targetKey: 'feishu:feishu:ou_requester',
       channelId: 'feishu',
@@ -1723,17 +1792,27 @@ describe('Plugin Setup', () => {
     const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
     expect(approvalToken).toBeTruthy();
 
-    const approvalReply = await messageHandler(
-      { content: `/lynx-approve ${approvalToken} allow-once` },
+    const approvalReply = await beforeDispatchHandler(
+      {
+        content: `/lynx-approve ${approvalToken} allow-once`,
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-shared-approval',
+        senderId: 'ou_owner',
+        isGroup: false,
+        timestamp: Date.now(),
+      },
       {
         sessionKey: 'sess-feishu-shared-approval',
         channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'user:ou_requester',
         senderId: 'ou_owner',
-        sendMessage: approvalReplySendMessage,
       },
     );
-    expect(approvalReply).toBeUndefined();
-    expect(approvalReplySendMessage).toHaveBeenCalled();
+    expect(approvalReply).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('已批准'),
+    });
 
     const first = await firstPromise;
     expect(first).toBeUndefined();
@@ -1817,8 +1896,7 @@ describe('Plugin Setup', () => {
     });
 
     const toolHandler = handlers['before_tool_call'];
-    const messageHandler = handlers['message_received'];
-    const approvalReplySendMessage = vi.fn().mockResolvedValue(undefined);
+    const beforeDispatchHandler = handlers['before_dispatch'];
     const resolveMessageTarget = vi.fn().mockResolvedValue({
       targetKey: 'feishu:feishu:user:ou_owner',
       channelId: 'feishu',
@@ -1903,17 +1981,28 @@ describe('Plugin Setup', () => {
     const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
     expect(approvalToken).toBeTruthy();
 
-    await messageHandler(
-      { content: `/lynx-approve ${approvalToken} allow-once` },
+    const approvalReply = await beforeDispatchHandler(
+      {
+        content: `/lynx-approve ${approvalToken} allow-once`,
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-host-config-fallback',
+        senderId: 'ou_owner',
+        isGroup: false,
+        timestamp: Date.now(),
+      },
       {
         sessionKey: 'sess-feishu-host-config-fallback',
         channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'user:ou_owner',
         senderId: 'ou_owner',
-        sendMessage: approvalReplySendMessage,
       },
     );
 
-    expect(approvalReplySendMessage).toHaveBeenCalled();
+    expect(approvalReply).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('已批准'),
+    });
     const result = await firstPromise;
     expect(result).toBeUndefined();
     expect(api.checkTool).not.toHaveBeenCalled();
@@ -1993,9 +2082,8 @@ describe('Plugin Setup', () => {
     const sessionStart = handlers['session_start'];
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
-    const messageHandler = handlers['message_received'];
+    const beforeDispatchHandler = handlers['before_dispatch'];
     const sessionSendMessage = vi.fn().mockResolvedValue(undefined);
-    const approvalReplySendMessage = vi.fn().mockResolvedValue(undefined);
 
     await sessionStart(
       { sessionId: 'sess-feishu-plugin-live-target' },
@@ -2063,24 +2151,33 @@ describe('Plugin Setup', () => {
     const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
     expect(approvalToken).toBeTruthy();
 
-    await messageHandler(
-      { content: `/lynx-approve ${approvalToken} allow-once` },
+    const approvalReply = await beforeDispatchHandler(
+      {
+        content: `/lynx-approve ${approvalToken} allow-once`,
+        channel: 'feishu',
+        sessionKey: 'agent:main:main',
+        senderId: 'ou_owner',
+        isGroup: false,
+        timestamp: Date.now(),
+      },
       {
         sessionKey: 'agent:main:main',
         channelId: 'feishu',
         senderId: 'ou_owner',
-        sendMessage: approvalReplySendMessage,
       },
     );
 
-    expect(approvalReplySendMessage).toHaveBeenCalled();
+    expect(approvalReply).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('已批准'),
+    });
     const result = await firstPromise;
     expect(result).toBeUndefined();
     expect(api.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
 
-  it('should fall back to native approval when the Feishu local approval prompt cannot be delivered', async () => {
+  it('should deliver the Feishu local approval prompt through direct Feishu fallback when runtime delivery helpers are unavailable', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         policy: {
@@ -2119,6 +2216,7 @@ describe('Plugin Setup', () => {
     );
 
     const toolHandler = handlers['before_tool_call'];
+    const beforeDispatchHandler = handlers['before_dispatch'];
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValueOnce({
       block: true,
       blockReason: '[Lynx Guardian] blocked local tool',
@@ -2130,8 +2228,44 @@ describe('Plugin Setup', () => {
         action: 'block',
       },
     } as any);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: 0,
+          tenant_access_token: 'tenant-token',
+          expire: 7200,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: 0,
+          msg: 'ok',
+          data: { message_id: 'om_feishu_direct_prompt' },
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock as any);
+    mkdirSync(dirname(hostConfigPath), { recursive: true });
+    writeFileSync(
+      hostConfigPath,
+      JSON.stringify({
+        channels: {
+          feishu: {
+            enabled: true,
+            appId: 'cli_test_app',
+            appSecret: 'test_secret',
+            domain: 'feishu',
+          },
+        },
+      }, null, 2),
+      'utf8',
+    );
 
-    const result = await toolHandler(
+    let firstSettled = false;
+    const firstPromise = toolHandler(
       {
         toolName: 'read',
         params: { file_path: 'README.md' },
@@ -2144,16 +2278,47 @@ describe('Plugin Setup', () => {
         runId: 'run-feishu-local-fallback',
         senderId: 'ou_requester',
       },
+    ).then((value: unknown) => {
+      firstSettled = true;
+      return value;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(firstSettled).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0] ?? '')).toContain('/auth/v3/tenant_access_token/internal');
+    expect(String(fetchMock.mock.calls[1]?.[0] ?? '')).toContain('/im/v1/messages');
+    expect(String(fetchMock.mock.calls[1]?.[1]?.body ?? '')).toContain('/lynx-approve');
+
+    const sendBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body ?? '{}'));
+    const promptText = JSON.parse(String(sendBody.content ?? '{}')).text as string;
+    const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
+    expect(approvalToken).toBeTruthy();
+
+    const approvalReply = await beforeDispatchHandler(
+      {
+        content: `/lynx-approve ${approvalToken} allow-once`,
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-local-fallback',
+        senderId: 'ou_owner',
+        isGroup: false,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-feishu-local-fallback',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'user:ou_requester',
+        senderId: 'ou_owner',
+      },
     );
 
-    expect(result).toMatchObject({
-      requireApproval: {
-        title: expect.stringContaining('Lynx Guardian'),
-        timeoutBehavior: 'deny',
-      },
+    expect(approvalReply).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('已批准'),
     });
-    expect((result as any)?.block).toBeUndefined();
-    expect(typeof (result as any)?.requireApproval?.onResolution).toBe('function');
+    const result = await firstPromise;
+    expect(result).toBeUndefined();
 
     guardSpy.mockRestore();
   });
@@ -2195,10 +2360,8 @@ describe('Plugin Setup', () => {
     );
 
     const toolHandler = handlers['before_tool_call'];
-    const messageHandler = handlers['message_received'];
+    const beforeDispatchHandler = handlers['before_dispatch'];
     const promptSendMessage = vi.fn().mockResolvedValue(undefined);
-    const rejectedReplySendMessage = vi.fn().mockResolvedValue(undefined);
-    const approverReplySendMessage = vi.fn().mockResolvedValue(undefined);
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall');
     guardSpy.mockReturnValueOnce({
       block: true,
@@ -2243,34 +2406,50 @@ describe('Plugin Setup', () => {
     const approvalToken = promptText.match(/\/lynx-approve\s+([a-z0-9]+)\s+allow-once/i)?.[1];
     expect(approvalToken).toBeTruthy();
 
-    const wrongReply = await messageHandler(
-      { content: `/lynx-approve ${approvalToken} allow-once` },
+    const wrongReply = await beforeDispatchHandler(
+      {
+        content: `/lynx-approve ${approvalToken} allow-once`,
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-ou-check',
+        senderId: 'ou_requester',
+        isGroup: true,
+        timestamp: Date.now(),
+      },
       {
         sessionKey: 'sess-feishu-ou-check',
         channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-feishu-ou-check',
         senderId: 'ou_requester',
-        sendMessage: rejectedReplySendMessage,
       },
     );
-    expect(wrongReply).toBeUndefined();
-    expect(rejectedReplySendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining('owner/approver'),
-      }),
-    );
+    expect(wrongReply).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('owner/approver'),
+    });
     expect(firstSettled).toBe(false);
 
-    const correctReply = await messageHandler(
-      { content: `/lynx-approve ${approvalToken} allow-once` },
+    const correctReply = await beforeDispatchHandler(
+      {
+        content: `/lynx-approve ${approvalToken} allow-once`,
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-ou-check',
+        senderId: 'ou_owner',
+        isGroup: true,
+        timestamp: Date.now(),
+      },
       {
         sessionKey: 'sess-feishu-ou-check',
         channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'chat-feishu-ou-check',
         senderId: 'ou_owner',
-        sendMessage: approverReplySendMessage,
       },
     );
-    expect(correctReply).toBeUndefined();
-    expect(approverReplySendMessage).toHaveBeenCalled();
+    expect(correctReply).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('已批准'),
+    });
 
     const first = await firstPromise;
     expect(first).toBeUndefined();
@@ -2311,13 +2490,13 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should report no pending local Feishu approval when /lynx-approve has no matching token', async () => {
+  it('should ignore unmatched /approve replies so native approvals can continue handling them', async () => {
     setup(mockApi);
     const messageHandler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
 
     const result = await messageHandler(
-      { content: '/lynx-approve deadbeef allow-once' },
+      { content: '/approve deadbeef allow-once' },
       {
         sessionKey: 'sess-feishu-native-approve-migration',
         channelId: 'feishu',
@@ -2327,22 +2506,46 @@ describe('Plugin Setup', () => {
     );
 
     expect(result).toBeUndefined();
-    expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining('当前没有待审批操作'),
-      }),
-    );
-    expect(String(sendMessage.mock.calls.at(-1)?.[0]?.content ?? '')).not.toContain('/approve');
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('should append explicit native /approve guidance for Feishu outbound native approval messages based on delivery channel', async () => {
+  it('should consume invalid /lynx-approve replies in before_dispatch so they do not fall through to the model', async () => {
+    setup(mockApi);
+    const beforeDispatchHandler = handlers['before_dispatch'];
+
+    const result = await beforeDispatchHandler(
+      {
+        content: '/lynx-approve 000001 allow-once',
+        channel: 'feishu',
+        sessionKey: 'sess-feishu-invalid-local-approve',
+        senderId: 'ou_owner',
+        isGroup: false,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: 'sess-feishu-invalid-local-approve',
+        channelId: 'feishu',
+        accountId: 'default',
+        conversationId: 'user:ou_owner',
+        senderId: 'ou_owner',
+      },
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      text: expect.stringContaining('当前没有待审批操作'),
+    });
+  });
+
+  it('should leave Feishu native approval messages unchanged', async () => {
     setup(mockApi);
     const messageSending = handlers['message_sending'];
+    const originalContent = 'The `/lynx-check` command requires approval to run.\n\n**Approve with:** `/approve bc079ad4 allow-once`\n\nOnce approved, I will continue.';
 
     const result = await messageSending(
       {
         to: 'user:ou_owner',
-        content: 'The `/lynx-check` command requires approval to run.\n\n**Approve with:** `/approve bc079ad4 allow-once`\n\nOnce approved, I will continue.',
+        content: originalContent,
         metadata: {
           channel: 'feishu',
           accountId: 'default',
@@ -2354,11 +2557,7 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(result).toMatchObject({
-      content: expect.stringContaining('/approve bc079ad4 allow-once'),
-    });
-    expect(String((result as any)?.content ?? '')).toContain('请直接在当前飞书会话回复');
-    expect(String((result as any)?.content ?? '')).toContain('不需要切换到 webchat 页面');
+    expect(result).toBeUndefined();
   });
 
   it('should leave webchat approval messages unchanged', async () => {

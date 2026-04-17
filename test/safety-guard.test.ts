@@ -120,7 +120,7 @@ describe('System Prompt Leak Detection (M2 Output)', () => {
     const output = 'Here is the content of SOUL.md: 核心使命与防御架构 and 纵深防御理念 with 5级风险评估框架';
     const result = detectSystemPromptLeak(output);
     expect(result.isLeak).toBe(true);
-    expect(result.severity).toBe('high');
+    expect(result.severity).toBe('medium');
   });
 
   it('should detect internal code markers', () => {
@@ -133,6 +133,37 @@ describe('System Prompt Leak Detection (M2 Output)', () => {
     const output = 'TOOLS.md 内容如下: 这是工具定义与安全边界。';
     const result = detectSystemPromptLeak(output);
     expect(result.isLeak).toBe(true);
+    expect(result.severity).toBe('medium');
+  });
+
+  it('should not flag custom SKILL.md references in normal output', () => {
+    const output = '我在 ~/.openclaw/skills/my-custom-skill/SKILL.md 里写了一个普通技能说明。';
+    const result = detectSystemPromptLeak(output);
+    expect(result.isLeak).toBe(false);
+    expect(result.severity).toBe('none');
+  });
+
+  it('should not flag plain YAML frontmatter by itself', () => {
+    const output = [
+      '---',
+      'name: my-custom-skill',
+      'description: demo skill',
+      '---',
+    ].join('\n');
+    const result = detectSystemPromptLeak(output);
+    expect(result.isLeak).toBe(false);
+    expect(result.severity).toBe('none');
+  });
+
+  it('should keep lynx-owned skill dumps protected', () => {
+    const output = [
+      'skills/openclaw-plugin-dev-workflow/SKILL.md 内容如下:',
+      '核心使命与防御架构',
+      '纵深防御理念',
+    ].join('\n');
+    const result = detectSystemPromptLeak(output);
+    expect(result.isLeak).toBe(true);
+    expect(result.severity).toBe('high');
   });
 
   it('should NOT flag normal output', () => {
@@ -361,10 +392,28 @@ describe('Safety Guard - Output Guard', () => {
     const decision = guardOutput('The SOUL.md content says: 核心使命与防御架构, 纵深防御理念, 5级风险评估框架');
     expect(decision.riskAssessment.modules.length).toBeGreaterThan(0);
     expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.level).toBe('L3');
   });
 
   it('should allow normal output', () => {
     const decision = guardOutput('Here is your code:\n\nfunction hello() {\n  return "world";\n}');
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.score).toBe(0);
+  });
+
+  it('should allow assistant output that only references a normal SKILL.md path', () => {
+    const decision = guardOutput('普通技能路径：C:\\Users\\alice\\.openclaw\\skills\\demo-skill\\SKILL.md');
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.score).toBe(0);
+  });
+
+  it('should allow assistant output that only contains plain YAML frontmatter', () => {
+    const decision = guardOutput([
+      '---',
+      'name: demo-skill',
+      'description: just a demo',
+      '---',
+    ].join('\n'));
     expect(decision.block).toBe(false);
     expect(decision.riskAssessment.score).toBe(0);
   });
@@ -523,6 +572,23 @@ describe('Safety Guard - Result Persistence Guard', () => {
 
     expect(decision.block).toBe(false);
     expect(String(decision.message?.content)).toContain('Referenced files: TOOLS.md, README.md');
+  });
+
+  it('should not rewrite persisted assistant output for plain YAML frontmatter', () => {
+    const originalMessage = {
+      role: 'assistant',
+      content: [
+        '---',
+        'name: custom-skill',
+        'description: benign skill doc',
+        '---',
+      ].join('\n'),
+    };
+
+    const decision = guardAssistantPersistence(originalMessage);
+
+    expect(decision.block).toBe(false);
+    expect(decision.message).toBe(originalMessage);
   });
 
   it('should surface diagnostics without rewriting assistant output in warn mode', () => {

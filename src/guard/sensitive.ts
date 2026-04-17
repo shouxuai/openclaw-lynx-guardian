@@ -242,6 +242,30 @@ export class SensitiveDataBlocker {
     options: SensitiveDataRedactionOptions = {},
   ): SensitiveDataRedactionResult {
     const matches = this.findSensitiveData(message, options);
+    return this.redactWithMatches(message, matches);
+  }
+
+  redactPersonalFinancialData(message: string): SensitiveDataRedactionResult {
+    if (!message) {
+      return {
+        text: message,
+        changed: false,
+        matches: [],
+      };
+    }
+
+    const matches = this.dedupeMatches([
+      ...this.findResidentIdentityMatches(message),
+      ...this.findBankCardMatches(message),
+    ]);
+
+    return this.redactWithMatches(message, matches);
+  }
+
+  private redactWithMatches(
+    message: string,
+    matches: SensitiveDataMatch[],
+  ): SensitiveDataRedactionResult {
     if (matches.length === 0) {
       return {
         text: message,

@@ -110,6 +110,12 @@ export function clearManagedLynxCheckAuthorization(
 ): void {
   const filePath = resolveAuthorizationPath(options?.filePath);
   if (existsSync(filePath)) {
-    unlinkSync(filePath);
+    try {
+      unlinkSync(filePath);
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
   }
 }

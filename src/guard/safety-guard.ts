@@ -478,12 +478,19 @@ const PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\bAGENTS\.md\b/i, label: "AGENTS.md" },
   { pattern: /\bTOOLS\.md\b/i, label: "TOOLS.md" },
   { pattern: /\bSHIELD\.md\b/i, label: "SHIELD.md" },
-  { pattern: /\bSKILL\.md\b/i, label: "SKILL.md" },
   { pattern: /\bMEMORY\.md\b/i, label: "MEMORY.md" },
   { pattern: /(?:^|[\\/])memory[\\/]/i, label: "memory/" },
   { pattern: /\bworkspace-state\.json\b/i, label: "workspace-state.json" },
   { pattern: /\bopenclaw\.plugin\.json\b/i, label: "openclaw.plugin.json" },
   { pattern: /\bopenclaw\.json\b/i, label: "openclaw.json" },
+];
+
+const LYNX_OWNED_SKILL_LABEL = "Lynx skill files";
+const LYNX_SKILL_DIR_NAME_PATTERN = "(?:lynx-guardian-[^\\\\/\\s\"'`;)]*|openclaw-plugin-dev-workflow)";
+const LYNX_OWNED_SKILL_PATH_PATTERNS: RegExp[] = [
+  new RegExp(String.raw`(?:^|[\\/])\.openclaw[\\/]skills[\\/]${LYNX_SKILL_DIR_NAME_PATTERN}(?:[\\/]|$)`, "i"),
+  new RegExp(String.raw`(?:^|[^A-Za-z0-9_])skills[\\/]${LYNX_SKILL_DIR_NAME_PATTERN}(?:[\\/]|$)`, "i"),
+  /(?:^|[\\/])(?:app|\.openclaw)[\\/]extensions[\\/]openclaw-lynx-guardian[\\/]skills(?:[\\/]|$)/i,
 ];
 
 const TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS = new Set([
@@ -493,7 +500,7 @@ const TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS = new Set([
   "AGENTS.md",
   "TOOLS.md",
   "SHIELD.md",
-  "SKILL.md",
+  LYNX_OWNED_SKILL_LABEL,
   "MEMORY.md",
 ]);
 
@@ -683,6 +690,11 @@ function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFi
     if (pattern.test(text)) {
       matchedFiles.push(label);
     }
+  }
+
+  const normalized = normalizeGuardPath(text);
+  if (LYNX_OWNED_SKILL_PATH_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    matchedFiles.push(LYNX_OWNED_SKILL_LABEL);
   }
 
   matchedFiles.push(...findObfuscatedProtectedReferenceLabels(text));

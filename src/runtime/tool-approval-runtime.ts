@@ -3,6 +3,7 @@ import {
   saveApprovalGrant,
   type ApprovalRiskLevel,
 } from "./approval-grant-store.js";
+import type { ChannelProfile } from "./requester-provenance-store.js";
 
 export function toApprovalRiskLevel(value?: string): ApprovalRiskLevel | undefined {
   if (value === "L2" || value === "L3") {
@@ -40,24 +41,33 @@ export function buildToolApprovalRequest(params: {
 export function persistGrantFromApproval(params: {
   decision: ToolApprovalResolution;
   approvalId: string;
-  runId?: string;
+  channelProfile?: ChannelProfile;
+  channelId?: string;
+  accountId?: string;
+  conversationId?: string;
   requesterOuId?: string;
   module: string;
   riskLevel: ApprovalRiskLevel;
   grantWindowMs: number;
 }): void {
-  if (!params.runId) {
-    return;
-  }
-
   if (params.decision !== "allow-once" && params.decision !== "allow-always") {
     return;
   }
 
   const now = Date.now();
   saveApprovalGrant({
-    grantId: `${params.runId}:${params.module}`,
-    runId: params.runId,
+    grantId: [
+      params.channelProfile ?? "",
+      params.channelId ?? "",
+      params.accountId ?? "",
+      params.conversationId ?? "",
+      params.requesterOuId ?? "",
+      params.module,
+    ].join("::"),
+    channelProfile: params.channelProfile,
+    channelId: params.channelId,
+    accountId: params.accountId,
+    conversationId: params.conversationId,
     requesterOuId: params.requesterOuId,
     module: params.module,
     maxRiskLevel: params.riskLevel,

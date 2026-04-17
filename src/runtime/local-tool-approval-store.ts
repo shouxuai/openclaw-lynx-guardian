@@ -1,12 +1,14 @@
 import type { ToolApprovalResolution } from "../types.js";
 import type { ApprovalRiskLevel } from "./approval-grant-store.js";
+import type { ChannelProfile } from "./requester-provenance-store.js";
 
 export type LocalToolApproval = {
   approvalToken: string;
   pendingId: string;
-  runId: string;
   sessionKey?: string;
+  channelProfile?: ChannelProfile;
   channelId?: string;
+  accountId?: string;
   requesterOuId?: string;
   approverOuIds: string[];
   conversationId?: string;
@@ -33,21 +35,34 @@ const RISK_ORDER: Record<ApprovalRiskLevel, number> = {
   L3: 3,
 };
 
-let approvalSequence = 0;
-
 function buildDedupKey(input: {
-  runId: string;
   sessionKey?: string;
+  channelProfile?: ChannelProfile;
+  channelId?: string;
+  accountId?: string;
+  conversationId?: string;
   requesterOuId?: string;
   module: string;
-}): string {
-  return [
-    input.runId,
-    input.sessionKey ?? "",
+}): string | undefined {
+  const sourceParts = [
+    input.channelProfile ?? "",
+    input.channelId ?? "",
+    input.accountId ?? "",
+    input.conversationId ?? "",
     input.requesterOuId ?? "",
-    input.module,
-  ].join(":");
+  ];
+  if (sourceParts.some((part) => part.length > 0)) {
+    return [...sourceParts, input.module].join("::");
+  }
+
+  if (input.sessionKey) {
+    return [input.sessionKey, input.module].join("::");
+  }
+
+  return undefined;
 }
+
+let approvalSequence = 0;
 
 function nextApprovalToken(): string {
   approvalSequence += 1;
@@ -79,9 +94,10 @@ function toPublicApproval(entry: LocalToolApprovalEntry): LocalToolApproval {
   return {
     approvalToken: entry.approvalToken,
     pendingId: entry.pendingId,
-    runId: entry.runId,
     sessionKey: entry.sessionKey,
+    channelProfile: entry.channelProfile,
     channelId: entry.channelId,
+    accountId: entry.accountId,
     requesterOuId: entry.requesterOuId,
     approverOuIds: [...entry.approverOuIds],
     conversationId: entry.conversationId,
@@ -106,9 +122,10 @@ function prune(now: number = Date.now()): void {
 
 export function registerLocalToolApproval(params: {
   pendingId: string;
-  runId?: string;
   sessionKey?: string;
+  channelProfile?: ChannelProfile;
   channelId?: string;
+  accountId?: string;
   requesterOuId?: string;
   approverOuIds?: string[];
   conversationId?: string;
@@ -118,18 +135,20 @@ export function registerLocalToolApproval(params: {
   timeoutMs: number;
   onResolution: (resolution: ToolApprovalResolution) => void;
 }): { created: boolean; approval?: LocalToolApproval } {
-  if (!params.runId || !params.sessionKey) {
+  const dedupKey = buildDedupKey({
+    sessionKey: params.sessionKey,
+    channelProfile: params.channelProfile,
+    channelId: params.channelId,
+    accountId: params.accountId,
+    conversationId: params.conversationId,
+    requesterOuId: params.requesterOuId,
+    module: params.module,
+  });
+  if (!dedupKey) {
     return { created: false };
   }
 
   prune();
-  const dedupKey = buildDedupKey({
-    runId: params.runId,
-    sessionKey: params.sessionKey,
-    requesterOuId: params.requesterOuId,
-    module: params.module,
-  });
-
   const existingToken = latestTokenByDedupKey.get(dedupKey);
   if (existingToken) {
     const existing = approvalsByToken.get(existingToken);
@@ -150,9 +169,10 @@ export function registerLocalToolApproval(params: {
   const entry: LocalToolApprovalEntry = {
     approvalToken,
     pendingId: params.pendingId,
-    runId: params.runId,
     sessionKey: params.sessionKey,
+    channelProfile: params.channelProfile,
     channelId: params.channelId,
+    accountId: params.accountId,
     requesterOuId: params.requesterOuId,
     approverOuIds: [...(params.approverOuIds ?? [])],
     conversationId: params.conversationId,
@@ -201,11 +221,7 @@ export function listLocalToolApprovalsForSession(input: {
   }
 
   return [...approvalsByToken.values()]
-    .filter(
-      (entry) =>
-        !entry.settled
-        && entry.sessionKey === input.sessionKey,
-    )
+    .filter((entry) => !entry.settled && entry.sessionKey === input.sessionKey)
     .sort((left, right) => right.createdAt - left.createdAt)
     .map((entry) => toPublicApproval(entry));
 }
