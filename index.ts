@@ -2878,7 +2878,7 @@ export default function setup(api: OpenClawPluginApi) {
             }
             return { block: true, blockReason: "Approval timed out" };
           }
-          const { resolveApproval, transport, blockReason } = await prepareToolApprovalHandlers({
+          const { resolveApproval, transport, blockReason: approvalBlockReason } = await prepareToolApprovalHandlers({
             ctx,
             runId: ctx.runId,
             requesterOuId: effectiveRunApprovalContext.requesterOuId,
@@ -2898,7 +2898,7 @@ export default function setup(api: OpenClawPluginApi) {
           if (transport === "blocked") {
             return {
               block: true,
-              blockReason: blockReason ?? "Approval unavailable",
+              blockReason: approvalBlockReason ?? "Approval unavailable",
             };
           }
           if (transport === "local") {
