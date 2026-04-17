@@ -20,6 +20,19 @@ export interface SensitiveDataRedactionResult {
 const CN_RESIDENT_ID_PATTERN =
   /\b\d{6}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[0-9Xx]\b/g;
 const BANK_CARD_CANDIDATE_PATTERN = /(?:^|[^\d])((?:\d[ -]?){13,19})(?=$|[^\d])/g;
+const CN_RESIDENT_ID_PROVINCE_CODES = new Set([
+  "11", "12", "13", "14", "15",
+  "21", "22", "23",
+  "31", "32", "33", "34", "35", "36", "37",
+  "41", "42", "43", "44", "45", "46",
+  "50", "51", "52", "53", "54",
+  "61", "62", "63", "64", "65",
+  "71",
+  "81", "82",
+  "91",
+]);
+const CN_RESIDENT_ID_CHECKSUM_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2] as const;
+const CN_RESIDENT_ID_CHECKSUM_CODES = ["1", "0", "X", "9", "8", "7", "6", "5", "4", "3", "2"] as const;
 
 function toGlobalPattern(regex: RegExp): RegExp {
   return new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
@@ -58,16 +71,58 @@ function luhnCheck(digits: string): boolean {
   return checksum % 10 === 0;
 }
 
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
+function looksLikeResidentIdentityNumber(value: string): boolean {
+  if (!/^\d{17}[0-9Xx]$/.test(value)) {
+    return false;
+  }
+
+  if (!CN_RESIDENT_ID_PROVINCE_CODES.has(value.slice(0, 2))) {
+    return false;
+  }
+
+  if (value.slice(0, 6) === "000000" || value.slice(14, 17) === "000") {
+    return false;
+  }
+
+  const year = Number.parseInt(value.slice(6, 10), 10);
+  const month = Number.parseInt(value.slice(10, 12), 10);
+  const day = Number.parseInt(value.slice(12, 14), 10);
+  if (!isValidCalendarDate(year, month, day)) {
+    return false;
+  }
+
+  const today = new Date();
+  const currentDay = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const birthDay = Date.UTC(year, month - 1, day);
+  if (birthDay > currentDay) {
+    return false;
+  }
+
+  let checksum = 0;
+  for (let index = 0; index < 17; index += 1) {
+    checksum += Number.parseInt(value[index] ?? "", 10) * CN_RESIDENT_ID_CHECKSUM_WEIGHTS[index];
+  }
+
+  return CN_RESIDENT_ID_CHECKSUM_CODES[checksum % 11] === value[17].toUpperCase();
+}
+
 function looksLikeBankCardNumber(digits: string): boolean {
   if (digits.length < 13 || digits.length > 19) {
     return false;
   }
 
-  if (luhnCheck(digits)) {
-    return true;
+  if (/^(\d)\1+$/.test(digits)) {
+    return false;
   }
 
-  return /^62\d{11,17}$/.test(digits);
+  return luhnCheck(digits);
 }
 
 export class SensitiveDataBlocker {
@@ -149,12 +204,12 @@ export class SensitiveDataBlocker {
   }
 
   private findResidentIdentityMatches(message: string): SensitiveDataMatch[] {
-    const matches: SensitiveDataMatch[] = [];
+  const matches: SensitiveDataMatch[] = [];
 
     for (const match of message.matchAll(CN_RESIDENT_ID_PATTERN)) {
       const value = match[0];
       const start = match.index ?? -1;
-      if (start < 0 || !value) {
+      if (start < 0 || !value || !looksLikeResidentIdentityNumber(value)) {
         continue;
       }
       matches.push({

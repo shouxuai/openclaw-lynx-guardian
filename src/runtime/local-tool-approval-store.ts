@@ -10,11 +10,13 @@ export type LocalToolApproval = {
   channelId?: string;
   accountId?: string;
   requesterOuId?: string;
+  requestFingerprint?: string;
   approverOuIds: string[];
   conversationId?: string;
   module: string;
   maxRiskLevel: ApprovalRiskLevel;
   toolName: string;
+  promptText?: string;
   createdAt: number;
   expiresAt: number;
   resolve: (resolution: ToolApprovalResolution) => void;
@@ -42,8 +44,26 @@ function buildDedupKey(input: {
   accountId?: string;
   conversationId?: string;
   requesterOuId?: string;
+  requestFingerprint?: string;
   module: string;
 }): string | undefined {
+  if (input.channelProfile === "feishu") {
+    const requestFingerprint = input.requestFingerprint?.trim();
+    if (!requestFingerprint) {
+      return undefined;
+    }
+
+    return [
+      input.channelProfile,
+      input.channelId ?? "",
+      input.accountId ?? "",
+      input.conversationId ?? "",
+      input.requesterOuId ?? "",
+      requestFingerprint,
+      input.module,
+    ].join("::");
+  }
+
   const sourceParts = [
     input.channelProfile ?? "",
     input.channelId ?? "",
@@ -99,11 +119,13 @@ function toPublicApproval(entry: LocalToolApprovalEntry): LocalToolApproval {
     channelId: entry.channelId,
     accountId: entry.accountId,
     requesterOuId: entry.requesterOuId,
+    requestFingerprint: entry.requestFingerprint,
     approverOuIds: [...entry.approverOuIds],
     conversationId: entry.conversationId,
     module: entry.module,
     maxRiskLevel: entry.maxRiskLevel,
     toolName: entry.toolName,
+    promptText: entry.promptText,
     createdAt: entry.createdAt,
     expiresAt: entry.expiresAt,
     resolve: (resolution) => {
@@ -127,11 +149,13 @@ export function registerLocalToolApproval(params: {
   channelId?: string;
   accountId?: string;
   requesterOuId?: string;
+  requestFingerprint?: string;
   approverOuIds?: string[];
   conversationId?: string;
   module: string;
   riskLevel: ApprovalRiskLevel;
   toolName: string;
+  promptText?: string;
   timeoutMs: number;
   onResolution: (resolution: ToolApprovalResolution) => void;
 }): { created: boolean; approval?: LocalToolApproval } {
@@ -142,6 +166,7 @@ export function registerLocalToolApproval(params: {
     accountId: params.accountId,
     conversationId: params.conversationId,
     requesterOuId: params.requesterOuId,
+    requestFingerprint: params.requestFingerprint,
     module: params.module,
   });
   if (!dedupKey) {
@@ -174,11 +199,13 @@ export function registerLocalToolApproval(params: {
     channelId: params.channelId,
     accountId: params.accountId,
     requesterOuId: params.requesterOuId,
+    requestFingerprint: params.requestFingerprint,
     approverOuIds: [...(params.approverOuIds ?? [])],
     conversationId: params.conversationId,
     module: params.module,
     maxRiskLevel: params.riskLevel,
     toolName: params.toolName,
+    promptText: params.promptText,
     createdAt,
     expiresAt: createdAt + params.timeoutMs,
     dedupKey,

@@ -9,6 +9,7 @@
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
 import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
+import { normalizePluginProtectionText } from "./plugin-protection-normalization.js";
 import { SensitiveDataBlocker } from "./sensitive.js";
 import {
   buildInputEvidenceBundle,
@@ -516,7 +517,7 @@ const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
   /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
   /\b(?:File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|remove_tree)\b/i,
   /\bopen\s*\([^)]*,\s*['"][^'"]*[wa+][^'"]*['"]\)/i,
-  /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)/i,
+  /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|改名|重命名|移动|移除|清除)/i,
 ];
 
 const IMMUTABLE_RUNTIME_CONFIG_LABELS = new Set([
@@ -544,6 +545,7 @@ const MUTATING_TOOL_PATTERNS: RegExp[] = [
   /\b(?:File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|remove_tree)\b/i,
   /\bopen\s*\([^)]*,\s*['"][^'"]*[wa+][^'"]*['"]\)/i,
   /sed\s+-i/i,
+  /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|改名|重命名|移动|移除|清除)/i,
   />>?/,
 ];
 
@@ -653,7 +655,8 @@ function extractPluginTargets(text: string): string[] {
 }
 
 function detectPluginIntegrityViolation(text: string, toolName?: string): boolean {
-  const normalized = normalizeGuardPath(text);
+  const semanticNormalized = normalizePluginProtectionText(text);
+  const normalized = normalizeGuardPath(semanticNormalized);
   const directPluginTarget = LYNX_PLUGIN_ROOT_PATTERNS.some((pattern) => pattern.test(normalized));
   const obfuscatedPluginTarget = findObfuscatedLynxPluginPath(normalized) !== null;
 
@@ -665,7 +668,7 @@ function detectPluginIntegrityViolation(text: string, toolName?: string): boolea
     if (toolName === "write" || toolName === "edit") {
       return true;
     }
-    return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(text));
+    return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(semanticNormalized));
   }
 
   const pluginTargets = extractPluginTargets(normalized);
@@ -681,11 +684,12 @@ function detectPluginIntegrityViolation(text: string, toolName?: string): boolea
     return true;
   }
 
-  return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(text));
+  return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(semanticNormalized));
 }
 
 function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFileAccessResult {
   const matchedFiles: string[] = [];
+  const semanticNormalized = normalizePluginProtectionText(text);
   for (const { pattern, label } of PROTECTED_FILE_PATTERNS) {
     if (pattern.test(text)) {
       matchedFiles.push(label);
@@ -707,10 +711,10 @@ function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFi
   if (toolName === "write" || toolName === "edit") {
     operation = "write";
   }
-  if (PROTECTED_FILE_READ_PATTERNS.some((pattern) => pattern.test(text))) {
+  if (PROTECTED_FILE_READ_PATTERNS.some((pattern) => pattern.test(semanticNormalized))) {
     operation = "read";
   }
-  if (PROTECTED_FILE_WRITE_PATTERNS.some((pattern) => pattern.test(text))) {
+  if (PROTECTED_FILE_WRITE_PATTERNS.some((pattern) => pattern.test(semanticNormalized))) {
     operation = "write";
   }
 
@@ -732,13 +736,15 @@ function detectImmutableRuntimeConfigWrite(protectedAccess: ProtectedFileAccessR
 }
 
 const DISABLE_LYNX_GUARDIAN_PATTERNS: RegExp[] = [
-  /(?:禁用|停用|关闭|卸载|移除)[^\n\r]{0,40}(?:lynx[-\s]*guardian|lynx[-\s]*plugin|openclaw[-\s]*lynx[-\s]*guardian|lynx[-\s]*插件|guardian[-\s]*插件)/i,
+  /(?:禁用|停用|关闭|卸载|移除)[^\n\r]{0,40}(?:lynx[-\s]*(?:guardian|plugin|插件|扩展|模块|守卫|防护|安全模块|检查器|拦截器)|guardian[-\s]*(?:插件|扩展|模块|守卫|防护|安全模块|检查器|拦截器)|openclaw[-\s]*lynx[-\s]*guardian|openclaw[-\s]*lynx[-\s]*guardian[-\s]*(?:plugin|extension|插件|扩展|模块))/i,
+  /(?:lynx[-\s]*(?:guardian|plugin|插件|扩展|模块|守卫|防护|安全模块|检查器|拦截器)|guardian[-\s]*(?:插件|扩展|模块|守卫|防护|安全模块|检查器|拦截器)|openclaw[-\s]*lynx[-\s]*guardian|openclaw[-\s]*lynx[-\s]*guardian[-\s]*(?:plugin|extension|插件|扩展|模块))[^\n\r]{0,40}(?:禁用|停用|关闭|卸载|移除)/i,
   /\b(?:disable|deactivate|turn\s+off|uninstall|remove)\b[^\n\r]{0,60}\b(?:lynx[-\s]*guardian|lynx[-\s]*plugin|openclaw[-\s]*lynx[-\s]*guardian)\b/i,
   /\bopenclaw\b[^\n\r]{0,40}\b(?:extension|plugin)\b[^\n\r]{0,20}\bdisable\b[^\n\r]{0,60}\b(?:openclaw-lynx-guardian|lynx-guardian)\b/i,
 ];
 
 function detectLynxGuardianDisableRequest(text: string): boolean {
-  return DISABLE_LYNX_GUARDIAN_PATTERNS.some((pattern) => pattern.test(text));
+  const normalized = normalizePluginProtectionText(text);
+  return DISABLE_LYNX_GUARDIAN_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 const OPENCLAW_AVAILABILITY_CONTROL_PATTERNS: RegExp[] = [
@@ -792,14 +798,16 @@ const OVER_AGENCY_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /(?:disable|turn\s+off|deactivate)\s+(?:safety|security|guard)/i, label: "disable_safety_en" },
   { pattern: /提升\s*(?:你的|自己的)\s*权限/i, label: "privilege_escalation" },
   { pattern: /elevate\s+(?:your|own)\s+privilege/i, label: "privilege_escalation_en" },
-  { pattern: /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|重命名|移动)\s*(?:SOUL|IDENTITY|USER|SKILL|AGENTS|TOOLS|SHIELD|MEMORY)\.md/i, label: "core_file_modify" },
+  { pattern: /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|改名|重命名|移动|移除|清除)\s*(?:SOUL|IDENTITY|USER|SKILL|AGENTS|TOOLS|SHIELD|MEMORY)\.md/i, label: "core_file_modify" },
+  { pattern: /(?:SOUL|IDENTITY|USER|SKILL|AGENTS|TOOLS|SHIELD|MEMORY)\.md[^\n\r]{0,20}(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|改名|重命名|移动|移除|清除)/i, label: "core_file_modify" },
   { pattern: /(?:modify|edit|update|append|overwrite|rewrite|delete|remove|rename|move)\s+(?:SOUL|IDENTITY|USER|SKILL|AGENTS|TOOLS|SHIELD|MEMORY)\.md/i, label: "core_file_modify_en" },
 ];
 
 function detectOverAgency(text: string): string[] {
   const matched: string[] = [];
+  const normalized = normalizePluginProtectionText(text);
   for (const { pattern, label } of OVER_AGENCY_PATTERNS) {
-    if (pattern.test(text)) {
+    if (pattern.test(normalized)) {
       matched.push(label);
     }
   }
@@ -1602,7 +1610,13 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
   const leak = detectSystemPromptLeak(output);
   if (leak.isLeak) {
     modules.push("M2:system_prompt_leak");
-    leakDirectScore = leak.severity === "high" ? 10 : 7;
+    leakDirectScore = leak.severity === "high"
+      ? 10
+      : leak.severity === "medium"
+        ? 7
+        : leak.severity === "low"
+          ? 4
+          : 0;
   }
 
   // ── M5: Actual secret values exposed in output ────────────────────

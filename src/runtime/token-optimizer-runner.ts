@@ -312,11 +312,11 @@ function shouldWarnForComputeAbuse(userInput: string): boolean {
     "benchmark",
     "mining",
   ];
-  const amountKeywords = ["元", "万元", "usd", "$", "预算", "cost", "费用"];
+  const amountKeywords = ["元", "万元", "usd", "$", "预算", "cost", "费用","字","个"];
   const largeNumberMatch = userInput.match(/\d[\d,]{4,}/g);
   const hasLargeNumber = (largeNumberMatch ?? []).some((raw) => {
     const numeric = Number(raw.replace(/,/g, ""));
-    return Number.isFinite(numeric) && numeric >= 10000;
+    return Number.isFinite(numeric) && numeric >= 500;
   });
   const hasLargeUnit = /(\d+(?:\.\d+)?)\s*(万|亿|k|m)\b/i.test(userInput);
   const hasComputeKeyword = computeKeywords.some((keyword) => userInput.includes(keyword));
@@ -333,20 +333,20 @@ function hasHeavyContextSignals(
   if (!promptText && !context) return false;
 
   const fileCount = context?.file_count ?? 0;
-  const hasLongPrompt = promptText.length >= 200;
+  const hasLongPrompt = promptText.length >= 120;
   const hasLargeContextRecommendation = fileCount >= 8 || context?.context_level === "full";
 
   const fencedBlocks = (promptText.match(/```/g) ?? []).length / 2;
   const hasManyFencedBlocks = fencedBlocks >= 2;
 
   const newlineCount = (promptText.match(/\n/g) ?? []).length;
-  const hasManyNewlines = newlineCount >= 80;
+  const hasManyNewlines = newlineCount >= 8;
 
   const logLikeLines = (promptText.match(/^(error|warn|info|debug|trace|exception|stack|at\s)/gim) ?? []).length;
   const hasManyLogLikeLines = logLikeLines >= 20;
 
   const structuredDensity = (promptText.match(/[{}[\]:,]/g) ?? []).length;
-  const hasHighStructuredDensity = structuredDensity >= 600;
+  const hasHighStructuredDensity = structuredDensity >= 60;
 
   return hasLongPrompt
     || hasLargeContextRecommendation
