@@ -93,10 +93,6 @@ test-results/
 /test/**
 /test-temp
 /docs/**
-!/docs/
-!/docs/superpowers/
-!/docs/superpowers/specs/
-!/docs/superpowers/specs/**
 .worktrees/
 /scripts-dev
 /AGENTS.md
