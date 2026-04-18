@@ -3,7 +3,7 @@ import { discoverOpenClaw, formatDiscoverySummary } from "./openclaw-discovery.j
 import { normalizeStringList } from "../runtime/plugin-runtime-helpers.js";
 import { classifyLynxCheckTrigger } from "./lynx-check-trigger.js";
 
-export function isManualCompositeLynxCheckRequest(text: string): boolean {
+export function isManualCompositeLynxCheckRequest(text: unknown): boolean {
   return classifyLynxCheckTrigger(text).kind === "lynx_command";
 }
 

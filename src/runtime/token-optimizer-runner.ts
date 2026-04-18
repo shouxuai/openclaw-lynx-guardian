@@ -312,11 +312,11 @@ function shouldWarnForComputeAbuse(userInput: string): boolean {
     "benchmark",
     "mining",
   ];
-  const amountKeywords = ["元", "万元", "usd", "$", "预算", "cost", "费用"];
+  const amountKeywords = ["元", "万元", "usd", "$", "预算", "cost", "费用","字","个"];
   const largeNumberMatch = userInput.match(/\d[\d,]{4,}/g);
   const hasLargeNumber = (largeNumberMatch ?? []).some((raw) => {
     const numeric = Number(raw.replace(/,/g, ""));
-    return Number.isFinite(numeric) && numeric >= 10000;
+    return Number.isFinite(numeric) && numeric >= 500;
   });
   const hasLargeUnit = /(\d+(?:\.\d+)?)\s*(万|亿|k|m)\b/i.test(userInput);
   const hasComputeKeyword = computeKeywords.some((keyword) => userInput.includes(keyword));
@@ -332,25 +332,28 @@ function hasHeavyContextSignals(
 ): boolean {
   if (!promptText && !context) return false;
 
-  let signalCount = 0;
   const fileCount = context?.file_count ?? 0;
-
-  if (promptText.length >= 3000) signalCount += 1;
-  if (fileCount >= 8 || context?.context_level === "full") signalCount += 1;
+  const hasLongPrompt = promptText.length >= 120;
+  const hasLargeContextRecommendation = fileCount >= 8 || context?.context_level === "full";
 
   const fencedBlocks = (promptText.match(/```/g) ?? []).length / 2;
-  if (fencedBlocks >= 2) signalCount += 1;
+  const hasManyFencedBlocks = fencedBlocks >= 2;
 
   const newlineCount = (promptText.match(/\n/g) ?? []).length;
-  if (newlineCount >= 80) signalCount += 1;
+  const hasManyNewlines = newlineCount >= 8;
 
   const logLikeLines = (promptText.match(/^(error|warn|info|debug|trace|exception|stack|at\s)/gim) ?? []).length;
-  if (logLikeLines >= 20) signalCount += 1;
+  const hasManyLogLikeLines = logLikeLines >= 20;
 
   const structuredDensity = (promptText.match(/[{}[\]:,]/g) ?? []).length;
-  if (structuredDensity >= 600) signalCount += 1;
+  const hasHighStructuredDensity = structuredDensity >= 60;
 
-  return signalCount >= 2;
+  return hasLongPrompt
+    || hasLargeContextRecommendation
+    || hasManyFencedBlocks
+    || hasManyNewlines
+    || hasManyLogLikeLines
+    || hasHighStructuredDensity;
 }
 
 /**

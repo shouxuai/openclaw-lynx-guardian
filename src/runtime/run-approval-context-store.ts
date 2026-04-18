@@ -12,6 +12,7 @@ export type RunApprovalContext = {
   requesterOuId?: string;
   accountId?: string;
   conversationId?: string;
+  promptText?: string;
   threadId?: string | number;
   isGroup: boolean;
   createdAt: number;
@@ -39,7 +40,8 @@ export function readRunApprovalContext(runId?: string): RunApprovalContext | und
   }
 
   prune();
-  return runApprovalContexts.get(runId);
+  const context = runApprovalContexts.get(runId);
+  return context ? { ...context } : undefined;
 }
 
 export function clearRunApprovalContexts(): void {

@@ -138,16 +138,71 @@ describe('P1 Regression Tests', () => {
       expect(result.text).toContain('002X');
     });
 
-    it('should redact bank card numbers when requested', () => {
+    it('should NOT redact invalid Chinese resident identity numbers with bad checksum', () => {
       const blocker = new SensitiveDataBlocker();
-      const result = blocker.redactSensitiveData('银行卡 6222021234567890123', {
+      const result = blocker.redactSensitiveData('身份证号 110105194912310021', {
+        includePersonalFinancial: true,
+      });
+
+      expect(result.changed).toBe(false);
+      expect(result.matches).toHaveLength(0);
+      expect(result.text).toContain('110105194912310021');
+    });
+
+    it('should NOT redact invalid Chinese resident identity numbers with impossible dates', () => {
+      const blocker = new SensitiveDataBlocker();
+      const result = blocker.redactSensitiveData('身份证号 11010519990231002X', {
+        includePersonalFinancial: true,
+      });
+
+      expect(result.changed).toBe(false);
+      expect(result.matches).toHaveLength(0);
+      expect(result.text).toContain('11010519990231002X');
+    });
+
+    it('should redact leap-day Chinese resident identity numbers when checksum is valid', () => {
+      const blocker = new SensitiveDataBlocker();
+      const result = blocker.redactSensitiveData('身份证号 110105200002290021', {
         includePersonalFinancial: true,
       });
 
       expect(result.changed).toBe(true);
-      expect(result.text).not.toContain('6222021234567890123');
-      expect(result.text).toContain('622202');
-      expect(result.text).toContain('0123');
+      expect(result.matches.map((match) => match.type)).toContain('cn_resident_id');
+      expect(result.text).not.toContain('110105200002290021');
+    });
+
+    it('should redact bank card numbers when requested', () => {
+      const blocker = new SensitiveDataBlocker();
+      const result = blocker.redactSensitiveData('银行卡 4111111111111111', {
+        includePersonalFinancial: true,
+      });
+
+      expect(result.changed).toBe(true);
+      expect(result.text).not.toContain('4111111111111111');
+      expect(result.text).toContain('411111');
+      expect(result.text).toContain('1111');
+    });
+
+    it('should redact formatted bank card numbers when requested', () => {
+      const blocker = new SensitiveDataBlocker();
+      const result = blocker.redactSensitiveData('银行卡 4111 1111 1111 1111', {
+        includePersonalFinancial: true,
+      });
+
+      expect(result.changed).toBe(true);
+      expect(result.matches.map((match) => match.type)).toContain('bank_card');
+      expect(result.text).not.toContain('4111 1111 1111 1111');
+    });
+
+    it('should NOT redact non-luhn 62-prefixed bank card candidates', () => {
+      const blocker = new SensitiveDataBlocker();
+      const result = blocker.redactSensitiveData('银行卡 6212345678901234567', {
+        includePersonalFinancial: true,
+      });
+
+      expect(result.changed).toBe(false);
+      expect(result.matches).toHaveLength(0);
+      expect(result.text).toContain('6212345678901234567');
     });
   });
 

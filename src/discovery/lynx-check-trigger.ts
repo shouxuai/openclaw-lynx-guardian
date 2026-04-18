@@ -25,8 +25,8 @@ const DISALLOWED_SENDER_PREFIX_TERMS = new Set([
   "you",
 ]);
 
-function normalizeRawInput(text: string): string {
-  return text.trim().toLowerCase();
+function normalizeRawInput(text: unknown): string {
+  return typeof text === "string" ? text.trim().toLowerCase() : "";
 }
 
 function isLikelySenderPrefix(prefix: string): boolean {
@@ -38,7 +38,7 @@ function isLikelySenderPrefix(prefix: string): boolean {
   return !DISALLOWED_SENDER_PREFIX_TERMS.has(trimmedPrefix);
 }
 
-function normalizeInput(text: string): string {
+function normalizeInput(text: unknown): string {
   const normalized = normalizeRawInput(text);
   if (!normalized || normalized.startsWith("/")) {
     return normalized;
@@ -58,7 +58,7 @@ function normalizeInput(text: string): string {
   return suffix;
 }
 
-export function classifyLynxCheckTrigger(text: string): LynxCheckTrigger {
+export function classifyLynxCheckTrigger(text: unknown): LynxCheckTrigger {
   const rawNormalizedText = normalizeRawInput(text);
   if (!rawNormalizedText) {
     return { kind: "none", normalizedText: rawNormalizedText };
