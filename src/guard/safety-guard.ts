@@ -472,7 +472,7 @@ function detectIdentityClaims(text: string): IdentityDetectionResult {
 
 // ── Protected File Access (M2) ─────────────────────────────────────
 
-const PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
+const INPUT_STAGE_PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\bSOUL\.md\b/i, label: "SOUL.md" },
   { pattern: /\bIDENTITY\.md\b/i, label: "IDENTITY.md" },
   { pattern: /\bUSER\.md\b/i, label: "USER.md" },
@@ -484,6 +484,10 @@ const PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\bworkspace-state\.json\b/i, label: "workspace-state.json" },
   { pattern: /\bopenclaw\.plugin\.json\b/i, label: "openclaw.plugin.json" },
   { pattern: /\bopenclaw\.json\b/i, label: "openclaw.json" },
+];
+
+const TOOL_STAGE_ONLY_PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
+  { pattern: /\bLYNX_APPROVAL_TEST\.md\b/i, label: "LYNX_APPROVAL_TEST.md" },
 ];
 
 const LYNX_OWNED_SKILL_LABEL = "Lynx skill files";
@@ -503,6 +507,7 @@ const TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS = new Set([
   "SHIELD.md",
   LYNX_OWNED_SKILL_LABEL,
   "MEMORY.md",
+  "LYNX_APPROVAL_TEST.md",
 ]);
 
 const PROTECTED_FILE_READ_PATTERNS: RegExp[] = [
@@ -690,7 +695,11 @@ function detectPluginIntegrityViolation(text: string, toolName?: string): boolea
 function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFileAccessResult {
   const matchedFiles: string[] = [];
   const semanticNormalized = normalizePluginProtectionText(text);
-  for (const { pattern, label } of PROTECTED_FILE_PATTERNS) {
+  const protectedPatterns = toolName
+    ? [...INPUT_STAGE_PROTECTED_FILE_PATTERNS, ...TOOL_STAGE_ONLY_PROTECTED_FILE_PATTERNS]
+    : INPUT_STAGE_PROTECTED_FILE_PATTERNS;
+
+  for (const { pattern, label } of protectedPatterns) {
     if (pattern.test(text)) {
       matchedFiles.push(label);
     }
