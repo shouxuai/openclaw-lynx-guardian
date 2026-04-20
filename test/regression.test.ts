@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { detectPromptInjection } from '../src/guard/prompt-injection.js';
 import { checkExecBlacklist } from '../src/blacklist.js';
@@ -203,6 +203,33 @@ describe('P1 Regression Tests', () => {
       expect(result.changed).toBe(false);
       expect(result.matches).toHaveLength(0);
       expect(result.text).toContain('6212345678901234567');
+    });
+  });
+
+  describe('P1-8: Chinese mojibake regression', () => {
+    it('should not keep known mojibake fragments in key project files', () => {
+      const suspiciousFragments = [
+        '纭',
+        '褰撳墠',
+        '鎷︽埅',
+        '杈撳嚭瀹夊叏',
+        '楂樺嵄',
+        '馃',
+      ];
+      const filesToCheck = [
+        'index.ts',
+        'src/guard/result-guard.ts',
+        'test/plugin.test.ts',
+        'test/test/plugin.test.ts',
+        'docs/MEMORY.md',
+      ];
+
+      for (const relativePath of filesToCheck) {
+        const content = readFileSync(join(process.cwd(), relativePath), 'utf8');
+        for (const fragment of suspiciousFragments) {
+          expect(content, `${relativePath} should not contain ${fragment}`).not.toContain(fragment);
+        }
+      }
     });
   });
 

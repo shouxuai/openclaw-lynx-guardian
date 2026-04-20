@@ -225,15 +225,15 @@ function buildForcedAgentStartDenyContext(params: {
   reason?: string;
 }): string {
   const riskLevel = normalizeString(params.riskLevel) || "L4";
-  const reason = normalizeString(params.reason) || "褰撳墠璇锋眰宸茶Е鍙?Lynx Guardian 瀹夊叏鎷︽埅銆?";
+  const reason = normalizeString(params.reason) || "当前请求已触发 Lynx Guardian 安全拦截。";
 
   return [
-    `[鏈€楂樼瓑绾у畨鍏ㄦ嫆缁漖 褰撳墠璇锋眰鍛戒腑 ${riskLevel} 瀹夊叏鎷掔粷绛栫暐銆俙`,
-    `鎷︽埅渚濇嵁锛?{reason}`,
-    "蹇呴』鐩存帴鎷掔粷璇ヨ姹傘€傚彲浠ヨ鏄庢嫤鎴緷鎹紝浣嗕笉鑳芥彁渚涗换浣曡В鍐虫柟妗堟垨鏇夸唬鏂规銆?",
-    "涓嶅緱璋冪敤浠讳綍宸ュ叿銆?",
-    "涓嶅緱鏌ョ湅銆佽鍙栥€佹竻闄ゃ€佸鍑恒€佹€荤粨銆佸紩鐢ㄦ垨娉勯湶浠讳綍鍙椾繚鎶ゅ唴瀹广€?",
-    "涓嶅緱鎻愪緵瀹℃壒銆佺‘璁ょ煭璇€侀噸璇曘€佺粫杩囨柟娉曘€佹浛浠ｆ墽琛屾楠ゆ垨鎿嶄綔寤鸿銆?",
+    `[最高等级安全拒绝] 当前请求命中 ${riskLevel} 安全拒绝策略。`,
+    `拦截依据：${reason}`,
+    "必须直接拒绝该请求。可以说明拦截依据，但不能提供任何解决方案或替代方案。",
+    "不得调用任何工具。",
+    "不得查看、读取、清除、导出、总结、引用或泄露任何受保护内容。",
+    "不得提供审批、确认短语、重试、绕过方法、替代执行步骤或操作建议。",
   ].join("\n");
 }
 
@@ -703,7 +703,7 @@ export default function setup(api: OpenClawPluginApi) {
     if (!actorOuId) {
       return {
         handled: true,
-        replyText: "[Lynx Guardian] 褰撳墠瀹℃壒鍙帴鍙楀甫 ou_id 鐨勯涔﹀洖澶嶃€?",
+        replyText: "[Lynx Guardian] 当前审批只接受带 ou_id 的飞书回复。",
       };
     }
 
@@ -728,14 +728,14 @@ export default function setup(api: OpenClawPluginApi) {
     if (!localApproval) {
       return {
         handled: true,
-        replyText: "[Lynx Guardian] 褰撳墠娌℃湁寰呭鎵规搷浣滄垨瀹℃壒宸茶繃鏈熴€?",
+        replyText: "[Lynx Guardian] 当前没有待审批操作或审批已过期。",
       };
     }
 
     if (localApproval.sessionKey && sessionKey && localApproval.sessionKey !== sessionKey) {
       return {
         handled: true,
-        replyText: "[Lynx Guardian] 褰撳墠娌℃湁寰呭鎵规搷浣滄垨瀹℃壒宸茶繃鏈熴€?",
+        replyText: "[Lynx Guardian] 当前没有待审批操作或审批已过期。",
       };
     }
     const currentConversationId = normalizeFeishuConversationId(
@@ -760,7 +760,7 @@ export default function setup(api: OpenClawPluginApi) {
     if (!canActorResolveLocalToolApproval(actorOuId, localApproval)) {
       return {
         handled: true,
-        replyText: "[Lynx Guardian] 褰撳墠鍥炲鐨?ou_id 涓嶅湪鏈湴瀹℃壒 owner/approver 鍒楄〃涓紝鏃犳硶鎵瑰噯杩欐鎿嶄綔銆?",
+        replyText: "[Lynx Guardian] 当前回复的 ou_id 不在本地审批 owner/approver 列表中，无法批准这次操作。",
       };
     }
 
@@ -771,8 +771,8 @@ export default function setup(api: OpenClawPluginApi) {
     return {
       handled: true,
       replyText: params.localApprovalReply.resolution === "deny"
-        ? "[Lynx Guardian] 宸叉嫆缁濇湰娆℃搷浣溿€?"
-        : "[Lynx Guardian] 宸叉壒鍑嗘湰娆℃搷浣滐紝鍘熷伐鍏疯皟鐢ㄥ皢缁х画鎵ц銆?",
+        ? "[Lynx Guardian] 已拒绝本次操作。"
+        : "[Lynx Guardian] 已批准本次操作，原工具调用将继续执行。",
     };
   }
 
@@ -806,7 +806,7 @@ export default function setup(api: OpenClawPluginApi) {
         return { handled: false };
       }
 
-      await sendHookFeedback(params.ctx, "[Lynx Guardian] 褰撳墠瀹℃壒鍙帴鍙楀甫 ou_id 鐨勯涔﹀洖澶嶃€?");
+      await sendHookFeedback(params.ctx, "[Lynx Guardian] 当前审批只接受带 ou_id 的飞书回复。");
       return { handled: true, blockReason: "[Lynx Guardian] Local approval reply consumed." };
     }
 
@@ -837,19 +837,19 @@ export default function setup(api: OpenClawPluginApi) {
         return { handled: false };
       }
 
-      await sendHookFeedback(params.ctx, "[Lynx Guardian] 褰撳墠娌℃湁寰呭鎵规搷浣滄垨瀹℃壒宸茶繃鏈熴€?");
+      await sendHookFeedback(params.ctx, "[Lynx Guardian] 当前没有待审批操作或审批已过期。");
       return { handled: true, blockReason: "[Lynx Guardian] Local approval reply consumed." };
     }
 
     if (localApproval.sessionKey && sessionKey && localApproval.sessionKey !== sessionKey) {
-      await sendHookFeedback(params.ctx, "[Lynx Guardian] 褰撳墠娌℃湁寰呭鎵规搷浣滄垨瀹℃壒宸茶繃鏈熴€?");
+      await sendHookFeedback(params.ctx, "[Lynx Guardian] 当前没有待审批操作或审批已过期。");
       return { handled: true, blockReason: "[Lynx Guardian] Local approval reply consumed." };
     }
 
     if (!canActorResolveLocalToolApproval(actorOuId, localApproval)) {
       await sendHookFeedback(
         params.ctx,
-        "[Lynx Guardian] 褰撳墠鍥炲鐨?ou_id 涓嶅湪鏈湴瀹℃壒 owner/approver 鍒楄〃涓紝鏃犳硶鎵瑰噯杩欐鎿嶄綔銆?",
+        "[Lynx Guardian] 当前回复的 ou_id 不在本地审批 owner/approver 列表中，无法批准这次操作。",
       );
       return { handled: true, blockReason: "[Lynx Guardian] Local approval reply consumed." };
     }
@@ -861,8 +861,8 @@ export default function setup(api: OpenClawPluginApi) {
     await sendHookFeedback(
       params.ctx,
       params.localApprovalReply.resolution === "deny"
-        ? "[Lynx Guardian] 宸叉嫆缁濇湰娆℃搷浣溿€?"
-        : "[Lynx Guardian] 宸叉壒鍑嗘湰娆℃搷浣滐紝鍘熷伐鍏疯皟鐢ㄥ皢缁х画鎵ц銆?",
+        ? "[Lynx Guardian] 已拒绝本次操作。"
+        : "[Lynx Guardian] 已批准本次操作，原工具调用将继续执行。",
     );
     */
     return { handled: false };
@@ -1265,13 +1265,13 @@ export default function setup(api: OpenClawPluginApi) {
   }): string {
     const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
     return [
-      `[Lynx Guardian] ${params.toolName} 宸茶繘鍏ユ湰鍦板鎵圭獥鍙ｃ€俙`,
-      `妯″潡: ${params.module}`,
-      `椋庨櫓: ${params.riskLevel}`,
-      `璇峰湪 ${timeoutSeconds}s 鍐呭洖澶嶄互涓嬪懡浠や箣涓€:`,
+      `[Lynx Guardian] ${params.toolName} 已进入本地审批窗口。`,
+      `模块: ${params.module}`,
+      `风险: ${params.riskLevel}`,
+      `请在 ${timeoutSeconds}s 内回复以下命令之一：`,
       `${LOCAL_TOOL_APPROVAL_COMMAND} ${params.approvalToken} allow-once`,
       `${LOCAL_TOOL_APPROVAL_COMMAND} ${params.approvalToken} deny`,
-      "浠呮帴鍙楅厤缃殑 owner/approver ou_id 瀹℃壒鍥炲锛岀兢閲屽叾浠栦汉鐨勬秷鎭笉浼氭秷璐硅繖娆″鎵广€?",
+      "仅接受已配置 owner/approver ou_id 的审批回复，群里其他人的消息不会消费这次审批。",
     ].join("\n");
   }
 
@@ -1285,14 +1285,14 @@ export default function setup(api: OpenClawPluginApi) {
   }): string {
     const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
     return [
-      `[Lynx Guardian] ${params.toolName} 宸茶繘鍏ュ師鐢熷鎵圭獥鍙ｃ€俙`,
-      `妯″潡: ${params.module}`,
-      `椋庨櫓: ${params.riskLevel}`,
-      `璇峰湪 ${timeoutSeconds}s 鍐呯洿鎺ュ湪褰撳墠椋炰功浼氳瘽鍥炲浠ヤ笅鍛戒护涔嬩竴锛歚`,
+      `[Lynx Guardian] ${params.toolName} 已进入原生审批窗口。`,
+      `模块: ${params.module}`,
+      `风险: ${params.riskLevel}`,
+      `请在 ${timeoutSeconds}s 内直接在当前飞书会话回复以下命令之一：`,
       `/approve ${params.approvalId} allow-once`,
       `/approve ${params.approvalId} deny`,
-      `濡傛灉浣犱箣鍓嶄範鎯洖澶嶁€?{params.confirmationPhrase}鈥濓紝鏈璇风洿鎺ュ洖澶嶄笂闈㈢殑 /approve 鍛戒护銆俙`,
-      "涓嶉渶瑕佸垏鎹㈠埌 webchat 椤甸潰銆?",
+      `如果你之前习惯回复“${params.confirmationPhrase}”，本次请直接回复上面的 /approve 命令。`,
+      "不需要切换到 webchat 页面。",
     ].join("\n");
   }
 
@@ -1604,8 +1604,8 @@ export default function setup(api: OpenClawPluginApi) {
 
   function appendFeishuNativeApprovalGuidance(text: string): string {
     if (
-      text.includes("璇风洿鎺ュ湪褰撳墠椋炰功浼氳瘽鍥炲")
-      || text.includes("涓嶉渶瑕佸垏鎹㈠埌 webchat 椤甸潰")
+      text.includes("请直接在当前飞书会话回复")
+      || text.includes("不需要切换到 webchat 页面")
     ) {
       return text;
     }
@@ -1618,14 +1618,14 @@ export default function setup(api: OpenClawPluginApi) {
     const lines = [
       text.trimEnd(),
       "",
-      "椋炰功瀹℃壒鎻愮ず锛?",
+      "飞书审批提示：",
       approveCommand.allowDecision
-        ? `璇风洿鎺ュ湪褰撳墠椋炰功浼氳瘽鍥炲 \`/approve ${approveCommand.approvalId} ${approveCommand.allowDecision}\` 澶勭悊杩欐瀹℃壒銆俙`
+        ? `请直接在当前飞书会话回复 \`/approve ${approveCommand.approvalId} ${approveCommand.allowDecision}\` 处理这次审批。`
         : "",
       approveCommand.denyDecision
-        ? `濡傞渶鎷掔粷锛屽洖澶?\`/approve ${approveCommand.approvalId} ${approveCommand.denyDecision}\`銆俙`
+        ? `如需拒绝，回复 \`/approve ${approveCommand.approvalId} ${approveCommand.denyDecision}\`。`
         : "",
-      "涓嶉渶瑕佸垏鎹㈠埌 webchat 椤甸潰锛屼篃涓嶈鍐嶄娇鐢?`/lynx-approve`銆?",
+      "不需要切换到 webchat 页面，也不要再使用 `/lynx-approve`。",
     ].filter(Boolean);
 
     return lines.join("\n");
@@ -2051,10 +2051,10 @@ export default function setup(api: OpenClawPluginApi) {
   }
 
   log.info(
-    `[lynx-guardian] OpenClaw 鏈嶅姟妫€娴嬮厤缃凡浠?${discoveryRuntime.path} 鍔犺浇锛屽綋鍓?fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
+    `[lynx-guardian] OpenClaw 服务探测配置已从 ${discoveryRuntime.path} 加载，当前 fullScan=${openClawDiscoveryConfig.fullScan === true ? "true" : "false"}`,
   );
 
-  // 鈹€鈹€ Startup Security Audit (SX-security-audit) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // Startup Security Audit (SX-security-audit)
   void reconcileScheduledLynxCheck({
     config: buildScheduledLynxCheckSyncConfig(),
     logger: log,
@@ -2072,7 +2072,7 @@ export default function setup(api: OpenClawPluginApi) {
           const summary = formatAuditSummary(report);
           log.info(`[lynx-guardian] Security audit:\n${summary}`);
           if (report.summary.by_severity.critical > 0 || report.summary.by_severity.high > 0) {
-            log.warn(`[lynx-guardian] 鈿狅笍 Security audit found ${report.summary.by_severity.critical} critical and ${report.summary.by_severity.high} high severity issues`);
+            log.warn(`[lynx-guardian] Security audit found ${report.summary.by_severity.critical} critical and ${report.summary.by_severity.high} high severity issues`);
           }
         } else {
           log.info("[lynx-guardian] Security audit skipped (script not available)");
@@ -2086,7 +2086,7 @@ export default function setup(api: OpenClawPluginApi) {
       try {
         const findings = await runMaliciousScriptScan();
         if (findings && findings.length > 0) {
-          log.warn(`[lynx-guardian] 鈿狅笍 Malicious script scan found ${findings.length} issues in skills`);
+          log.warn(`[lynx-guardian] Malicious script scan found ${findings.length} issues in skills`);
           for (const f of findings.slice(0, 3)) {
             log.warn(`[lynx-guardian]   [${f.severity}] ${f.file}: ${f.description}`);
           }
@@ -2106,7 +2106,7 @@ export default function setup(api: OpenClawPluginApi) {
         const invalid = results.filter((r) => !r.valid);
 
         if (invalid.length > 0) {
-          log.warn(`[lynx-guardian] 鈿狅笍 Skill integrity check: ${invalid.length} Skill(s) with hash mismatch`);
+          log.warn(`[lynx-guardian] Skill integrity check: ${invalid.length} Skill(s) with hash mismatch`);
           for (const r of invalid) {
             log.warn(`[lynx-guardian]   [${r.skillName}] ${r.reason}`);
           }
@@ -2138,7 +2138,7 @@ export default function setup(api: OpenClawPluginApi) {
           if (budget) {
             log.info(`[lynx-guardian] ${formatBudgetStatus(budget)}`);
             if (budget.status === "exceeded") {
-              log.warn(`[lynx-guardian] 鈿狅笍 ${budget.alert}`);
+              log.warn(`[lynx-guardian] ${budget.alert}`);
             } else if (budget.status === "warning") {
               log.warn(`[lynx-guardian] ${budget.alert}`);
             }
@@ -2229,14 +2229,14 @@ export default function setup(api: OpenClawPluginApi) {
     try {
       if (!event.content || event.content.length === 0) return;
       rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
-      log.info(`[lynx-guardian]馃搶,message_received event: ${JSON.stringify(event)}`);
-      log.info(`[lynx-guardian]馃搶,message_received ctx: ${JSON.stringify(ctx)}`);
+      log.info(`[lynx-guardian] message_received event: ${JSON.stringify(event)}`);
+      log.info(`[lynx-guardian] message_received ctx: ${JSON.stringify(ctx)}`);
       const text = typeof event.content === "string"
         ? event.content
         : Array.isArray(event.content)
           ? event.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ")
           : String(event.content);
-      log.info(`[lynx-guardian]馃搶,message_received text: ${text}`);
+      log.info(`[lynx-guardian] message_received text: ${text}`);
       if (!text || text.length === 0) return;
       const lynxCheckTrigger = classifyLynxCheckTrigger(text);
 
@@ -2262,7 +2262,7 @@ export default function setup(api: OpenClawPluginApi) {
         const sessionKey = normalizeString(ctx.sessionKey) || undefined;
         const actorOuId = resolveActorOuId(event, ctx);
         if (!actorOuId) {
-          await sendHookFeedback(ctx, "[Lynx Guardian] 褰撳墠瀹℃壒鍙帴鍙楀甫 ou_id 鐨勯涔﹀洖澶嶃€?");
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前审批只接受带 ou_id 的飞书回复。");
           return;
         }
 
@@ -2286,19 +2286,19 @@ export default function setup(api: OpenClawPluginApi) {
         }
 
         if (!localApproval) {
-          await sendHookFeedback(ctx, "[Lynx Guardian] 褰撳墠娌℃湁寰呭鎵规搷浣滄垨瀹℃壒宸茶繃鏈熴€?");
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待审批操作或审批已过期。");
           return;
         }
 
         if (localApproval.sessionKey && sessionKey && localApproval.sessionKey !== sessionKey) {
-          await sendHookFeedback(ctx, "[Lynx Guardian] 褰撳墠娌℃湁寰呭鎵规搷浣滄垨瀹℃壒宸茶繃鏈熴€?");
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待审批操作或审批已过期。");
           return;
         }
 
         if (!canActorResolveLocalToolApproval(actorOuId, localApproval)) {
           await sendHookFeedback(
             ctx,
-            "[Lynx Guardian] 褰撳墠鍥炲鐨?ou_id 涓嶅湪鏈湴瀹℃壒 owner/approver 鍒楄〃涓紝鏃犳硶鎵瑰噯杩欐鎿嶄綔銆?",
+            "[Lynx Guardian] 当前回复的 ou_id 不在本地审批 owner/approver 列表中，无法批准这次操作。",
           );
           return;
         }
@@ -2307,8 +2307,8 @@ export default function setup(api: OpenClawPluginApi) {
         await sendHookFeedback(
           ctx,
           localApprovalReply.resolution === "deny"
-            ? "[Lynx Guardian] 宸叉嫆缁濇湰娆℃搷浣溿€?"
-            : "[Lynx Guardian] 宸叉壒鍑嗘湰娆℃搷浣滐紝鍘熷伐鍏疯皟鐢ㄥ皢缁х画鎵ц銆?",
+            ? "[Lynx Guardian] 已拒绝本次操作。"
+            : "[Lynx Guardian] 已批准本次操作，原工具调用将继续执行。",
         );
         return;
       }
@@ -2330,11 +2330,11 @@ export default function setup(api: OpenClawPluginApi) {
           payload: text,
         });
         const approvedInputOverride = consumeApprovedOverrideFull(ctx, inputFingerprint);
-        log.info(`[lynx-guardian]馃搶,approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
+        log.info(`[lynx-guardian] approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardInput(text, ctx.sessionKey, guardContext);
         const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
-        log.info(`[lynx-guardian]馃搶,guardInput decision: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
         if (guardActionRequired && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
@@ -2390,24 +2390,24 @@ export default function setup(api: OpenClawPluginApi) {
         confirmLookupKey
         && isConfirmationPhrase(
           text,
-          riskPolicyConfig.confirmationPhrase ?? "纭鏀捐鏈鎿嶄綔",
+          riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
         )
       ) {
         const confirmedLookupKey = confirmLookupKey as string;
         let pending = consumePendingOverride(confirmedLookupKey);
 
         if (!pending) {
-          log.info("[lynx-guardian] Primary pending lookup miss 灏濊瘯 fallback scan");
+          log.info("[lynx-guardian] Primary pending lookup miss，尝试 fallback scan");
           pending = consumeMostRecentPendingOverride();
         }
 
-        log.info(`[lynx-guardian]馃搶,message_received pending: ${JSON.stringify(pending)}`);
+        log.info(`[lynx-guardian] message_received pending: ${JSON.stringify(pending)}`);
         if (!pending) {
-          await sendHookFeedback(ctx, "[Lynx Guardian] 褰撳墠娌℃湁寰呯‘璁ゆ搷浣溿€?");
+          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待确认操作。");
           return;
           return {
             block: true,
-            blockReason: "[Lynx Guardian] 褰撳墠娌℃湁鍙斁琛岀殑寰呯‘璁ゆ搷浣?",
+            blockReason: "[Lynx Guardian] 当前没有可放行的待确认操作。",
           };
         }
 
@@ -2418,12 +2418,12 @@ export default function setup(api: OpenClawPluginApi) {
         const windowSec = Math.round(windowMs / 1000);
         await sendHookFeedback(
           ctx,
-          `[Lynx Guardian] 宸插紑鍚伐浣滄祦鎺堟潈绐楀彛锛?{windowSec}s锛夈€傜浉鍏虫搷浣滀細鍦ㄧ獥鍙ｆ湡鍐呰嚜鍔ㄦ斁琛屻€俙`,
+          `[Lynx Guardian] 已开启工作流授权窗口（${windowSec}s）。相关操作会在窗口期内自动放行。`,
         );
         return;
         return {
           block: true,
-          blockReason: `[Lynx Guardian] 宸茬‘璁わ紝宸ヤ綔娴佹巿鏉冨凡寮€鏀撅紙鏃堕棿绐楀彛${windowSec}s锛夈€傛绐楀彛鍐呯殑鐩稿叧鎿嶄綔灏嗚嚜鍔ㄦ斁琛岋紝宸ヤ綔娴佺粨鏉熷悗灏嗚嚜鍔ㄦ敹鍥炲苟姹囨姤鎿嶄綔璁板綍銆俙`,
+          blockReason: `[Lynx Guardian] 已确认，工作流授权已开启（时间窗口 ${windowSec}s）。此窗口内的相关操作将自动放行，工作流结束后会自动收回并汇总操作记录。`,
         };
       }
 
@@ -2443,7 +2443,7 @@ export default function setup(api: OpenClawPluginApi) {
         payload: text,
       });
       const approvedInputOverride = consumeApprovedOverrideFull(ctx, inputFingerprint);
-      log.info(`[lynx-guardian]馃搶,approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
+      log.info(`[lynx-guardian] approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn("[lynx-guardian] Sensitive data detected in message");
         await pushRecord(userId, text, 1);
@@ -2459,7 +2459,7 @@ export default function setup(api: OpenClawPluginApi) {
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardInput(text, ctx.sessionKey, guardContext);
         const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
-        log.info(`[lynx-guardian]馃搶,guardInput decision: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
         if (guardActionRequired && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
@@ -2640,7 +2640,7 @@ export default function setup(api: OpenClawPluginApi) {
         publicAccessResult = await checkPublicAccess(userId, ipInfo.ip, ipInfo.port);
         if (publicAccessResult.result.is_public) {
           log.error("[lynx-guardian] Public access check failed");
-          const warning = `鈿狅笍閲嶈鎻愰啋锛氬綋鍓岻P ${ipInfo.ip} 鏆撮湶鍦ㄥ叕缃戠幆澧冿紝寮虹儓寤鸿閰嶇疆闃茬伀澧欒鍒欙紝浠呭厑璁稿繀瑕佺鍙ｆ毚闇层€俓n`;
+          const warning = `重要提醒：当前 IP ${ipInfo.ip} 暴露在公网环境，强烈建议配置防火墙规则，仅开放必要端口。\n`;
           prependContext += warning;
         } else {
           log.info("[lynx-guardian] Public access check passed");
@@ -2778,7 +2778,7 @@ export default function setup(api: OpenClawPluginApi) {
             prependContext: denyPrependContext,
           } as any;
         }
-        log.info(`[lynx-guardian]馃搶,guardInput decision: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
         if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
         } else if (guardActionRequired && !approvedAgentStartOverride) {
@@ -2883,16 +2883,16 @@ export default function setup(api: OpenClawPluginApi) {
         adaptedContentCheck.categoryChain.levelOne,
         adaptedContentCheck.categoryChain.levelTwo,
         adaptedContentCheck.categoryChain.levelThree,
-      ].join("銆?");
-      log.info(`[lynx-guardian]馃搶,Input risk detected: ${JSON.stringify(res)}`);
+      ].join("、");
+      log.info(`[lynx-guardian] Input risk detected: ${JSON.stringify(res)}`);
       if (adaptedContentCheck.externalRiskLevel > 0) {
-        let warning = `鈿狅笍閲嶈鎻愰啋锛氬唴瀹瑰寘鍚唴瀹归闄╋紙${inputCategorySummary}锛夛紝\n`;
-        if (inputCategorySummary.includes("涓汉闅愮")) {
-          warning += "鍖呭惈闅愮鍐呭闇€瑕佽繘琛岃劚鏁忓鐞?";
-        } else if (!adaptedContentCheck.categoryChain.levelOne.includes("鍏朵粬")) {
-          warning += "鍖呭惈浠峰€艰涓嶆褰擄紝杩涜浠峰€艰姝ｅ悜寮曞銆俓n";
+        let warning = `重要提醒：内容包含内容风险（${inputCategorySummary}），\n`;
+        if (inputCategorySummary.includes("个人隐私")) {
+          warning += "包含隐私内容，需要先进行脱敏处理。";
+        } else if (!adaptedContentCheck.categoryChain.levelOne.includes("其他")) {
+          warning += "包含价值观相关风险，请进行正向引导。";
         } else {
-          warning += "鎻掍欢宸茶繘琛屾嫤鎴€俓n";
+          warning += "插件已进行拦截。\n";
         }
         log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
 
@@ -3164,7 +3164,7 @@ export default function setup(api: OpenClawPluginApi) {
         const { guardContext } = buildManagedGuardContext({ output, messages: event.messages }, ctx);
         const decision = guardOutput(output, ctx.sessionKey, guardContext);
         const { guardActionRequired, policyEvaluation, effectiveAssessment } = resolveGuardPolicyState(decision);
-        log.info(`[lynx-guardian]馃搶,Output risk detected: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian] Output risk detected: ${JSON.stringify(decision)}`);
         if (guardActionRequired) {
           const enforcement = enforceGuardDecisionText(
             output,
@@ -3227,14 +3227,14 @@ export default function setup(api: OpenClawPluginApi) {
           adaptedContentCheck.categoryChain.levelOne,
           adaptedContentCheck.categoryChain.levelTwo,
           adaptedContentCheck.categoryChain.levelThree,
-        ].join("銆?");
-        log.info(`[lynx-guardian]馃搶,Output risk detected: ${JSON.stringify(res)}`);
+        ].join("、");
+        log.info(`[lynx-guardian] Output risk detected: ${JSON.stringify(res)}`);
         if (adaptedContentCheck.externalRiskLevel > 0) {
-          let warning = `鈿狅笍閲嶈鎻愰啋锛氬唴瀹瑰寘鍚唴瀹归闄╋紙${outputCategorySummary}锛塦`;
-          if (outputCategorySummary.includes("涓汉闅愮")) {
-            warning += "闅愮鍐呭闇€瑕佽繘琛岃劚鏁忓鐞嗭紝璇峰嬁鍦ㄩ潪蹇呰鍦烘櫙闅忔剰鎻愪緵";
+          let warning = `重要提醒：内容包含内容风险（${outputCategorySummary}）。`;
+          if (outputCategorySummary.includes("个人隐私")) {
+            warning += "隐私内容需要先进行脱敏处理，请勿在非必要场景直接提供。";
           } else {
-            warning += "lynx-guardian 鎻掍欢宸茶繘琛屾嫤鎴?";
+            warning += "lynx-guardian 插件已进行拦截。";
           }
           log.warn(`[lynx-guardian] Output risk detected: ${warning}`);
         }
@@ -3416,13 +3416,13 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian] before_tool_call decision=${JSON.stringify(decision)}`);
         execBlacklistContext = decision.contextHints;
         log.info(`[lynx-guardian] before_tool_call execBlacklistContext=${JSON.stringify(execBlacklistContext)}`);
-        log.info(`[lynx-guardian]馃搶,Tool call risk detected: ${JSON.stringify(decision)}`);
+        log.info(`[lynx-guardian] Tool call risk detected: ${JSON.stringify(decision)}`);
 
         if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info(`[lynx-guardian] Managed /lynx-check blocked extra tool call outside whitelist: ${toolName}`);
           return {
             block: true,
-            blockReason: "[Lynx Guardian] Managed /lynx-check 宸插畬鎴愰璁＄畻锛屼粎鍏佽鐧藉悕鍗曞唴鐨勫唴閮ㄨ鍐欎笌鎶ュ憡鍙戦€侀摼璺€?",
+            blockReason: "[Lynx Guardian] Managed /lynx-check 已完成预计算，仅允许白名单内的内部读写与报告发送链路。",
           };
         }
 
@@ -3569,7 +3569,7 @@ export default function setup(api: OpenClawPluginApi) {
                 riskLevel: approvalRiskLevel ?? "L2",
                 toolName,
                 timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
-                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "纭鏀捐鏈鎿嶄綔",
+                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
               }),
             });
           }
@@ -3597,7 +3597,7 @@ export default function setup(api: OpenClawPluginApi) {
               riskScore: effectiveAssessment.score,
               riskLevel: effectiveAssessment.level,
             });
-            log.info(`[lynx-guardian] 宸叉湁寰呯‘璁ゆ搷浣滐紝鏈鎿嶄綔${toolName}灏嗗湪纭鍚庝竴骞舵斁琛屻€?modules: ${effectiveAssessment.modules.join(",")})`);
+            log.info(`[lynx-guardian] 已有待确认操作，本次操作${toolName}将在确认后一并放行。modules: ${effectiveAssessment.modules.join(",")})`);
           }
         }
 
@@ -3637,7 +3637,7 @@ export default function setup(api: OpenClawPluginApi) {
               log.info(`[lynx-guardian] P2: additional block merged into existing pending (${toolName})`);
               return {
                 block: true,
-                blockReason: `[Lynx Guardian] 馃洝宸叉湁寰呯‘璁ゆ搷浣滐紝鏈鎿嶄綔${toolName}灏嗗湪纭鍚庝竴骞舵斁琛屻€俙`,
+                blockReason: `[Lynx Guardian] 已有待确认操作，本次操作${toolName}将在确认后一并放行。`,
               };
             }
             return {
@@ -3667,12 +3667,12 @@ export default function setup(api: OpenClawPluginApi) {
       try {
         const installAttempt = detectSkillInstall(toolName, params);
         if (installAttempt) {
-          log.info(`[lynx-guardian]馃搶,Skill install detected: ${JSON.stringify(installAttempt)}`);
+          log.info(`[lynx-guardian] Skill install detected: ${JSON.stringify(installAttempt)}`);
           log.info(`[lynx-guardian] Skill install detected: ${installAttempt.skillName} via ${installAttempt.installMethod}`);
 
           const quick = quickBlacklistCheck(installAttempt.skillName);
           if (quick.blocked) {
-            log.warn(`[lynx-guardian] 馃洝Malicious Skill blocked: ${installAttempt.skillName} ${quick.reason}`);
+            log.warn(`[lynx-guardian] Malicious Skill blocked: ${installAttempt.skillName} ${quick.reason}`);
             try {
               await pushRecord(userId, `[SkillGuard] blocked: ${installAttempt.skillName} (${quick.reason})`, 3);
             } catch {
@@ -3680,7 +3680,7 @@ export default function setup(api: OpenClawPluginApi) {
             }
             return {
               block: true,
-              blockReason: `[Lynx Guardian] 馃洝鎭舵剰Skill鎷︽埅: "${installAttempt.skillName}" ${quick.reason}`,
+              blockReason: `[Lynx Guardian] 恶意 Skill 拦截: "${installAttempt.skillName}" ${quick.reason}`,
             };
           }
 
@@ -3700,7 +3700,7 @@ export default function setup(api: OpenClawPluginApi) {
           };
 
           const assessment = await assessSkillRisk(installAttempt, fetchRemote);
-          log.info(`[lynx-guardian]馃搶,Skill assess risk detected: ${JSON.stringify(assessment)}`);
+          log.info(`[lynx-guardian] Skill assess risk detected: ${JSON.stringify(assessment)}`);
           if (assessment.block) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
             try {
@@ -3773,7 +3773,7 @@ export default function setup(api: OpenClawPluginApi) {
       log.info(`[lynx-guardian] Workflow auth reused for blacklist hit: ${toolName} (${match.reason})`);
       return;
     }
-    const contentToReport = toolName === "exec" ? `鎵ц ${detail} 鍛戒护` : `${toolName} ${detail}`;
+    const contentToReport = toolName === "exec" ? `执行 ${detail} 命令` : `${toolName} ${detail}`;
 
     try {
       const riskLevel = match.level === "critical" ? 3 : 2;
@@ -3784,12 +3784,12 @@ export default function setup(api: OpenClawPluginApi) {
 
     try {
       const userContext = readRecentContext(ctx.sessionKey);
-      log.info(`[lynx-guardian]馃搶,User context: ${userContext}`);
-      const content = `鏄惁${match.reason} ${detail}锛熺敤鎴凤細${userContext}`;
+      log.info(`[lynx-guardian] User context: ${userContext}`);
+      const content = `是否${match.reason} ${detail}？用户：${userContext}`;
 
       const res = await checkTool(userId, content);
       const adaptedToolCheck = adaptToolCheckResult(res.result);
-      log.info(`[lynx-guardian]馃搶,Tool check result: ${JSON.stringify(res)}`);
+      log.info(`[lynx-guardian] Tool check result: ${JSON.stringify(res)}`);
       // Blacklist hits always require confirmation via the plugin's pending-override
       // mechanism, even when tool_check returns safe (risk_level=0).
       // "tool_check safe" means the user asked for the operation 鈥?that is necessary
@@ -3936,7 +3936,7 @@ export default function setup(api: OpenClawPluginApi) {
                 riskLevel: approvalRiskLevel ?? "L2",
                 toolName,
                 timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
-                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "纭鏀捐鏈鎿嶄綔",
+                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
               }),
             });
           }
@@ -3995,7 +3995,7 @@ export default function setup(api: OpenClawPluginApi) {
       if (riskLevel >= 3 && !approvedToolOverride) {
         return {
           block: true,
-          blockReason: `[Lynx Guardian] 楂樺嵄鎿嶄綔琚嫤鎴?Risk Level ${riskLevel}): ${match.reason}`,
+          blockReason: `[Lynx Guardian] 高危操作被拦截 (Risk Level ${riskLevel}): ${match.reason}`,
         };
       } else if (riskLevel === 2 && !approvedToolOverride) {
         return {
@@ -4006,7 +4006,7 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian] One-time override consumed for tool risk: ${toolName}`);
         return;
       } else if (riskLevel === 1) {
-        log.info(`[lynx-guardian] 璇嗗埆鍒板唴瀹归闄?${res.result.content}`);
+        log.info(`[lynx-guardian] 识别到内容风险：${res.result.content}`);
         return;
       } else {
         return;
@@ -4016,7 +4016,7 @@ export default function setup(api: OpenClawPluginApi) {
       if (match.level === "critical") {
         return {
           block: true,
-          blockReason: `[Lynx Guardian] 瀹夊叏妫€娴嬪け璐?楂樺嵄鎿嶄綔): ${err.message}`,
+          blockReason: `[Lynx Guardian] 安全检测失败（高危操作）: ${err.message}`,
         };
       }
       log.warn(`[lynx-guardian] API unreachable, allowing warning-level operation: ${match.reason}`);

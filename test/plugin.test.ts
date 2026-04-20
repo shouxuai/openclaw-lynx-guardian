@@ -187,7 +187,7 @@ describe('Plugin Setup', () => {
     } as any);
     vi.mocked(api.checkContent).mockResolvedValue({
       code: 200,
-      result: { risk_level: 0, level_one: '鍏朵粬', level_two: '鍏朵粬', level_three: '鍏朵粬' },
+      result: { risk_level: 0, level_one: '其他', level_two: '其他', level_three: '其他' },
       message: 'ok',
     } as any);
     vi.mocked(runtimeConfig.loadDiscoveryRuntimeConfig).mockReturnValue({
@@ -224,8 +224,8 @@ describe('Plugin Setup', () => {
           port: 18789,
           alive: true,
           score: 90,
-          confidence: '纭',
-          confidenceDesc: 'OpenClaw 缃戝叧 [楂樼疆淇″害]',
+          confidence: '确认',
+          confidenceDesc: 'OpenClaw 网关 [高置信度]',
           matchedFeatures: ['openclaw'],
           version: '',
           scheme: 'http',
@@ -2484,7 +2484,7 @@ describe('Plugin Setup', () => {
       block: true,
       blockReason: '[Lynx Guardian] hard lock',
     });
-    expect((first as any).blockReason).not.toContain('纭鏀捐鏈鎿嶄綔');
+    expect((first as any).blockReason).not.toContain('确认放行本次操作');
 
     expect(api.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
