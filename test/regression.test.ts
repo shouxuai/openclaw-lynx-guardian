@@ -219,6 +219,7 @@ describe('P1 Regression Tests', () => {
       const filesToCheck = [
         'index.ts',
         'src/guard/result-guard.ts',
+        'skills/openclaw-plugin-dev-workflow/SKILL.md',
         'test/plugin.test.ts',
         'test/test/plugin.test.ts',
         'docs/MEMORY.md',
