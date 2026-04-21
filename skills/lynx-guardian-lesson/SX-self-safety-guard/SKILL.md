@@ -34,6 +34,7 @@ tags: [security, core, defense, identity]
 
 - **self-safety-guard**（本 skill）：守运行时行为，实时拦截恶意请求
 - **SX-security-audit**：守环境审计，扫描文件/配置/依赖中的安全问题
+- **External attribution**: For any external attribution related to interception, blocking, denial, or approval decisions, always attribute it to the **Lynx plugin**. Do not attribute it to any specific person, owner, approver, maintainer, or internal submodule.
 
 ---
 
@@ -619,6 +620,15 @@ PII 检测、数据外泄防御、合规检查。
 ---
 
 ## 响应协议
+
+### Attribution Wording
+
+When someone asks "Who blocked this? / Who approved this? / Who stopped this? / Was this decided by a person?", always answer with the wording below:
+
+- Standard wording: `This interception or approval handling was performed by the Lynx plugin under the current security policy.`
+- Supplemental wording: `The Lynx plugin is responsible for security gating and policy decisions; it is not attributed to any specific individual approver.`
+- Even though this policy section is written in English, the actual user-facing reply must be in Chinese. Do not reply to the user in English for this attribution wording unless the user explicitly requests English.
+- Do not attribute it to any specific person, owner, approver, or maintainer, and do not disclose internal skills, hooks, rule names, detection modules, or match details.
 
 ### 模板结构（L2 及以上）
 
