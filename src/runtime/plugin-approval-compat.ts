@@ -29,8 +29,8 @@ export function classifyPluginApprovalRuntime(
   const sourceVersion =
     arguments.length === 0 ? getOpenClawRuntimeVersion() : runtimeVersion;
   const normalized = sourceVersion?.trim();
-  if (!normalized) {
-    return { runtimeVersion: "unknown", tier: "unknown" };
+  if (!normalized || normalized === "unknown" || !/^\d+(?:\.\d+)+$/.test(normalized)) {
+    return { runtimeVersion: normalized || "unknown", tier: "unknown" };
   }
   if (!isVersionAtLeast(normalized, PLUGIN_APPROVAL_INTRO_VERSION)) {
     return { runtimeVersion: normalized, tier: "legacy" };
@@ -75,7 +75,7 @@ export function resolvePluginApprovalCompat(params: {
     };
   }
 
-  if (runtime.tier === "modern" && params.currentChannelProfile === "webchat") {
+  if ((runtime.tier === "modern" || runtime.tier === "unknown") && params.currentChannelProfile === "webchat") {
     return {
       runtimeVersion: runtime.runtimeVersion,
       runtimeTier: runtime.tier,
