@@ -9,6 +9,7 @@
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
 import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
+import { matchGlobalInputAllowlistRule } from "./global-allowlist.js";
 import { normalizePluginProtectionText } from "./plugin-protection-normalization.js";
 import { SensitiveDataBlocker } from "./sensitive.js";
 import {
@@ -1263,6 +1264,7 @@ function shouldPersistOutputAttackEvent(input: {
 
 export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
+  const globalAllowlistRule = matchGlobalInputAllowlistRule(text);
   const atMs = Date.now();
   const finalizeInputDecision = (decision: GuardDecision): GuardDecision => ({
     ...decision,
@@ -1301,11 +1303,11 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     return finalizeInputDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
   }
 
-  if (detectLynxGuardianDisableRequest(text)) {
+  if (!globalAllowlistRule && detectLynxGuardianDisableRequest(text)) {
     return finalizeInputDecision(buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian"));
   }
 
-  if (detectOpenClawAvailabilityControl(text)) {
+  if (!globalAllowlistRule && detectOpenClawAvailabilityControl(text)) {
     return finalizeInputDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
   }
 
