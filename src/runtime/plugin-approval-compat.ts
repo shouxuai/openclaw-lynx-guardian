@@ -4,13 +4,10 @@ import {
 } from "./hook-capabilities.js";
 
 export const PLUGIN_APPROVAL_INTRO_VERSION = "2026.3.28";
-export const PLUGIN_APPROVAL_EARLY_SUPPORT_END_VERSION = "2026.4.6";
-export const PLUGIN_APPROVAL_NATIVE_TRUST_VERSION = "2026.4.7";
 
 export type PluginApprovalCompatTier =
   | "legacy"
-  | "early-support"
-  | "trusted"
+  | "modern"
   | "unknown";
 
 export type PluginApprovalCompatMode =
@@ -38,27 +35,14 @@ export function classifyPluginApprovalRuntime(
   if (!isVersionAtLeast(normalized, PLUGIN_APPROVAL_INTRO_VERSION)) {
     return { runtimeVersion: normalized, tier: "legacy" };
   }
-
-  const isInEarlySupportWindow =
-    isVersionAtLeast(normalized, PLUGIN_APPROVAL_INTRO_VERSION) &&
-    isVersionAtLeast(PLUGIN_APPROVAL_EARLY_SUPPORT_END_VERSION, normalized);
-
-  if (isInEarlySupportWindow) {
-    return { runtimeVersion: normalized, tier: "early-support" };
-  }
-
-  if (isVersionAtLeast(normalized, PLUGIN_APPROVAL_NATIVE_TRUST_VERSION)) {
-    return { runtimeVersion: normalized, tier: "trusted" };
-  }
-
-  return { runtimeVersion: normalized, tier: "early-support" };
+  return { runtimeVersion: normalized, tier: "modern" };
 }
 
 function buildNoRouteReason(tier: PluginApprovalCompatTier): string {
-  if (tier === "early-support") {
-    return "[Lynx Guardian] OpenClaw is in the early plugin-approval support window and native approval is not trusted by default. No Feishu approval route is configured, so this request is blocked. Upgrade OpenClaw or configure Feishu approval.";
+  if (tier === "unknown") {
+    return "[Lynx Guardian] OpenClaw version could not be identified safely and no Feishu approval route is configured, so this request is blocked. Upgrade OpenClaw or configure Feishu approval.";
   }
-  return "[Lynx Guardian] OpenClaw does not provide a trusted plugin-approval path and no Feishu approval route is configured, so this request is blocked. Upgrade OpenClaw or configure Feishu approval.";
+  return "[Lynx Guardian] OpenClaw is below 2026.3.28 and no Feishu approval route is configured, so this request is blocked. Upgrade OpenClaw or configure Feishu approval.";
 }
 
 export function resolvePluginApprovalCompat(params: {
@@ -91,7 +75,7 @@ export function resolvePluginApprovalCompat(params: {
     };
   }
 
-  if (runtime.tier === "trusted" && params.currentChannelProfile === "webchat") {
+  if (runtime.tier === "modern" && params.currentChannelProfile === "webchat") {
     return {
       runtimeVersion: runtime.runtimeVersion,
       runtimeTier: runtime.tier,

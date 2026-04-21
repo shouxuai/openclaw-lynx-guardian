@@ -1,7 +1,10 @@
 import type { ToolApprovalResolution } from "../types.js";
 import type { GuardDecision } from "../guard/safety-guard.js";
 import { classifyLynxCheckTrigger } from "../discovery/lynx-check-trigger.js";
-import { resolvePluginApprovalCompat } from "./plugin-approval-compat.js";
+import {
+  resolvePluginApprovalCompat,
+  type PluginApprovalCompatTier,
+} from "./plugin-approval-compat.js";
 import {
   extractMessageText,
   normalizeString,
@@ -43,7 +46,7 @@ export type ResolvedToolApprovalRoute = {
   conversationId?: string;
   threadId?: string | number;
   runtimeVersion: string;
-  runtimeTier: "legacy" | "early-support" | "trusted" | "unknown";
+  runtimeTier: PluginApprovalCompatTier;
 };
 
 export function isConfirmationPhrase(text: string, phrase: string): boolean {

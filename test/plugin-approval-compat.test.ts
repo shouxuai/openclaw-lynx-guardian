@@ -1,40 +1,28 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PLUGIN_APPROVAL_EARLY_SUPPORT_END_VERSION,
   PLUGIN_APPROVAL_INTRO_VERSION,
-  PLUGIN_APPROVAL_NATIVE_TRUST_VERSION,
   classifyPluginApprovalRuntime,
   resolvePluginApprovalCompat,
 } from "../src/runtime/plugin-approval-compat.js";
 
 describe("plugin approval compatibility", () => {
-  it("exposes plugin approval runtime boundary constants", () => {
+  it("exposes the plugin approval compatibility boundary constant", () => {
     expect(PLUGIN_APPROVAL_INTRO_VERSION).toBe("2026.3.28");
-    expect(PLUGIN_APPROVAL_EARLY_SUPPORT_END_VERSION).toBe("2026.4.6");
-    expect(PLUGIN_APPROVAL_NATIVE_TRUST_VERSION).toBe("2026.4.7");
   });
 
-  it("classifies runtime versions into legacy, early-support, trusted, and unknown tiers", () => {
+  it("classifies runtime versions into legacy, modern, and unknown tiers", () => {
     expect(classifyPluginApprovalRuntime("2026.3.27")).toEqual({
       runtimeVersion: "2026.3.27",
       tier: "legacy",
     });
     expect(classifyPluginApprovalRuntime("2026.3.28")).toEqual({
       runtimeVersion: "2026.3.28",
-      tier: "early-support",
-    });
-    expect(classifyPluginApprovalRuntime("2026.4.1")).toEqual({
-      runtimeVersion: "2026.4.1",
-      tier: "early-support",
-    });
-    expect(classifyPluginApprovalRuntime("2026.4.6")).toEqual({
-      runtimeVersion: "2026.4.6",
-      tier: "early-support",
+      tier: "modern",
     });
     expect(classifyPluginApprovalRuntime("2026.4.7")).toEqual({
       runtimeVersion: "2026.4.7",
-      tier: "trusted",
+      tier: "modern",
     });
     expect(classifyPluginApprovalRuntime(undefined)).toEqual({
       runtimeVersion: "unknown",
@@ -44,7 +32,7 @@ describe("plugin approval compatibility", () => {
 
   it("auto-detects runtime version when resolver runtimeVersion is omitted or undefined", () => {
     const previousRuntimeVersion = process.env.OPENCLAW_VERSION;
-    process.env.OPENCLAW_VERSION = "2026.4.7";
+    process.env.OPENCLAW_VERSION = "2026.3.28";
 
     try {
       expect(
@@ -54,8 +42,8 @@ describe("plugin approval compatibility", () => {
           hasFeishuFallbackContext: false,
         }),
       ).toMatchObject({
-        runtimeVersion: "2026.4.7",
-        runtimeTier: "trusted",
+        runtimeVersion: "2026.3.28",
+        runtimeTier: "modern",
         mode: "native-webchat",
         transport: "native",
       });
@@ -68,8 +56,8 @@ describe("plugin approval compatibility", () => {
           hasFeishuFallbackContext: false,
         }),
       ).toMatchObject({
-        runtimeVersion: "2026.4.7",
-        runtimeTier: "trusted",
+        runtimeVersion: "2026.3.28",
+        runtimeTier: "modern",
         mode: "native-webchat",
         transport: "native",
       });
@@ -82,10 +70,10 @@ describe("plugin approval compatibility", () => {
     }
   });
 
-  it("keeps trusted webchat runtimes on native plugin approval", () => {
+  it("keeps 2026.3.28+ webchat runtimes on native plugin approval", () => {
     expect(
       resolvePluginApprovalCompat({
-        runtimeVersion: "2026.4.7",
+        runtimeVersion: "2026.3.28",
         currentChannelProfile: "webchat",
         hasFeishuApproverRoute: false,
         hasFeishuFallbackContext: false,
@@ -93,11 +81,9 @@ describe("plugin approval compatibility", () => {
     ).toMatchObject({
       mode: "native-webchat",
       transport: "native",
-      runtimeTier: "trusted",
+      runtimeTier: "modern",
     });
-  });
 
-  it("keeps trusted webchat on native approval even when feishu wiring is present", () => {
     expect(
       resolvePluginApprovalCompat({
         runtimeVersion: "2026.4.7",
@@ -108,7 +94,7 @@ describe("plugin approval compatibility", () => {
     ).toMatchObject({
       mode: "native-webchat",
       transport: "native",
-      runtimeTier: "trusted",
+      runtimeTier: "modern",
     });
   });
 
@@ -123,7 +109,7 @@ describe("plugin approval compatibility", () => {
     ).toMatchObject({
       mode: "feishu-local",
       transport: "local-chat",
-      runtimeTier: "early-support",
+      runtimeTier: "modern",
     });
 
     expect(
@@ -136,14 +122,14 @@ describe("plugin approval compatibility", () => {
     ).toMatchObject({
       mode: "deny-no-route",
       transport: "none",
-      runtimeTier: "early-support",
+      runtimeTier: "modern",
     });
   });
 
-  it("routes boundary early-support webchat runtimes to feishu local approval when a feishu route exists", () => {
+  it("routes legacy webchat runtimes to feishu local approval when a feishu route exists", () => {
     expect(
       resolvePluginApprovalCompat({
-        runtimeVersion: "2026.3.28",
+        runtimeVersion: "2026.3.27",
         currentChannelProfile: "webchat",
         hasFeishuApproverRoute: true,
         hasFeishuFallbackContext: true,
@@ -151,27 +137,14 @@ describe("plugin approval compatibility", () => {
     ).toMatchObject({
       mode: "feishu-local",
       transport: "local-chat",
-      runtimeTier: "early-support",
-    });
-
-    expect(
-      resolvePluginApprovalCompat({
-        runtimeVersion: "2026.4.6",
-        currentChannelProfile: "webchat",
-        hasFeishuApproverRoute: true,
-        hasFeishuFallbackContext: true,
-      }),
-    ).toMatchObject({
-      mode: "feishu-local",
-      transport: "local-chat",
-      runtimeTier: "early-support",
+      runtimeTier: "legacy",
     });
   });
 
-  it("keeps half-wired non-feishu runtimes on deny path", () => {
+  it("keeps half-wired legacy non-feishu runtimes on deny path", () => {
     expect(
       resolvePluginApprovalCompat({
-        runtimeVersion: "2026.4.6",
+        runtimeVersion: "2026.3.27",
         currentChannelProfile: "webchat",
         hasFeishuApproverRoute: true,
         hasFeishuFallbackContext: false,
@@ -179,14 +152,14 @@ describe("plugin approval compatibility", () => {
     ).toMatchObject({
       mode: "deny-no-route",
       transport: "none",
-      runtimeTier: "early-support",
+      runtimeTier: "legacy",
     });
   });
 
-  it("fails closed for boundary early-support runtimes without a feishu route", () => {
+  it("fails closed for legacy and unknown runtimes without a feishu route", () => {
     expect(
       resolvePluginApprovalCompat({
-        runtimeVersion: "2026.3.28",
+        runtimeVersion: "2026.3.27",
         currentChannelProfile: "webchat",
         hasFeishuApproverRoute: false,
         hasFeishuFallbackContext: false,
@@ -194,20 +167,7 @@ describe("plugin approval compatibility", () => {
     ).toMatchObject({
       mode: "deny-no-route",
       transport: "none",
-      runtimeTier: "early-support",
-    });
-
-    expect(
-      resolvePluginApprovalCompat({
-        runtimeVersion: "2026.4.6",
-        currentChannelProfile: "webchat",
-        hasFeishuApproverRoute: false,
-        hasFeishuFallbackContext: false,
-      }),
-    ).toMatchObject({
-      mode: "deny-no-route",
-      transport: "none",
-      runtimeTier: "early-support",
+      runtimeTier: "legacy",
     });
 
     expect(
