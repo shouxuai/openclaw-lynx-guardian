@@ -262,7 +262,7 @@ def scan_skill_markdown_file(skill_file: Path) -> List[Dict[str, Any]]:
                 'type': 'suspicious_url',
                 'file': str(skill_file),
                 'severity': 'medium',
-                'description': f"妫€娴嬪埌鍙枒URL: {', '.join(suspicious_urls[:3])}",
+                'description': f"检测到可疑URL: {', '.join(suspicious_urls[:3])}",
                 'details': suspicious_urls
             })
     except Exception as e:
@@ -270,7 +270,7 @@ def scan_skill_markdown_file(skill_file: Path) -> List[Dict[str, Any]]:
             'type': 'error',
             'file': str(skill_file),
             'severity': 'low',
-            'description': f"鎵弿澶辫触: {str(e)}",
+            'description': f"扫描失败: {str(e)}",
             'details': None
         })
 

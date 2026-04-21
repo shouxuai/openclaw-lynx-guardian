@@ -51,7 +51,7 @@ function detectDirectProtectedResults(text: string): string[] {
 
 function formatDiagnosticReason(guardDecision: GuardDecision): string {
   const description = guardDecision.riskAssessment.description?.trim();
-  if (description && !/output_safe|杈撳嚭瀹夊叏/i.test(description)) {
+  if (description && !/output_safe|输出安全/i.test(description)) {
     return description;
   }
   const modules = guardDecision.riskAssessment.modules;
