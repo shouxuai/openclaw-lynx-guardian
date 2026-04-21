@@ -38,10 +38,20 @@ export function classifyPluginApprovalRuntime(
   if (!isVersionAtLeast(normalized, PLUGIN_APPROVAL_INTRO_VERSION)) {
     return { runtimeVersion: normalized, tier: "legacy" };
   }
-  if (!isVersionAtLeast(normalized, PLUGIN_APPROVAL_NATIVE_TRUST_VERSION)) {
+
+  const isInEarlySupportWindow =
+    isVersionAtLeast(normalized, PLUGIN_APPROVAL_INTRO_VERSION) &&
+    isVersionAtLeast(PLUGIN_APPROVAL_EARLY_SUPPORT_END_VERSION, normalized);
+
+  if (isInEarlySupportWindow) {
     return { runtimeVersion: normalized, tier: "early-support" };
   }
-  return { runtimeVersion: normalized, tier: "trusted" };
+
+  if (isVersionAtLeast(normalized, PLUGIN_APPROVAL_NATIVE_TRUST_VERSION)) {
+    return { runtimeVersion: normalized, tier: "trusted" };
+  }
+
+  return { runtimeVersion: normalized, tier: "early-support" };
 }
 
 function buildNoRouteReason(tier: PluginApprovalCompatTier): string {
@@ -57,7 +67,10 @@ export function resolvePluginApprovalCompat(params: {
   hasFeishuApproverRoute: boolean;
   hasFeishuFallbackContext: boolean;
 }): PluginApprovalCompatDecision {
-  const runtime = classifyPluginApprovalRuntime(params.runtimeVersion);
+  const runtime =
+    params.runtimeVersion === undefined
+      ? classifyPluginApprovalRuntime()
+      : classifyPluginApprovalRuntime(params.runtimeVersion);
 
   if (params.currentChannelProfile === "feishu") {
     if (params.hasFeishuApproverRoute) {

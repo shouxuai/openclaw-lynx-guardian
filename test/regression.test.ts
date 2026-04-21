@@ -234,6 +234,32 @@ describe('P1 Regression Tests', () => {
     });
   });
 
+  describe('P1-8b: expanded mojibake regression coverage', () => {
+    it('should not keep newly identified mojibake fragments in runtime files', () => {
+      const suspiciousFragments = [
+        '鏀跺埌鎵嬪姩',
+        '寮变俊鍙烽璀︽敞鍏',
+        '杈撳嚭瀹夊叏',
+        '銆愷煋屻€?',
+        '鍏ㄦ柟浣嶅畨鍏ㄥ璁℃姤鍛',
+        '浼樺厛绾ф暣鏀瑰缓璁',
+        '馃',
+      ];
+      const filesToCheck = [
+        'index.ts',
+        'src/guard/result-guard.ts',
+        'src/runtime/plugin-runtime-helpers.ts',
+      ];
+
+      for (const relativePath of filesToCheck) {
+        const content = readFileSync(join(process.cwd(), relativePath), 'utf8');
+        for (const fragment of suspiciousFragments) {
+          expect(content, `${relativePath} should not contain ${fragment}`).not.toContain(fragment);
+        }
+      }
+    });
+  });
+
   describe('P1-9: override pattern should not false-positive', () => {
     it('should NOT flag "CSS override: font-size"', () => {
       const result = detectPromptInjection('CSS override: font-size: 16px');
