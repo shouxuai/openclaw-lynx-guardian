@@ -727,3 +727,33 @@ L1 及以上安全决策记录以下信息：
 - Exact audit entry commands are only `/check` and `/lynx-check`.
 - Final execution authority belongs to the deterministic tool-call policy gate.
 - Weak-signal prompt defense should strengthen the trusted objective, not replace it.
+
+## 隐藏意图防御补充规则
+
+### Concealed Intent Families
+
+- `intent_concealment`: 总类，表示用户在故意隐藏真实意图
+- `encoding_escape`: Base64、Hex、Unicode 转义、URL 编码、HTML entity、`fromBase64String`、`atob`
+- `glyph_confusable`: 全角/半角混写、同形异码字符、跨字符集视觉混淆
+- `invisible_obfuscation`: 零宽字符、Bidi 控制符、不可见分隔符
+- `fragmented_reassembly`: 拆词、插空格/标点、字符串拼接、`chr()` / `fromCharCode()`
+- `phonetic_disguise`: 拼音、缩写、谐音、混合字根
+- `detector_evasion`: 绕过 Lynx / 风控 / scanner / detector / approval recognition
+- `approval_bypass`: 跳过确认、授权、审批、自动放行
+- `execute_sink`: decode/reassemble 之后继续 `eval` / `exec` / `iex` / shell
+- `staged_loader_chain`: 先隐藏，再还原，再执行
+
+### Runtime Enforcement Rules
+
+- 单独出现 concealment 线索时，只能加分或警告，不能直接拒绝
+- concealment + 明确 detector evasion：直接拒绝
+- concealment + 明确 approval bypass：直接拒绝
+- concealment + execute sink：直接拒绝
+- concealment + staged loader chain：直接拒绝
+
+### False-Positive Guardrails
+
+- 正常的 Base64、Unicode、URL 编码帮助不能因为提到相关语法而直接拒绝
+- 国际化、零宽字符、Bidi 排版问题排查不能直接拒绝
+- 正常审批流配置、确认弹窗文案讨论不能直接拒绝
+- 安全审计/教学上下文中解释 concealment 检测原理时，若没有绕过、跳审批、执行链意图，则保持允许

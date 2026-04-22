@@ -32,3 +32,19 @@ If the plugin-level managed `/lynx-check` flow uses this capability during preco
 
 - `SX-openclaw-discovery` owns discovery execution and endpoint findings.
 - the plugin-level managed `/lynx-check` flow owns report assembly, channel adaptation, and send-result recording.
+
+## Concealed Intent Families To Surface
+
+When audit findings involve obfuscation or staged loader behavior, summarize them with the same family names used by `SX-self-safety-guard` and runtime code:
+
+- `encoding_escape`
+- `glyph_confusable`
+- `invisible_obfuscation`
+- `fragmented_reassembly`
+- `phonetic_disguise`
+- `detector_evasion`
+- `approval_bypass`
+- `execute_sink`
+- `staged_loader_chain`
+
+Audit still returns findings only. It does not decide runtime blocking. The value here is shared language, not shared execution.
