@@ -92,6 +92,7 @@ test-results/
 /test
 /test/**
 /test-temp
+/tests/**
 /docs/**
 .worktrees/
 /scripts-dev
@@ -100,3 +101,5 @@ test-results/
 /notes
 /skills/openclaw-plugin-dev-workflow
 /notes
+/DESIGN.md
+/.codex

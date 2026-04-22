@@ -35,6 +35,7 @@ const GATED_ANCHOR_FAMILIES: ChineseEvasiveIntentFamily[] = [
 const DETECTOR_TARGET_SUPPORT_FAMILIES: ChineseEvasiveIntentFamily[] = [
   "bypass_goal",
   "masquerade_method",
+  "approval_evasion",
   "dangerous_outcome",
 ];
 
@@ -90,9 +91,24 @@ function resolveScoreDelta(
     return 4;
   }
 
+  if (hasFamily("bypass_goal") && hasFamily("encoding_obfuscation") && hasFamily("detector_target")) {
+    reasons.push("combo:high_bypass_encoding_detector");
+    return 3;
+  }
+
   if (hasFamily("bypass_goal") && hasFamily("wildcard_obfuscation") && hasFamily("detector_target")) {
     reasons.push("combo:high_bypass_wildcard_detector");
     return 3;
+  }
+
+  if (hasFamily("approval_evasion") && hasFamily("detector_target")) {
+    reasons.push("combo:medium_approval_detector");
+    return 2;
+  }
+
+  if (hasFamily("bypass_goal") && hasFamily("approval_evasion")) {
+    reasons.push("combo:medium_bypass_approval");
+    return 2;
   }
 
   if (hasFamily("bypass_goal") && hasFamily("detector_target")) {
