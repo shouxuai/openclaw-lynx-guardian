@@ -39,12 +39,12 @@ const DETECTOR_TARGET_SUPPORT_FAMILIES: ChineseEvasiveIntentFamily[] = [
 ];
 
 const STRONG_DETECTOR_TARGET_HINTS = [
-  "lynx\u63d2\u4ef6",
-  "\u98ce\u63a7",
-  "\u5ba1\u6279",
-  "\u68c0\u6d4b\u5668",
-  "\u5b89\u5168\u63d2\u4ef6",
-  "\u8bc6\u522b\u5f15\u64ce",
+  "lynx插件",
+  "风控",
+  "审批",
+  "检测器",
+  "安全插件",
+  "识别引擎",
 ] as const;
 
 export function normalizeChineseEvasiveIntentText(text: string): string {
@@ -55,10 +55,11 @@ export function normalizeChineseEvasiveIntentText(text: string): string {
     normalized = normalized.replace(rule.from, rule.to);
   }
 
-  normalized = normalized.replace(/\u91cd\u547d\u540d/g, "\u6539\u540d");
+  normalized = normalized.replace(/重命名/g, "改名");
   normalized = normalized.replace(/\s+([,，。！？])/g, "$1");
   normalized = normalized.trim().toLowerCase();
   normalized = normalized.replace(/\s+lynx插件/g, "lynx插件");
+  normalized = normalized.replace(/(?<=[\u4E00-\u9FFF])\s+(?=[\u4E00-\u9FFF])/g, "");
 
   return normalized;
 }

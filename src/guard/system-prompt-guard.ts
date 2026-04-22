@@ -78,6 +78,64 @@ const LYNX_INTERNAL_CONTENT_MARKERS = [
   /checkExecBlacklist|checkPathBlacklist/,
 ];
 
+const METADATA_FIELD_NAME_PATTERN = /^(?:id|name|version|description|path|current[_ -]?path|file[_ -]?path|location|\u540d\u79f0|\u7248\u672c(?:\u53f7)?|\u63cf\u8ff0|(?:\u5f53\u524d)?\u8def\u5f84|\u4f4d\u7f6e)$/i;
+const STRUCTURAL_ONLY_LINE_PATTERN = /^[\[\]{}(),\s]+$/;
+const STRUCTURED_METADATA_LINE_PATTERN = /^(?:[-*]\s*)?(?:#+\s*)?([^:\uFF1A]+?)\s*[:\uFF1A]\s+.+$/;
+const JSON_FIELD_PATTERN = /"([^"]+)"\s*:/g;
+const PROTECTED_FILE_INTRO_PATTERN = new RegExp(
+  String.raw`(?:${SOFT_PROTECTED_FILE_NAMES.map((name) => name.replace(/\./g, "\\.")).join("|")}).*(?:content|contents|follows|below|says|dump|\u5185\u5bb9|\u539f\u6587|\u5982\u4e0b)|(?:content|contents|follows|below|says|dump|\u5185\u5bb9|\u539f\u6587|\u5982\u4e0b).*(?:${SOFT_PROTECTED_FILE_NAMES.map((name) => name.replace(/\./g, "\\.")).join("|")})`,
+  "i",
+);
+
+function isMetadataFieldName(fieldName: string): boolean {
+  return METADATA_FIELD_NAME_PATTERN.test(fieldName.trim());
+}
+
+function extractJsonFieldNames(line: string): string[] {
+  return Array.from(line.matchAll(JSON_FIELD_PATTERN), (match) => match[1]);
+}
+
+function isMetadataOnlyProtectedOutput(output: string): boolean {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  let metadataSignals = 0;
+
+  for (const line of lines) {
+    if (STRUCTURAL_ONLY_LINE_PATTERN.test(line)) {
+      continue;
+    }
+
+    if (PROTECTED_FILE_INTRO_PATTERN.test(line)) {
+      continue;
+    }
+
+    const jsonFieldNames = extractJsonFieldNames(line);
+    if (jsonFieldNames.length > 0) {
+      if (!jsonFieldNames.every((fieldName) => isMetadataFieldName(fieldName))) {
+        return false;
+      }
+      metadataSignals += jsonFieldNames.length;
+      continue;
+    }
+
+    const structuredMetadataMatch = line.match(STRUCTURED_METADATA_LINE_PATTERN);
+    if (structuredMetadataMatch) {
+      if (!isMetadataFieldName(structuredMetadataMatch[1])) {
+        return false;
+      }
+      metadataSignals++;
+      continue;
+    }
+
+    return false;
+  }
+
+  return metadataSignals >= 2;
+}
+
 /**
  * Check if an output contains leaked system prompt / protected file content.
  * This is applied to agent output to prevent accidental or manipulated leaks.
@@ -136,11 +194,12 @@ export function detectSystemPromptLeak(output: string): PromptLeakResult {
   const dumpProtectedFiles = Array.from(new Set([...lynxOwnedDumpFiles, ...softProtectedDumpFiles]));
   const summaryProtectedFiles = Array.from(new Set([...lynxOwnedSummaryFiles, ...softProtectedSummaryFiles]));
   const concreteDumpDetected = hasConcreteContent || markerHits >= 2;
+  const metadataOnlyProtectedOutput = markerHits === 0 && isMetadataOnlyProtectedOutput(output);
 
   if (lynxOwnedDumpFiles.length > 0 && concreteDumpDetected) {
     return {
       isLeak: true,
-      severity: "high",
+      severity: metadataOnlyProtectedOutput ? "low" : "high",
       protectedFiles: dumpProtectedFiles,
     };
   }
@@ -148,7 +207,7 @@ export function detectSystemPromptLeak(output: string): PromptLeakResult {
   if ((softProtectedDumpFiles.length > 0 && concreteDumpDetected) || markerHits >= 3) {
     return {
       isLeak: true,
-      severity: "medium",
+      severity: softProtectedDumpFiles.length > 0 && metadataOnlyProtectedOutput ? "low" : "medium",
       protectedFiles: dumpProtectedFiles.length > 0 ? dumpProtectedFiles : ["Lynx internal text"],
     };
   }
