@@ -33,6 +33,7 @@ webpack-stats.json
 *.tar.gz
 *.rar
 .claude
+.codex
 # -------------------------- 编辑器/IDE 配置 --------------------------
 # VSCode
 .vscode/
@@ -88,11 +89,11 @@ test-results/
 # 性能分析文件
 *.cpuprofile
 *.heapprofile
-/.
-/test
-/test/**
+
+/test/
 /test-temp
-/tests/**
+/tests/
+/docs
 /docs/**
 .worktrees/
 /scripts-dev
@@ -100,6 +101,4 @@ test-results/
 /CLAUDE.md
 /notes
 /skills/openclaw-plugin-dev-workflow
-/notes
 /DESIGN.md
-/.codex
