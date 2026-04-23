@@ -12,7 +12,6 @@ import {
   baseIpInfo,
   extractContentAfterDate,
 } from "./src/utils.js";
-import { registerUser, checkContent, checkTool, pushRecord, checkPublicAccess, fetchMaliciousSkillBlacklist } from "./src/api.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import type { CheckExecBlacklistContext } from "./src/blacklist.js";
 import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
@@ -93,6 +92,16 @@ import {
 } from "./src/runtime/token-optimizer-runner.js";
 import { reconcileScheduledLynxCheck, resolveScheduledLynxCheckConfig } from "./src/runtime/scheduled-lynx-check.js";
 import { CONFIG } from "./src/config.js";
+import {
+  checkContentWeighted,
+  checkPublicAccessWeighted,
+  checkToolWeighted,
+  fetchMaliciousSkillBlacklistWeighted,
+  getWeightedRiskLevel,
+  isRemoteAvailable,
+  pushRecordBestEffort,
+  registerUserBestEffort,
+} from "./src/runtime/remote-weighting-service.js";
 import {
   canonicalizePath,
   buildGuardContext,
@@ -272,11 +281,7 @@ export default function setup(api: OpenClawPluginApi) {
     }
 
     userId = ensureUserRegistered();
-    registerUser(userId).then(res => {
-      log.info(`[lynx-guardian] Registered user: ${userId}, status: ${res.code}`);
-    }).catch(err => {
-      log.error(`[lynx-guardian] Registration failed: ${err.message}`);
-    });
+    void registerUserBestEffort(userId, log);
 
     try {
       ensureResources();
@@ -555,7 +560,17 @@ export default function setup(api: OpenClawPluginApi) {
       */
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn("[lynx-guardian] Sensitive data detected in message");
-        await pushRecord(userId, text, 1);
+        await pushRecordBestEffort(
+          {
+            id: userId,
+            content: text,
+            riskLevel: 1,
+          },
+          {
+            log,
+            context: "message sensitive data",
+          },
+        );
         await sendHookFeedback(ctx, "Sensitive data detected");
         return;
       }
@@ -577,18 +592,20 @@ export default function setup(api: OpenClawPluginApi) {
         if (guardActionRequired && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG] ${effectiveAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "message guard block",
+            },
+          );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
             savePendingOverrideFull(ctx, {
               operationFingerprint: inputFingerprint,
@@ -685,7 +702,17 @@ export default function setup(api: OpenClawPluginApi) {
       log.info(`[lynx-guardian] approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn("[lynx-guardian] Sensitive data detected in message");
-        await pushRecord(userId, text, 1);
+        await pushRecordBestEffort(
+          {
+            id: userId,
+            content: text,
+            riskLevel: 1,
+          },
+          {
+            log,
+            context: "legacy message sensitive data",
+          },
+        );
         await sendHookFeedback(ctx, "Sensitive data detected");
         return;
         return {
@@ -702,18 +729,20 @@ export default function setup(api: OpenClawPluginApi) {
         if (guardActionRequired && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG] ${effectiveAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "legacy message guard block",
+            },
+          );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
             savePendingOverrideFull(ctx, {
               operationFingerprint: inputFingerprint,
@@ -876,13 +905,18 @@ export default function setup(api: OpenClawPluginApi) {
       let publicAccessResult: any = null;
       const ipInfo = await baseIpInfo();
       if (ipInfo.type == "next_check") {
-        publicAccessResult = await checkPublicAccess(userId, ipInfo.ip, ipInfo.port);
-        if (publicAccessResult.result.is_public) {
-          log.error("[lynx-guardian] Public access check failed");
-          const warning = `重要提醒：当前 IP ${ipInfo.ip} 暴露在公网环境，强烈建议配置防火墙规则，仅开放必要端口。\n`;
-          prependContext += warning;
+        const publicAccessCheck = await checkPublicAccessWeighted(userId, ipInfo.ip, ipInfo.port);
+        if (!isRemoteAvailable(publicAccessCheck)) {
+          log.warn(`[lynx-guardian] Public access weighting unavailable: ${publicAccessCheck.errorMessage}`);
         } else {
-          log.info("[lynx-guardian] Public access check passed");
+          publicAccessResult = publicAccessCheck.value;
+          if (publicAccessResult.result.is_public) {
+            log.error("[lynx-guardian] Public access check failed");
+            const warning = `重要提醒：当前 IP ${ipInfo.ip} 暴露在公网环境，强烈建议配置防火墙规则，仅开放必要端口。\n`;
+            prependContext += warning;
+          } else {
+            log.info("[lynx-guardian] Public access check passed");
+          }
         }
       }
 
@@ -999,18 +1033,20 @@ export default function setup(api: OpenClawPluginApi) {
           log.info(
             `[lynx-guardian] before_agent_start denyContext injected=${String(shouldInjectForcedDenyContext)} risk=${effectiveAssessment.level}`,
           );
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG:agent_start] ${effectiveAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "agent_start forced deny",
+            },
+          );
           return {
             block: true,
             blockReason,
@@ -1023,18 +1059,20 @@ export default function setup(api: OpenClawPluginApi) {
         } else if (guardActionRequired && !approvedAgentStartOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG:agent_start] ${effectiveAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "agent_start guard block",
+            },
+          );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
             savePendingOverrideFull(ctx, {
               operationFingerprint: agentStartFingerprint,
@@ -1116,73 +1154,78 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       const input = extractContentAfterDate(promptText);
-      const res = await checkContent(userId, input, 1);
-      const adaptedContentCheck = adaptContentCheckResult(res.result);
-      const inputCategorySummary = [
-        adaptedContentCheck.categoryChain.levelOne,
-        adaptedContentCheck.categoryChain.levelTwo,
-        adaptedContentCheck.categoryChain.levelThree,
-      ].join("、");
-      log.info(`[lynx-guardian] Input risk detected: ${JSON.stringify(res)}`);
-      if (adaptedContentCheck.externalRiskLevel > 0) {
-        let warning = `重要提醒：内容包含内容风险（${inputCategorySummary}），\n`;
-        if (inputCategorySummary.includes("个人隐私")) {
-          warning += "包含隐私内容，需要先进行脱敏处理。";
-        } else if (!adaptedContentCheck.categoryChain.levelOne.includes("其他")) {
-          warning += "包含价值观相关风险，请进行正向引导。";
-        } else {
-          warning += "插件已进行拦截。\n";
-        }
-        log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
+      const remoteInputCheck = await checkContentWeighted(userId, input, 1);
+      if (!isRemoteAvailable(remoteInputCheck)) {
+        log.warn(`[lynx-guardian] Input weighting unavailable: ${remoteInputCheck.errorMessage}`);
+      } else {
+        const res = remoteInputCheck.value;
+        const adaptedContentCheck = adaptContentCheckResult(res.result);
+        const inputCategorySummary = [
+          adaptedContentCheck.categoryChain.levelOne,
+          adaptedContentCheck.categoryChain.levelTwo,
+          adaptedContentCheck.categoryChain.levelThree,
+        ].join("、");
+        log.info(`[lynx-guardian] Input risk detected: ${JSON.stringify(res)}`);
+        if (adaptedContentCheck.externalRiskLevel > 0) {
+          let warning = `重要提醒：内容包含内容风险（${inputCategorySummary}），\n`;
+          if (inputCategorySummary.includes("个人隐私")) {
+            warning += "包含隐私内容，需要先进行脱敏处理。";
+          } else if (!adaptedContentCheck.categoryChain.levelOne.includes("其他")) {
+            warning += "包含价值观相关风险，请进行正向引导。";
+          } else {
+            warning += "插件已进行拦截。\n";
+          }
+          log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
 
-        if (adaptedContentCheck.externalRiskLevel >= 3 && !managedLynxCheckPreauthorized) {
-          return {
-            block: true,
-            blockReason: `[Lynx Guardian] ${warning}`,
-          } as any;
-        }
-
-        if (adaptedContentCheck.externalRiskLevel >= 3 && managedLynxCheckPreauthorized) {
-          log.info("[lynx-guardian] Managed /lynx-check preauthorized API risk passthrough");
-        } else if (adaptedContentCheck.externalRiskLevel >= 3 && !approvedAgentStartOverride) {
-          const apiAssessment = buildApiRiskAssessment(
-            adaptedContentCheck.externalRiskLevel,
-            `API input risk: ${adaptedContentCheck.categoryChain.levelOne}/${adaptedContentCheck.categoryChain.levelTwo}/${adaptedContentCheck.categoryChain.levelThree}`,
-          );
-          const policyResult = resolveRiskPolicy(apiAssessment, riskPolicyConfig);
-          if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
-            savePendingOverrideFull(ctx, {
-              operationFingerprint: agentStartFingerprint,
-              createdAt: Date.now(),
-              expiresAt: Date.now() + riskPolicyConfig.overrideTtlMs,
-              actionType: "agent_start",
-              replayPayload: { promptText },
-              riskScore: apiAssessment.score,
-              riskLevel: apiAssessment.level,
-              matchedModules: apiAssessment.modules,
-              sourceKeys: resolveOverrideKeys(ctx),
-            });
+          if (adaptedContentCheck.externalRiskLevel >= 3 && !managedLynxCheckPreauthorized) {
             return {
               block: true,
-              blockReason: buildOverridePrompt(
-                `[Lynx Guardian] ${warning}`,
-                policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
-              ),
+              blockReason: `[Lynx Guardian] ${warning}`,
             } as any;
           }
-          return {
-            block: true,
-            blockReason: `[Lynx Guardian] ${warning}`,
-          } as any;
+
+          if (adaptedContentCheck.externalRiskLevel >= 3 && managedLynxCheckPreauthorized) {
+            log.info("[lynx-guardian] Managed /lynx-check preauthorized API risk passthrough");
+          } else if (adaptedContentCheck.externalRiskLevel >= 3 && !approvedAgentStartOverride) {
+            const apiAssessment = buildApiRiskAssessment(
+              adaptedContentCheck.externalRiskLevel,
+              `API input risk: ${adaptedContentCheck.categoryChain.levelOne}/${adaptedContentCheck.categoryChain.levelTwo}/${adaptedContentCheck.categoryChain.levelThree}`,
+            );
+            const policyResult = resolveRiskPolicy(apiAssessment, riskPolicyConfig);
+            if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
+              savePendingOverrideFull(ctx, {
+                operationFingerprint: agentStartFingerprint,
+                createdAt: Date.now(),
+                expiresAt: Date.now() + riskPolicyConfig.overrideTtlMs,
+                actionType: "agent_start",
+                replayPayload: { promptText },
+                riskScore: apiAssessment.score,
+                riskLevel: apiAssessment.level,
+                matchedModules: apiAssessment.modules,
+                sourceKeys: resolveOverrideKeys(ctx),
+              });
+              return {
+                block: true,
+                blockReason: buildOverridePrompt(
+                  `[Lynx Guardian] ${warning}`,
+                  policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
+                ),
+              } as any;
+            }
+            return {
+              block: true,
+              blockReason: `[Lynx Guardian] ${warning}`,
+            } as any;
+          }
+          prependContext += warning;
         }
-        prependContext += warning;
       }
 
       return {
         prependContext,
       } as any;
     } catch (err: any) {
-      log.error(`[lynx-guardian] Input check failed: ${err.message}`);
+      log.error(`[lynx-guardian] before_agent_start handler failed: ${err.message}`);
     }
   });
 
@@ -1426,33 +1469,37 @@ export default function setup(api: OpenClawPluginApi) {
           if (enforcement.changed) {
             redactAgentOutput(event, enforcement.content);
           }
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG:output] ${effectiveAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "output guard block",
+            },
+          );
           return;
             log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
           redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险");
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG:output] ${decision.riskAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "output guard fallback block",
+            },
+          );
         }
         if (decision.warning) {
           log.warn(`[lynx-guardian] Self-safety-guard output warning: ${decision.warning}`);
@@ -1460,22 +1507,27 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       if (!isDiscoveryResponse) {
-        const res = await checkContent(userId, output, 2);
-        const adaptedContentCheck = adaptContentCheckResult(res.result);
-        const outputCategorySummary = [
-          adaptedContentCheck.categoryChain.levelOne,
-          adaptedContentCheck.categoryChain.levelTwo,
-          adaptedContentCheck.categoryChain.levelThree,
-        ].join("、");
-        log.info(`[lynx-guardian] Output risk detected: ${JSON.stringify(res)}`);
-        if (adaptedContentCheck.externalRiskLevel > 0) {
-          let warning = `重要提醒：内容包含内容风险（${outputCategorySummary}）。`;
-          if (outputCategorySummary.includes("个人隐私")) {
-            warning += "隐私内容需要先进行脱敏处理，请勿在非必要场景直接提供。";
-          } else {
-            warning += "lynx-guardian 插件已进行拦截。";
+        const remoteOutputCheck = await checkContentWeighted(userId, output, 2);
+        if (!isRemoteAvailable(remoteOutputCheck)) {
+          log.warn(`[lynx-guardian] Output weighting unavailable: ${remoteOutputCheck.errorMessage}`);
+        } else {
+          const res = remoteOutputCheck.value;
+          const adaptedContentCheck = adaptContentCheckResult(res.result);
+          const outputCategorySummary = [
+            adaptedContentCheck.categoryChain.levelOne,
+            adaptedContentCheck.categoryChain.levelTwo,
+            adaptedContentCheck.categoryChain.levelThree,
+          ].join("、");
+          log.info(`[lynx-guardian] Output risk detected: ${JSON.stringify(res)}`);
+          if (adaptedContentCheck.externalRiskLevel > 0) {
+            let warning = `重要提醒：内容包含内容风险（${outputCategorySummary}）。`;
+            if (outputCategorySummary.includes("个人隐私")) {
+              warning += "隐私内容需要先进行脱敏处理，请勿在非必要场景直接提供。";
+            } else {
+              warning += "lynx-guardian 插件已进行拦截。";
+            }
+            log.warn(`[lynx-guardian] Output risk detected: ${warning}`);
           }
-          log.warn(`[lynx-guardian] Output risk detected: ${warning}`);
         }
       }
     } catch (err: any) {
@@ -1684,18 +1736,20 @@ export default function setup(api: OpenClawPluginApi) {
         if (guardActionRequired) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${effectiveAssessment.description}`);
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG:tool] ${toolName} ${effectiveAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "managed tool guard block",
+            },
+          );
 
           const approvalRiskLevel = toApprovalRiskLevel(effectiveAssessment.level);
           const primaryModule = effectiveAssessment.modules[0];
@@ -1860,18 +1914,20 @@ export default function setup(api: OpenClawPluginApi) {
         if (guardActionRequired && !approvedToolOverride && !getWorkflowAuth(resolveOverrideKeys(ctx), effectiveAssessment.modules)) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${effectiveAssessment.description}`);
-          try {
-            await pushRecord(
-              userId,
-              buildPolicyRecordContent(
+          await pushRecordBestEffort(
+            {
+              id: userId,
+              content: buildPolicyRecordContent(
                 policyEvaluation,
                 `[SSG:tool] ${toolName} ${effectiveAssessment.modules.join(",")}`,
               ),
-              policyEvaluation.legacyRiskLevel,
-            );
-          } catch {
-
-          }
+              riskLevel: policyEvaluation.legacyRiskLevel,
+            },
+            {
+              log,
+              context: "tool guard block",
+            },
+          );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
             const alreadyPending = resolveOverrideKeys(ctx).some(k => getPendingOverride(k));
             savePendingOverrideFull(ctx, {
@@ -1929,11 +1985,17 @@ export default function setup(api: OpenClawPluginApi) {
           const quick = quickBlacklistCheck(installAttempt.skillName);
           if (quick.blocked) {
             log.warn(`[lynx-guardian] Malicious Skill blocked: ${installAttempt.skillName} ${quick.reason}`);
-            try {
-              await pushRecord(userId, `[SkillGuard] blocked: ${installAttempt.skillName} (${quick.reason})`, 3);
-            } catch {
-
-            }
+            await pushRecordBestEffort(
+              {
+                id: userId,
+                content: `[SkillGuard] blocked: ${installAttempt.skillName} (${quick.reason})`,
+                riskLevel: 3,
+              },
+              {
+                log,
+                context: "skill guard blocked",
+              },
+            );
             return {
               block: true,
               blockReason: `[Lynx Guardian] 恶意 Skill 拦截: "${installAttempt.skillName}" ${quick.reason}`,
@@ -1941,16 +2003,17 @@ export default function setup(api: OpenClawPluginApi) {
           }
 
           const fetchRemote = async (): Promise<MaliciousSkillEntry[] | null> => {
-            try {
-              const res = await fetchMaliciousSkillBlacklist();
-              if (res.code === 0 && res.result?.entries) {
-                return res.result.entries.map((e) => ({
-                  ...e,
-                  namePattern: e.namePattern ? new RegExp(e.namePattern) : undefined,
-                }));
-              }
-            } catch {
-              /* remote unavailable */
+            const remoteBlacklist = await fetchMaliciousSkillBlacklistWeighted();
+            if (!isRemoteAvailable(remoteBlacklist)) {
+              log.warn(`[lynx-guardian] Remote skill blacklist unavailable: ${remoteBlacklist.errorMessage}`);
+              return null;
+            }
+            const res = remoteBlacklist.value;
+            if (res.code === 0 && res.result?.entries) {
+              return res.result.entries.map((e) => ({
+                ...e,
+                namePattern: e.namePattern ? new RegExp(e.namePattern) : undefined,
+              }));
             }
             return null;
           };
@@ -1959,11 +2022,17 @@ export default function setup(api: OpenClawPluginApi) {
           log.info(`[lynx-guardian] Skill assess risk detected: ${JSON.stringify(assessment)}`);
           if (assessment.block) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
-            try {
-              await pushRecord(userId, `[SkillGuard] ${assessment.level}: ${installAttempt.skillName}`, 3);
-            } catch {
-
-            }
+            await pushRecordBestEffort(
+              {
+                id: userId,
+                content: `[SkillGuard] ${assessment.level}: ${installAttempt.skillName}`,
+                riskLevel: 3,
+              },
+              {
+                log,
+                context: "skill guard assessment block",
+              },
+            );
 
             if (skillGuardConfig.autoQuarantine && installAttempt.skillPath) {
               try {
@@ -1985,11 +2054,17 @@ export default function setup(api: OpenClawPluginApi) {
 
           if (assessment.level === "warning") {
             log.warn(`[lynx-guardian] ${assessment.message}`);
-            try {
-              await pushRecord(userId, `[SkillGuard] warning: ${installAttempt.skillName}`, 1);
-            } catch {
-
-            }
+            await pushRecordBestEffort(
+              {
+                id: userId,
+                content: `[SkillGuard] warning: ${installAttempt.skillName}`,
+                riskLevel: 1,
+              },
+              {
+                log,
+                context: "skill guard warning",
+              },
+            );
           }
         }
       } catch (err: any) {
@@ -2031,21 +2106,36 @@ export default function setup(api: OpenClawPluginApi) {
     }
     const contentToReport = toolName === "exec" ? `执行 ${detail} 命令` : `${toolName} ${detail}`;
 
-    try {
-      const riskLevel = match.level === "critical" ? 3 : 2;
-      await pushRecord(userId, contentToReport, riskLevel);
-    } catch (err: any) {
-      log.error(`[lynx-guardian] Failed to push blacklist record: ${err.message}`);
-    }
+    const riskLevel = match.level === "critical" ? 3 : 2;
+    await pushRecordBestEffort(
+      {
+        id: userId,
+        content: contentToReport,
+        riskLevel,
+      },
+      {
+        log,
+        context: "blacklist record",
+      },
+    );
 
     try {
       const userContext = readRecentContext(ctx.sessionKey);
       log.info(`[lynx-guardian] User context: ${userContext}`);
       const content = `是否${match.reason} ${detail}？用户：${userContext}`;
 
-      const res = await checkTool(userId, content);
-      const adaptedToolCheck = adaptToolCheckResult(res.result);
-      log.info(`[lynx-guardian] Tool check result: ${JSON.stringify(res)}`);
+      const toolCheck = await checkToolWeighted(userId, content);
+      const adaptedToolCheck = isRemoteAvailable(toolCheck)
+        ? adaptToolCheckResult(toolCheck.value.result)
+        : {
+            externalRiskLevel: 0,
+            content: "",
+          };
+      if (!isRemoteAvailable(toolCheck)) {
+        log.warn(`[lynx-guardian] Tool weighting unavailable: ${toolCheck.errorMessage}`);
+      } else {
+        log.info(`[lynx-guardian] Tool check result: ${JSON.stringify(toolCheck.value)}`);
+      }
       // Blacklist hits always require confirmation via the plugin's pending-override
       // mechanism, even when tool_check returns safe (risk_level=0).
       // "tool_check safe" means the user asked for the operation - that is necessary
@@ -2053,7 +2143,10 @@ export default function setup(api: OpenClawPluginApi) {
       // Floor to the blacklist's own severity so we never silently allow a blacklist hit.
       const rawRiskLevel = adaptedToolCheck.externalRiskLevel;
       const blacklistFloor = match.level === "critical" ? 3 : 2;
-      const riskLevel = Math.max(rawRiskLevel, blacklistFloor);
+      const riskLevel = getWeightedRiskLevel({
+        localFloor: blacklistFloor,
+        remoteRiskLevel: rawRiskLevel,
+      });
 
       log.info(`[lynx-guardian] Tool check result: risk=${rawRiskLevel} (effective=${riskLevel}, blacklistFloor=${blacklistFloor})`);
 
@@ -2263,13 +2356,13 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian] One-time override consumed for tool risk: ${toolName}`);
         return;
       } else if (riskLevel === 1) {
-        log.info(`[lynx-guardian] 识别到内容风险：${res.result.content}`);
+        log.info(`[lynx-guardian] 识别到内容风险：${adaptedToolCheck.content}`);
         return;
       } else {
         return;
       }
     } catch (err: any) {
-      log.error(`[lynx-guardian] Tool check failed: ${err.message}`);
+      log.error(`[lynx-guardian] Tool risk handling failed: ${err.message}`);
       if (match.level === "critical") {
         return {
           block: true,
