@@ -9,6 +9,11 @@
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
 import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
+import {
+  detectConcealedIntent,
+  detectOperationGradeConcealedExecution,
+  type ConcealedIntentDetection,
+} from "./concealed-intent.js";
 import { matchGlobalInputAllowlistRule } from "./global-allowlist.js";
 import { normalizePluginProtectionText } from "./plugin-protection-normalization.js";
 import { SensitiveDataBlocker } from "./sensitive.js";
@@ -1262,6 +1267,40 @@ function shouldPersistOutputAttackEvent(input: {
   return input.priorChainState?.stage !== input.chainProgress.stage;
 }
 
+function shouldInstantDenyConcealedInput(
+  concealedIntent: ConcealedIntentDetection,
+  chineseEvasiveIntent: ReturnType<typeof detectChineseEvasiveIntent>,
+): boolean {
+  if (!concealedIntent.matchedFamilies.includes("intent_concealment")) {
+    return false;
+  }
+
+  if (concealedIntent.matchedFamilies.includes("execute_sink")) {
+    return true;
+  }
+
+  if (concealedIntent.matchedFamilies.includes("staged_loader_chain")) {
+    return true;
+  }
+
+  if (concealedIntent.matchedFamilies.includes("detector_evasion")) {
+    return true;
+  }
+
+  if (concealedIntent.matchedFamilies.includes("approval_bypass")) {
+    return true;
+  }
+
+  if (chineseEvasiveIntent.matchedFamilies.includes("approval_evasion")) {
+    return true;
+  }
+
+  return (
+    chineseEvasiveIntent.matchedFamilies.includes("bypass_goal")
+    && chineseEvasiveIntent.matchedFamilies.includes("detector_target")
+  );
+}
+
 export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
   const globalAllowlistRule = matchGlobalInputAllowlistRule(text);
@@ -1333,6 +1372,14 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
 
   // M4: 中文规避意图（输入侧）
   const evasiveIntentCn = detectChineseEvasiveIntent(text);
+  const concealedIntent = detectConcealedIntent(text);
+
+  if (shouldInstantDenyConcealedInput(concealedIntent, evasiveIntentCn)) {
+    return finalizeInputDecision(
+      buildInstantDeny("M4:concealed_intent", "attempt to conceal bypass intent with encoding or obfuscation"),
+    );
+  }
+
   const suppressVisibleM4 = isStandaloneWildcardLowSignal(evasiveIntentCn);
 
   // === 评分通道 ===
@@ -1459,6 +1506,25 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     pushDim(accum, "harm", pipeExec.shellExec ? 2 : 1);
     pushDim(accum, "pattern", 1);
     pushDim(accum, "clarity", pipeExec.shellExec ? 2 : 1);
+  }
+
+  if (concealedIntent.detected) {
+    modules.push("M4:concealed_intent");
+    if (concealedIntent.severity === "high") {
+      pushDim(accum, "harm", 2);
+      pushDim(accum, "rev", 1);
+      pushDim(accum, "auth", 2);
+      pushDim(accum, "pattern", 2);
+      pushDim(accum, "clarity", 2);
+    } else if (concealedIntent.severity === "medium") {
+      pushDim(accum, "harm", 2);
+      pushDim(accum, "pattern", 2);
+      pushDim(accum, "clarity", 2);
+    } else {
+      pushDim(accum, "harm", 1);
+      pushDim(accum, "pattern", 1);
+      pushDim(accum, "clarity", 1);
+    }
   }
 
   let score = computeWeightedScore(accum);
@@ -1855,6 +1921,16 @@ export function guardToolCall(
     return finalizeToolDecision(buildInstantDeny("fatal_triangle", "致命三角：敏感数据访问+外部输出+不可信输入同时命中"));
   }
 
+  const operationGradeExecPayload = normalizedToolName === "exec" ? command : "";
+  const operationGradeConcealment = operationGradeExecPayload
+    ? detectOperationGradeConcealedExecution(operationGradeExecPayload)
+    : { detected: false, normalizedText: "", matchedSignals: [] };
+  if (!trustedManagedLynxCheckToolCall && operationGradeConcealment.detected) {
+    return finalizeToolDecision(
+      buildInstantDeny("M4:concealed_intent", "attempt to execute concealed loader chain"),
+    );
+  }
+
   // === 评分通道 ===
 
   const modules: string[] = [];
@@ -2003,6 +2079,7 @@ function buildDescription(modules: string[], level: RiskLevel): string {
     "M2:system_prompt_leak": "系统提示泄露",
     "M3:over_agency": "过度代理/权限提升",
     "M4:evasive_intent_cn": "中文规避意图输入",
+    "M4:concealed_intent": "隐藏意图/内容混淆",
     "M5:credential_theft": "凭证窃取风险",
     "M6:malicious_code": "恶意代码请求",
     "fatal_triangle": "致命三角风险",

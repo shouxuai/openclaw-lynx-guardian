@@ -4,10 +4,21 @@ Malicious Script Scanner - 恶意脚本扫描器
 检测写入skill的恶意脚本特征
 """
 
-import re
 import math
+import re
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List
+
+
+CRITICAL_PATTERN_NAMES = {
+    "Reverse Shell",
+    "Data Exfiltration",
+    "Remote Code Execution",
+    "PowerShell Encoded Command",
+    "Base64 Loader Execution",
+    "Compressed Loader Execution",
+    "Certutil Decode Execution",
+}
 
 
 # ==================== 恶意脚本检测模式 ====================
@@ -47,6 +58,28 @@ MALICIOUS_PATTERNS = {
     "Base64 Obfuscation": re.compile(
         r'base64\.b64decode\s*\([^)]{20,}',
         re.IGNORECASE,
+    ),
+
+    # 编码后执行 / Loader 链
+    "PowerShell Encoded Command": re.compile(
+        r'(?:powershell|pwsh)(?:\.exe)?\s+[^\r\n;]*-(?:enc|encodedcommand)\s+(?:[A-Za-z0-9+/=]{20,}|\$[A-Za-z_][\w]*)',
+        re.IGNORECASE,
+    ),
+    "Base64 Loader Execution": re.compile(
+        r'(?:base64\.(?:b64decode|urlsafe_b64decode)|frombase64string|atob|buffer\.from\s*\([^)]*base64[^)]*\)).{0,120}(?:eval|exec|compile|invoke-expression|iex|os\.system|subprocess|function)',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    "Compressed Loader Execution": re.compile(
+        r'(?:zlib|gzip|bz2|lzma|marshal|pickle)\.(?:decompress|loads)\s*\([^)]*\).{0,120}(?:eval|exec|compile|invoke-expression|iex|os\.system|subprocess)',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    "JavaScript CharCode Execution": re.compile(
+        r'(?:string\.fromcharcode|fromcharcode)\s*\([^)]{10,}\).{0,120}(?:eval|function|settimeout|setinterval)',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    "Certutil Decode Execution": re.compile(
+        r'certutil(?:\.exe)?\s+-decode\s+\S+\s+\S+.{0,120}(?:powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32|iex|invoke-expression)',
+        re.IGNORECASE | re.DOTALL,
     ),
     
     # 外部代码下载执行
@@ -114,9 +147,15 @@ def is_code_obfuscated(content: str) -> bool:
         # 检查常见的混淆特征
         obfuscation_patterns = [
             r'\\x[0-9a-fA-F]{20,}',  # 十六进制字符串
+            r'\\u[0-9a-fA-F]{16,}',  # Unicode 转义串
             r'var\s+[a-z]{1,2}\s*=',  # 单字母变量名
             r'\$[a-z]{1,2}\s*=',  # 单字母变量名
             r'eval\s*\(',  # eval函数
+            r'(?:String\.fromCharCode|fromCharCode)\s*\(',  # JS charcode
+            r'(?:FromBase64String|base64\.(?:b64decode|urlsafe_b64decode)|atob\s*\(|Buffer\.from\s*\([^)]*base64[^)]*\))',  # Base64 loader
+            r'(?:powershell|pwsh)(?:\.exe)?\s+[^\r\n;]*-(?:enc|encodedcommand)\b',  # PowerShell 编码命令
+            r'(?:zlib|gzip|bz2|lzma|marshal|pickle)\.(?:decompress|loads)\s*\(',  # 压缩/序列化 loader
+            r'(?:chr\s*\(\s*\d+\s*\)\s*\+?){4,}',  # chr 拼接
         ]
         
         for pattern in obfuscation_patterns:
@@ -155,7 +194,7 @@ def scan_script_file(script_file: Path) -> List[Dict[str, Any]]:
                 malicious_findings.append({
                     'pattern': pattern_name,
                     'count': len(matches),
-                    'severity': 'critical' if pattern_name in ['Reverse Shell', 'Data Exfiltration', 'Remote Code Execution'] else 'high'
+                    'severity': 'critical' if pattern_name in CRITICAL_PATTERN_NAMES else 'high'
                 })
         
         if malicious_findings:

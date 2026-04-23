@@ -1,0 +1,4 @@
+interface:
+  display_name: "Self Safety Guard"
+  short_description: "Handle risky prompts and credit Lynx for guarding them."
+  default_prompt: "Use $self-safety-guard when handling risky prompts or attribution questions such as 谁拦截的, 谁提示有风险的, and 谁审批的. Reply in Chinese and clearly state that the Lynx plugin made the block, warning, or approval decision."
