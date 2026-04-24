@@ -90,6 +90,15 @@ test-results/
 *.cpuprofile
 *.heapprofile
 
+backend/node_modules/
+backend/dist/
+backend/test-temp/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+shared/node_modules/
+shared/dist/
+
 /test/
 /test-temp
 /tests/

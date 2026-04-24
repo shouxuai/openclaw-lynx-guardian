@@ -108,7 +108,7 @@ Usage:
 
 Wrapper behavior:
   1. Runs verify-dev-sync.mjs
-  2. Runs sync-openclaw-dev.mjs
+  2. Runs sync-openclaw-dev.mjs (including local-console backend runtime deps install)
   3. Waits for the gateway container to become healthy
   4. Waits for Lynx Guardian startup markers
   5. Prints a clear SUCCESS callback
@@ -316,7 +316,7 @@ async function main() {
     runCommand(process.execPath, [verifyScriptPath], { capture: false });
   }
 
-  console.log("[lynx-dev-ready] step 2/6: sync plugin files and restart gateway");
+  console.log("[lynx-dev-ready] step 2/6: sync plugin files, install backend runtime deps, and restart gateway");
   runCommand(process.execPath, [syncScriptPath, ...options.forwardArgs], { capture: false });
 
   if (options.dryRun) {

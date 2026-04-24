@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   DEFAULT_GATEWAY_CONTAINER,
   assessGatewayLogs,
+  buildInstallLocalConsoleRuntimeDepsShellCommand,
   buildDevSyncPlan,
   findStalePluginManagedDirectories,
   pickGatewayContainer,
@@ -31,8 +32,12 @@ assert.equal(resolveOpenClawHome({
 
 assert.equal(shouldStagePath(".git\\config"), false);
 assert.equal(shouldStagePath("node_modules\\vitest\\index.js"), false);
+assert.equal(shouldStagePath("backend\\node_modules\\better-sqlite3\\package.json"), false);
+assert.equal(shouldStagePath("frontend\\.vite\\deps\\chunk.js"), false);
+assert.equal(shouldStagePath("backend\\test-temp\\smoke\\stdout.log"), false);
 assert.equal(shouldStagePath(".worktrees\\output-result-intercept"), false);
 assert.equal(shouldStagePath("dist\\index.js"), false);
+assert.equal(shouldStagePath("backend\\dist\\main.js"), true);
 assert.equal(shouldStagePath("src\\utils.ts"), true);
 assert.equal(shouldStagePath("skills\\lynx-guardian-lesson\\SKILL.md"), true);
 assert.deepEqual(
@@ -60,6 +65,12 @@ const plan = buildDevSyncPlan({
 assert.equal(plan.containerPluginPath, "/app/extensions/openclaw-lynx-guardian");
 assert.equal(plan.hostHooksPath, "C:\\Users\\24716\\.openclaw\\hooks");
 assert.equal(plan.hostSkillsPath, "C:\\Users\\24716\\.openclaw\\skills");
+assert.match(
+  buildInstallLocalConsoleRuntimeDepsShellCommand({
+    containerPluginPath: plan.containerPluginPath,
+  }),
+  /cd '\/app\/extensions\/openclaw-lynx-guardian\/backend' && npm ci --omit=dev/,
+);
 
 assert.equal(assessGatewayLogs([
   "[lynx-guardian] Plugin loading...",

@@ -7,7 +7,10 @@
   "type": "module",
   "scripts": {
     "test": "vitest",
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "build:local-console": "node scripts/build-local-console.mjs",
+    "dev:local-console": "node scripts/start-local-console-dev.mjs",
+    "verify:local-console": "node scripts/verify-local-console.mjs"
   },
   "main": "index.ts",
   "types": "index.d.ts",

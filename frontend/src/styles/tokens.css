@@ -1,0 +1,21 @@
+:root {
+  --bg: #f4f5f8;
+  --bg-strong: #e9edf4;
+  --panel: rgba(255, 255, 255, 0.94);
+  --panel-border: #d8dee8;
+  --line: #e4e7ee;
+  --text: #142033;
+  --muted: #66748a;
+  --accent: #2152b8;
+  --accent-soft: rgba(33, 82, 184, 0.12);
+  --success: #1d8a5a;
+  --warning: #b87918;
+  --danger: #bf3d3d;
+  --neutral: #6e7786;
+  --shadow: 0 20px 48px rgba(17, 28, 45, 0.08);
+  --radius-xl: 24px;
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --font-sans: "Aptos", "Segoe UI Variable Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: "Iowan Old Style", "Georgia", serif;
+}

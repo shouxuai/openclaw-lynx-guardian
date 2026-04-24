@@ -1,0 +1,266 @@
+import type {
+  ApprovalScopeType,
+  EnforcementAction,
+  LynxCheckPreferredTargetKind,
+  LynxCheckSource,
+  LynxCheckTrigger,
+  RiskLevel,
+  TokenTrendBucket,
+} from "./enums.js";
+import { LOCAL_CONSOLE_QUERY_API_VERSION } from "./enums.js";
+
+export interface CursorPage<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
+export interface RiskBucketDto {
+  riskLevel: RiskLevel;
+  count: number;
+}
+
+export interface EnforcementBucketDto {
+  enforcementAction: EnforcementAction;
+  count: number;
+}
+
+export interface TimeSeriesPointDto {
+  bucketStartMs: number;
+  value: number;
+}
+
+export interface CommonListQuery {
+  fromMs?: number;
+  toMs?: number;
+  sessionKey?: string;
+  runId?: string;
+  riskLevel?: RiskLevel[];
+  enforcementAction?: EnforcementAction[];
+  limit?: number;
+  cursor?: string;
+}
+
+export interface HealthDto {
+  ok: boolean;
+  serverTimeMs: number;
+  schemaVersion: string;
+}
+
+export interface CapabilitiesDto {
+  tokenUsageEnabled: boolean;
+  gatewayAuthLogsEnabled: boolean;
+  queryApiVersion: typeof LOCAL_CONSOLE_QUERY_API_VERSION;
+}
+
+export interface AuditEventListItemDto {
+  eventId: string;
+  sessionKey?: string;
+  runId?: string;
+  toolCallId?: string;
+  approvalId?: string;
+  requestId?: string;
+  sourceKind: string;
+  hookName: string;
+  eventType: string;
+  category: string;
+  subCategory?: string;
+  direction?: string;
+  primaryModule?: string;
+  riskLevel?: RiskLevel;
+  riskScore?: number;
+  policyDecision?: string;
+  enforcementAction: EnforcementAction;
+  title: string;
+  summary?: string;
+  contentExcerpt?: string;
+  occurredAtMs: number;
+}
+
+export type AuditEventListResponse = CursorPage<AuditEventListItemDto>;
+
+export interface AuditEventDetailDto extends AuditEventListItemDto {
+  contentKind?: string;
+  modules?: string[];
+  recommendation?: string;
+  contentHash?: string;
+  ingestedAtMs: number;
+  payloadJson?: Record<string, unknown>;
+}
+
+export interface ToolCallListItemDto {
+  toolCallId: string;
+  sessionKey?: string;
+  runId?: string;
+  approvalId?: string;
+  toolName: string;
+  riskLevel?: RiskLevel;
+  riskScore?: number;
+  policyDecision?: string;
+  enforcementAction: EnforcementAction;
+  startedAtMs: number;
+  finishedAtMs?: number;
+  durationMs?: number;
+  resultStatus?: string;
+  resultExcerpt?: string;
+}
+
+export type ToolCallListResponse = CursorPage<ToolCallListItemDto>;
+
+export interface ToolCallDetailDto extends ToolCallListItemDto {
+  paramSummary?: string;
+  paramHash?: string;
+  triggeredModules?: string[];
+  errorText?: string;
+  metadataJson?: Record<string, unknown>;
+}
+
+export interface ApprovalListItemDto {
+  approvalId: string;
+  pendingId?: string;
+  sessionKey?: string;
+  runId?: string;
+  transport?: string;
+  requesterOuId?: string;
+  module: string;
+  riskLevel: RiskLevel;
+  toolName?: string;
+  scopeType: ApprovalScopeType;
+  requestedAtMs: number;
+  expiresAtMs: number;
+  resolvedAtMs?: number;
+  resolution?: string;
+  promptExcerpt?: string;
+}
+
+export type ApprovalListResponse = CursorPage<ApprovalListItemDto>;
+
+export interface ApprovalDetailDto extends ApprovalListItemDto {
+  channelProfile?: string;
+  channelId?: string;
+  accountId?: string;
+  conversationId?: string;
+  approverOuIds?: string[];
+  resolvedApproverOuId?: string;
+  requestFingerprintHash?: string;
+  auditSummaryJson?: Record<string, unknown>;
+  metadataJson?: Record<string, unknown>;
+}
+
+export interface LynxCheckListItemDto {
+  requestId: string;
+  source: LynxCheckSource;
+  trigger: LynxCheckTrigger;
+  preferredTargetKind: LynxCheckPreferredTargetKind;
+  sessionKey?: string;
+  targetKey?: string;
+  channelId?: string;
+  messageProvider?: string;
+  status: string;
+  sendAttempted: boolean;
+  sendSucceeded: boolean;
+  transport?: string;
+  reportPath?: string;
+  errorMessage?: string;
+  createdAtMs: number;
+  completedAtMs?: number;
+}
+
+export type LynxCheckListResponse = CursorPage<LynxCheckListItemDto>;
+
+export interface LynxCheckDetailDto extends LynxCheckListItemDto {
+  deliveryAttemptsJson?: Array<Record<string, unknown>>;
+}
+
+export interface SessionListItemDto {
+  sessionKey: string;
+  channelProfile?: string;
+  channelId?: string;
+  requesterId?: string;
+  requesterOuId?: string;
+  accountId?: string;
+  conversationId?: string;
+  threadId?: string | number;
+  isGroup: boolean;
+  firstSeenAtMs: number;
+  lastSeenAtMs: number;
+  endedAtMs?: number;
+  eventCount?: number;
+  highRiskEventCount?: number;
+  toolCallCount?: number;
+}
+
+export type SessionListResponse = CursorPage<SessionListItemDto>;
+
+export interface SessionDetailDto extends SessionListItemDto {
+  metadataJson?: Record<string, unknown>;
+  recentEvents: AuditEventListItemDto[];
+  recentToolCalls: ToolCallListItemDto[];
+  recentApprovals: ApprovalListItemDto[];
+  tokenSummary?: {
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
+}
+
+export interface TokenUsageListItemDto {
+  usageEventId: string;
+  sessionKey?: string;
+  runId?: string;
+  agentId?: string;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  assistantTextCount: number;
+  isEstimated: boolean;
+  occurredAtMs: number;
+}
+
+export type TokenUsageListResponse = CursorPage<TokenUsageListItemDto>;
+
+export interface TokenSummaryDto {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  estimatedCount: number;
+  topModels: Array<{
+    model: string;
+    totalTokens: number;
+  }>;
+}
+
+export interface TokenTrendPointDto {
+  bucketStartMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface TokenTrendDto {
+  bucket: TokenTrendBucket;
+  points: TokenTrendPointDto[];
+}
+
+export interface DashboardOverviewDto {
+  totals: {
+    eventCount: number;
+    highRiskEventCount: number;
+    toolCallCount: number;
+    approvalCount: number;
+    lynxCheckCount: number;
+    totalTokens: number;
+  };
+  riskDistribution: RiskBucketDto[];
+  enforcementDistribution: EnforcementBucketDto[];
+  eventTrend: TimeSeriesPointDto[];
+  tokenTrend: TimeSeriesPointDto[];
+  recentHighRiskEvents: AuditEventListItemDto[];
+  recentToolCalls: ToolCallListItemDto[];
+  recentApprovals: ApprovalListItemDto[];
+}
