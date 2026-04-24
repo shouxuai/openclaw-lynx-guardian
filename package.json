@@ -9,6 +9,7 @@
     "test": "vitest",
     "build": "node scripts/build.js",
     "build:local-console": "node scripts/build-local-console.mjs",
+    "package:local-console-server": "node scripts/package-local-console-server.mjs",
     "dev:local-console": "node scripts/start-local-console-dev.mjs",
     "verify:local-console": "node scripts/verify-local-console.mjs"
   },

@@ -12,7 +12,7 @@ import { TrendCard } from "../components/cards/TrendCard";
 import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { mockFilterSets } from "../data/mock-console";
+import { filterPresets } from "../data/filter-presets";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import { renderStateBadge } from "../utils/status";
 
@@ -117,7 +117,7 @@ export function TokensPage() {
         <MetricCard label="缓存写入" value={formatInteger(summary.cacheWriteTokens)} note="预热成本" />
         <MetricCard label="估算行" value={formatInteger(summary.estimatedCount)} note={estimatedRowsNote} />
       </section>
-      <FilterBar chips={mockFilterSets.tokens} />
+      <FilterBar chips={filterPresets.tokens} />
       <section className="split-grid split-grid--equal">
         <DistributionCard
           title="令牌构成"
@@ -155,7 +155,7 @@ export function TokensPage() {
           ]}
           rows={usageItems.map((item) => ({
             id: item.usageEventId,
-            session: item.sessionKey ?? "无",
+            session: item.sessionKey ?? "未知",
             model: `${item.provider} / ${item.model}`,
             total: formatInteger(item.totalTokens),
             estimated: renderStateBadge(item.isEstimated ? "estimated" : "actual"),

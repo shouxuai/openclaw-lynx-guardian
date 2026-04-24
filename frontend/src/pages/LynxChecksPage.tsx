@@ -7,7 +7,7 @@ import { StatusBadge } from "../components/feedback/StatusBadge";
 import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { mockFilterSets } from "../data/mock-console";
+import { filterPresets } from "../data/filter-presets";
 import { useListDetailResource } from "../hooks/useListDetailResource";
 import { formatTimestamp } from "../utils/format";
 import { formatDomainLabel, formatStateLabel, renderStateBadge } from "../utils/status";
@@ -21,7 +21,7 @@ function formatDeliveryAttempts(deliveryAttempts: Array<Record<string, unknown>>
     const attemptIndex = typeof attempt.attempt === "number" ? attempt.attempt : "?";
     const target = typeof attempt.target === "string" ? formatDomainLabel(attempt.target) : "暂无";
     const status = typeof attempt.status === "string" ? formatStateLabel(attempt.status) : "未知";
-    return `第 ${attemptIndex} 次：${target}，${status}`;
+    return `第${attemptIndex} 次：${target}，${status}`;
   }).join("\n");
 }
 
@@ -63,7 +63,7 @@ export function LynxChecksPage() {
           note="默认详情记录的目标类型"
         />
       </section>
-      <FilterBar chips={mockFilterSets.lynxChecks} />
+      <FilterBar chips={filterPresets.lynxChecks} />
       <section className="split-grid">
         <article className="panel">
           <div className="panel__header">

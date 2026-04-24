@@ -7,7 +7,7 @@ import { StatusBadge } from "../components/feedback/StatusBadge";
 import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { mockFilterSets } from "../data/mock-console";
+import { filterPresets } from "../data/filter-presets";
 import { useListDetailResource } from "../hooks/useListDetailResource";
 import { formatDuration, formatTimestamp } from "../utils/format";
 import { formatToolLabel, renderRiskBadge, renderStateBadge } from "../utils/status";
@@ -70,7 +70,7 @@ export function ToolCallsPage() {
         <MetricCard label="已完成" value={`${successCount}`} note="已收到结果状态" />
         <MetricCard label="最长耗时" value={formatDuration(maxDurationMs)} note="当前列表最大值" />
       </section>
-      <FilterBar chips={mockFilterSets.toolCalls} />
+      <FilterBar chips={filterPresets.toolCalls} />
       <section className="split-grid">
         <article className="panel">
           <div className="panel__header">

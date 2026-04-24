@@ -7,7 +7,7 @@ import { StatusBadge } from "../components/feedback/StatusBadge";
 import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { mockFilterSets } from "../data/mock-console";
+import { filterPresets } from "../data/filter-presets";
 import { useListDetailResource } from "../hooks/useListDetailResource";
 import { formatTimestamp } from "../utils/format";
 import { formatChannelLabel, renderRiskBadge, renderStateBadge } from "../utils/status";
@@ -61,7 +61,7 @@ export function ApprovalsPage() {
         <MetricCard label="审批范围" value={`${scopeCount}`} note="去重后的 scopeType 数量" />
         <MetricCard label="最高风险" value={highestRisk} note="来自当前列表的最高等级" />
       </section>
-      <FilterBar chips={mockFilterSets.approvals} />
+      <FilterBar chips={filterPresets.approvals} />
       <section className="split-grid">
         <article className="panel">
           <div className="panel__header">

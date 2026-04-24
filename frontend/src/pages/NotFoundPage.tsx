@@ -11,7 +11,7 @@ export function NotFoundPage() {
         eyebrow="兜底页"
       />
       <article className="panel panel--centered">
-        <p>返回总览，继续使用当前已批准的本地控制台导航。</p>
+        <p>返回总览，继续使用当前已经批准的本地控制台导航。</p>
         <Link className="inline-link" to="/">
           返回总览
         </Link>

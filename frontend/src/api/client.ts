@@ -56,10 +56,10 @@ async function resolveErrorMessage(response: Response): Promise<string> {
   return fallback;
 }
 
-export function buildQueryString(query: Record<string, QueryValue>): string {
+export function buildQueryString<T extends object>(query: T): string {
   const params = new URLSearchParams();
 
-  for (const [key, value] of Object.entries(query)) {
+  for (const [key, value] of Object.entries(query as Record<string, QueryValue>)) {
     if (value === undefined || value === null) {
       continue;
     }

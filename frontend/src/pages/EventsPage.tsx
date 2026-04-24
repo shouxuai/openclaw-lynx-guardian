@@ -6,7 +6,7 @@ import { StatusBadge } from "../components/feedback/StatusBadge";
 import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { mockFilterSets } from "../data/mock-console";
+import { filterPresets } from "../data/filter-presets";
 import { useListDetailResource } from "../hooks/useListDetailResource";
 import { formatTimestamp } from "../utils/format";
 import {
@@ -39,7 +39,7 @@ export function EventsPage() {
         eyebrow="审计时间线"
         actions={<StatusBadge label={headerLabel} tone={headerTone} />}
       />
-      <FilterBar chips={mockFilterSets.events} />
+      <FilterBar chips={filterPresets.events} />
       <section className="split-grid">
         <article className="panel">
           <div className="panel__header">

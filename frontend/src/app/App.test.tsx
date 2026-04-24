@@ -10,7 +10,7 @@ function createJsonResponse(data: unknown): Response {
     headers: {
       get: () => "application/json",
     },
-  } as Response;
+  } as unknown as Response;
 }
 
 describe("App", () => {
@@ -48,8 +48,9 @@ describe("App", () => {
     const { container } = render(<App />);
 
     expect(screen.getByRole("navigation")).toBeInTheDocument();
-    expect(screen.getAllByRole("button")).toHaveLength(4);
-    expect(container.querySelector(".page-header__title")?.textContent).toBeTruthy();
+    expect(screen.getByText("日志态势总览")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "近24小时" })).toBeInTheDocument();
+    expect(screen.getByText("基础态势")).toBeInTheDocument();
     expect(container.querySelector("a.topbar__githubButton")?.getAttribute("href")).toBe(
       "https://github.com/xuzhenggang/openclaw-lynx-guardian",
     );

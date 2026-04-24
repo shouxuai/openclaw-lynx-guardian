@@ -10,7 +10,7 @@ export const PRIMARY_NAV_ITEMS: NavItem[] = [
     id: "dashboard",
     label: "总览",
     path: "/",
-    description: "总览关键风险与最新信号。",
+    description: "查看整体风险态势与最新记录。",
   },
   {
     id: "events",

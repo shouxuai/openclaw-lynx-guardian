@@ -15,6 +15,10 @@ import {
   buildLocalConsoleHealthUrl,
   findAvailableLocalConsolePort,
 } from "./local-console-port.js";
+import {
+  ensureLocalConsoleBackendRuntimeDeps,
+  resolveLocalConsoleBackendRoot,
+} from "./local-console-runtime-deps.js";
 
 export interface LocalConsoleSupervisor {
   ensureRunning(reason: string): Promise<boolean>;
@@ -25,6 +29,7 @@ interface LocalConsoleSupervisorOptions {
   config: LocalConsoleRuntimeConfig;
   logger: Pick<Logger, "info" | "warn" | "error">;
   fetchImpl?: typeof fetch;
+  ensureRuntimeDeps?: (plan: LocalConsoleLaunchPlan) => void | Promise<void>;
   launchPlanFactory?: (config: LocalConsoleRuntimeConfig) => LocalConsoleLaunchPlan;
   launcher?: (plan: LocalConsoleLaunchPlan, config: LocalConsoleRuntimeConfig) => ChildProcess;
   selectPort?: (config: LocalConsoleRuntimeConfig) => Promise<number | null>;
@@ -69,6 +74,12 @@ export function createLocalConsoleSupervisor(options: LocalConsoleSupervisorOpti
   }
 
   const launchPlanFactory = options.launchPlanFactory ?? buildLocalConsoleLaunchPlan;
+  const ensureRuntimeDeps = options.ensureRuntimeDeps ?? (async (plan: LocalConsoleLaunchPlan) => {
+    await ensureLocalConsoleBackendRuntimeDeps({
+      backendRoot: resolveLocalConsoleBackendRoot(plan.entryPath),
+      logger: options.logger,
+    });
+  });
   const launcher = options.launcher ?? launchLocalConsoleBackend;
   const selectPort = options.selectPort ?? (async (config) => await findAvailableLocalConsolePort({
     listenHost: config.listenHost,
@@ -174,6 +185,14 @@ export function createLocalConsoleSupervisor(options: LocalConsoleSupervisorOpti
       applyLocalConsoleRuntimePort(options.config, selectedPort);
 
       const launchPlan = launchPlanFactory(options.config);
+      try {
+        await ensureRuntimeDeps(launchPlan);
+      } catch (error) {
+        options.logger.error(
+          `[lynx-guardian] failed to prepare local console backend runtime dependencies: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return false;
+      }
       options.logger.info(
         `[lynx-guardian] starting local console backend (${reason}) entry=${launchPlan.entryPath} port=${selectedPort}`,
       );

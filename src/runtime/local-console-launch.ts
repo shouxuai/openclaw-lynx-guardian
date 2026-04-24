@@ -13,8 +13,18 @@ export interface LocalConsoleLaunchPlan {
   entryPath: string;
 }
 
-export function resolveLocalConsoleBackendEntryPath(): string {
-  return fileURLToPath(new URL("../../backend/dist/main.js", import.meta.url));
+export function resolveLocalConsoleBackendEntryPath(baseUrl = import.meta.url): string {
+  const relativeCandidates = [
+    "./server/backend/dist/main.js",
+    "../server/backend/dist/main.js",
+    "../../server/backend/dist/main.js",
+    "./backend/dist/main.js",
+    "../backend/dist/main.js",
+    "../../backend/dist/main.js",
+  ];
+
+  const candidates = relativeCandidates.map((relativePath) => fileURLToPath(new URL(relativePath, baseUrl)));
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
 }
 
 export function buildLocalConsoleLaunchPlan(config: LocalConsoleRuntimeConfig): LocalConsoleLaunchPlan {

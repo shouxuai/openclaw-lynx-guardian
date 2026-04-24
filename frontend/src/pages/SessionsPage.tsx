@@ -7,7 +7,7 @@ import { StatusBadge } from "../components/feedback/StatusBadge";
 import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { mockFilterSets } from "../data/mock-console";
+import { filterPresets } from "../data/filter-presets";
 import { useListDetailResource } from "../hooks/useListDetailResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import { formatDomainLabel, renderRiskBadge } from "../utils/status";
@@ -54,9 +54,9 @@ export function SessionsPage() {
         <MetricCard label="总会话" value={`${items.length}`} note="默认展示最近 20 条" />
         <MetricCard label="活跃会话" value={`${activeCount}`} note="尚未结束的会话" />
         <MetricCard label="群聊会话" value={`${groupCount}`} note="按 isGroup 聚合" />
-        <MetricCard label="高风险会话" value={`${highRiskCount}`} note="含高风险事件的会话" />
+        <MetricCard label="高风险会话" value={`${highRiskCount}`} note="包含高风险事件的会话" />
       </section>
-      <FilterBar chips={mockFilterSets.sessions} />
+      <FilterBar chips={filterPresets.sessions} />
       <section className="split-grid">
         <article className="panel">
           <div className="panel__header">

@@ -84,10 +84,10 @@ export function SidebarNav() {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <p className="sidebar__eyebrow">守护体系</p>
-        <h1 className="sidebar__title">本地控制台</h1>
+        <p className="sidebar__eyebrow">GUARDIAN CONSOLE</p>
+        <h1 className="sidebar__title">日志控制台</h1>
         <p className="sidebar__summary">
-          将本地守护遥测整理为值班操作台，便于快速巡查、审批复核和事后回放。
+          把本地守护日志整理成值班工作台，便于快速巡查、人工复核和事后回放。
         </p>
       </div>
 
