@@ -44,6 +44,8 @@ describe("query routes for audit events", () => {
           hookName: "before_tool_call",
           riskLevel: "L3",
           enforcementAction: "requireApproval",
+          contentExcerpt: "exec command requires approval",
+          recommendation: "Review requester identity before approving exec.",
         }),
       ],
       nextCursor: expect.any(String),
@@ -78,5 +80,40 @@ describe("query routes for audit events", () => {
         ingestedAtMs: expect.any(Number),
       }),
     );
+  });
+
+  it("filters audit events with a keyword query across event content and identifiers", async () => {
+    const harness = await createTestApp("lynx-console-query-events-search-");
+    cleanupApps.push(harness);
+    const { app } = harness;
+    const fixture = createQueryFixture();
+
+    const seedResponse = await ingestBatch(app, fixture.batch);
+    expect(seedResponse.statusCode).toBe(200);
+
+    const contentResponse = await app.inject({
+      method: "GET",
+      url: "/lynx/events?limit=5&q=exec",
+    });
+
+    expect(contentResponse.statusCode).toBe(200);
+    expect(contentResponse.json().items).toEqual([
+      expect.objectContaining({
+        eventId: fixture.ids.eventApproval,
+        title: "Tool call evaluated",
+      }),
+    ]);
+
+    const idResponse = await app.inject({
+      method: "GET",
+      url: `/lynx/events?limit=5&q=${fixture.ids.eventBeta}`,
+    });
+
+    expect(idResponse.statusCode).toBe(200);
+    expect(idResponse.json().items).toEqual([
+      expect.objectContaining({
+        eventId: fixture.ids.eventBeta,
+      }),
+    ]);
   });
 });

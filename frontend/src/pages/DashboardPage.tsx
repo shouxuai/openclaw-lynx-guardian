@@ -1,17 +1,12 @@
-import { startTransition, useEffect, useState } from "react";
-import type { DashboardOverviewDto } from "@lynx/local-console-shared";
+import { startTransition, useEffect, useMemo, useState } from "react";
+import type { DashboardOverviewDto, RiskBucketDto } from "@lynx/local-console-shared";
+import { Link } from "react-router-dom";
 
 import { getDashboardOverview } from "../api/dashboard";
-import { StatusBadge } from "../components/feedback/StatusBadge";
 import { DataTable } from "../components/tables/DataTable";
-import { formatInteger, formatTimestamp } from "../utils/format";
-import {
-  formatActionLabel,
-  formatToolLabel,
-  renderActionBadge,
-  renderRiskBadge,
-  renderStateBadge,
-} from "../utils/status";
+import { mockDashboard } from "../data/mock-console";
+import { formatActionText, renderRiskBadge } from "../utils/status";
+import { formatDateOnly, formatInteger, formatTimestamp } from "../utils/format";
 
 const EMPTY_DASHBOARD: DashboardOverviewDto = {
   totals: {
@@ -31,34 +26,133 @@ const EMPTY_DASHBOARD: DashboardOverviewDto = {
   recentApprovals: [],
 };
 
-const RISK_COLORS: Record<string, string> = {
-  L0: "var(--risk-l0)",
-  L1: "var(--risk-l1)",
-  L2: "var(--risk-l2)",
-  L3: "var(--risk-l3)",
-  L4: "var(--risk-l4)",
-};
+const RISK_META = {
+  L0: {
+    label: "L0 指标",
+    note: "基础安全事件",
+    cssClass: "overview-card--l0",
+    color: "var(--risk-l0)",
+  },
+  L1: {
+    label: "L1 指标",
+    note: "低风险警告",
+    cssClass: "overview-card--l1",
+    color: "var(--risk-l1)",
+  },
+  L2: {
+    label: "L2 指标",
+    note: "中度安全风险",
+    cssClass: "overview-card--l2",
+    color: "var(--risk-l2)",
+  },
+  L3: {
+    label: "L3 指标",
+    note: "高度安全威胁",
+    cssClass: "overview-card--l3",
+    color: "var(--risk-l3)",
+  },
+  L4: {
+    label: "L4 指标",
+    note: "严重系统漏洞",
+    cssClass: "overview-card--l4",
+    color: "var(--risk-l4)",
+  },
+} as const;
 
-function getRiskCount(dashboard: DashboardOverviewDto, levels: string[]) {
-  return dashboard.riskDistribution
-    .filter((item) => levels.includes(item.riskLevel))
-    .reduce((sum, item) => sum + item.count, 0);
+const RISK_ORDER = ["L4", "L3", "L2", "L1", "L0"] as const;
+const RISK_BAR_ORDER = ["L0", "L1", "L2", "L3", "L4"] as const;
+const RISK_LEGEND_LABELS = {
+  L0: "基础 (L0)",
+  L1: "关注 (L1)",
+  L2: "中危 (L2)",
+  L3: "高危 (L3)",
+  L4: "严重 (L4)",
+} as const;
+const RISK_SHORT_LABELS = {
+  L0: "基础",
+  L1: "关注",
+  L2: "中危",
+  L3: "高危",
+  L4: "严重",
+} as const;
+const TREND_CHART = {
+  width: 420,
+  height: 380,
+  top: 42,
+  right: 20,
+  bottom: 54,
+  left: 44,
+} as const;
+
+function countRisk(buckets: RiskBucketDto[], riskLevel: string): number {
+  return buckets.find((item) => item.riskLevel === riskLevel)?.count ?? 0;
 }
 
-function buildRiskRingBackground(dashboard: DashboardOverviewDto) {
-  const items = dashboard.riskDistribution.filter((item) => item.count > 0);
-  const total = items.reduce((sum, item) => sum + item.count, 0);
-
+function buildRiskRingBackground(dashboard: DashboardOverviewDto): string {
+  const total = dashboard.riskDistribution.reduce((sum, item) => sum + item.count, 0);
   if (total === 0) {
-    return "conic-gradient(rgba(186, 200, 230, 0.35) 0deg 360deg)";
+    return "conic-gradient(#e8edf5 0deg 360deg)";
   }
 
   let current = 0;
-  return `conic-gradient(${items.map((item) => {
-    const start = current;
-    current += (item.count / total) * 360;
-    return `${RISK_COLORS[item.riskLevel] ?? "var(--accent)"} ${start}deg ${current}deg`;
-  }).join(", ")})`;
+  return `conic-gradient(${(["L4", "L3", "L2", "L1", "L0"] as const)
+    .map((riskLevel) => {
+      const count = countRisk(dashboard.riskDistribution, riskLevel);
+      if (count === 0) {
+        return null;
+      }
+      const start = current;
+      current += (count / total) * 360;
+      return `${RISK_META[riskLevel].color} ${start}deg ${current}deg`;
+    })
+    .filter(Boolean)
+    .join(", ")})`;
+}
+
+function formatPercent(value: number, total: number): string {
+  if (total === 0) {
+    return "0%";
+  }
+
+  return `${((value / total) * 100).toFixed(1)}%`;
+}
+
+function getLocalDayStartMs(timestamp: number): number {
+  const date = new Date(timestamp);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function addLocalDays(dayStartMs: number, days: number): number {
+  const date = new Date(dayStartMs);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days).getTime();
+}
+
+function buildTrendPoints(dashboard: DashboardOverviewDto) {
+  const totalsByDay = new Map<number, number>();
+  for (const point of dashboard.eventTrend) {
+    const dayStartMs = getLocalDayStartMs(point.bucketStartMs);
+    totalsByDay.set(dayStartMs, (totalsByDay.get(dayStartMs) ?? 0) + point.value);
+  }
+
+  const endDayStartMs =
+    totalsByDay.size > 0 ? Math.max(...totalsByDay.keys()) : getLocalDayStartMs(Date.now());
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const dayStartMs = addLocalDays(endDayStartMs, index - 6);
+
+    return {
+      label: formatDateOnly(dayStartMs),
+      value: totalsByDay.get(dayStartMs) ?? 0,
+    };
+  });
+}
+
+function buildChartMax(maxValue: number): number {
+  return Math.max(4, Math.ceil(maxValue / 4) * 4);
+}
+
+function buildAxisTicks(maxValue: number): number[] {
+  return [maxValue, maxValue * 0.75, maxValue * 0.5, maxValue * 0.25, 0].map(Math.round);
 }
 
 export function DashboardPage() {
@@ -88,9 +182,9 @@ export function DashboardPage() {
 
         const message = loadError instanceof Error ? loadError.message : "请求失败";
         startTransition(() => {
-          setDashboard(EMPTY_DASHBOARD);
+          setDashboard(import.meta.env.DEV ? mockDashboard : EMPTY_DASHBOARD);
           setLoading(false);
-          setError(message);
+          setError(import.meta.env.DEV ? null : message);
         });
       }
     }
@@ -102,302 +196,266 @@ export function DashboardPage() {
     };
   }, []);
 
-  const statusTone = error ? "danger" : loading ? "info" : "success";
-  const statusLabel = error ? "请求失败" : loading ? "加载中" : "实时数据";
-  const headlineDescription = loading
-    ? "正在从本地控制台后端加载总览数据。"
-    : error
-      ? `总览数据加载失败：${error}`
-      : "将风险事件、工具调用、审批链路与令牌用量汇聚到同一块值班大屏。";
+  const riskRingBackground = useMemo(() => buildRiskRingBackground(dashboard), [dashboard]);
+  const trendPoints = useMemo(() => buildTrendPoints(dashboard), [dashboard]);
+  const trendMax = Math.max(...trendPoints.map((point) => point.value), 1);
+  const statusText = error ? `数据加载失败：${error}` : loading ? "正在加载实时数据" : null;
+  const totalEvents = dashboard.totals.eventCount;
 
-  const lowRiskCount = getRiskCount(dashboard, ["L0", "L1"]);
-  const mediumRiskCount = getRiskCount(dashboard, ["L2"]);
-  const highRiskCount = getRiskCount(dashboard, ["L3"]);
-  const criticalRiskCount = getRiskCount(dashboard, ["L4"]);
-  const highRiskRatio = dashboard.totals.eventCount === 0
-    ? "0%"
-    : `${Math.round((dashboard.totals.highRiskEventCount / dashboard.totals.eventCount) * 100)}%`;
-  const riskRingBackground = buildRiskRingBackground(dashboard);
+  const metricCards = (["L0", "L1", "L2", "L3", "L4"] as const).map((riskLevel) => ({
+    ...RISK_META[riskLevel],
+    value: countRisk(dashboard.riskDistribution, riskLevel),
+  }));
+  const riskLevelBars = RISK_BAR_ORDER.map((riskLevel) => ({
+    key: riskLevel,
+    count: countRisk(dashboard.riskDistribution, riskLevel),
+    color: RISK_META[riskLevel].color,
+    shortLabel: RISK_SHORT_LABELS[riskLevel],
+    description: RISK_META[riskLevel].note,
+    percent: formatPercent(countRisk(dashboard.riskDistribution, riskLevel), totalEvents),
+  }));
+  const riskLevelBarMax = buildChartMax(Math.max(...riskLevelBars.map((item) => item.count), 1));
+  const riskLevelAxisTicks = buildAxisTicks(riskLevelBarMax);
+  const trendChartMax = buildChartMax(trendMax);
+  const trendAxisTicks = buildAxisTicks(trendChartMax);
+  const trendPlotWidth = TREND_CHART.width - TREND_CHART.left - TREND_CHART.right;
+  const trendPlotHeight = TREND_CHART.height - TREND_CHART.top - TREND_CHART.bottom;
+  const trendLinePoints = trendPoints.map((point, index) => {
+    const x = TREND_CHART.left + (index / Math.max(trendPoints.length - 1, 1)) * trendPlotWidth;
+    const y = TREND_CHART.top + (1 - point.value / trendChartMax) * trendPlotHeight;
 
-  const overviewCards = [
-    {
-      title: "基础态势",
-      value: formatInteger(lowRiskCount),
-      note: "L0-L1 低风险与记录型日志",
-      tone: "calm",
-    },
-    {
-      title: "关注态势",
-      value: formatInteger(mediumRiskCount),
-      note: "L2 需要关注的风险事件",
-      tone: "watch",
-    },
-    {
-      title: "高危态势",
-      value: formatInteger(highRiskCount),
-      note: "L3 高优先级告警",
-      tone: "elevated",
-    },
-    {
-      title: "严重态势",
-      value: formatInteger(criticalRiskCount),
-      note: "L4 需立即处理的事件",
-      tone: "critical",
-    },
-    {
-      title: "审批记录",
-      value: formatInteger(dashboard.totals.approvalCount),
-      note: "人工复核与授权链路",
-      tone: "violet",
-    },
-    {
-      title: "日志总量",
-      value: formatInteger(dashboard.totals.eventCount),
-      note: "当前时间窗内全部事件",
-      tone: "accent",
-    },
-  ] as const;
+    return { ...point, x, y };
+  });
+  const trendPolyline = trendLinePoints.map((point) => `${point.x},${point.y}`).join(" ");
+  const trendAreaPoints = [
+    `${TREND_CHART.left},${TREND_CHART.height - TREND_CHART.bottom}`,
+    trendPolyline,
+    `${TREND_CHART.width - TREND_CHART.right},${TREND_CHART.height - TREND_CHART.bottom}`,
+  ].join(" ");
 
-  const headlineStats = [
-    {
-      label: "高风险占比",
-      value: highRiskRatio,
-      note: "L3-L4 事件",
-    },
-    {
-      label: "工具调用",
-      value: formatInteger(dashboard.totals.toolCallCount),
-      note: "已进入审计链路",
-    },
-    {
-      label: "巡检记录",
-      value: formatInteger(dashboard.totals.lynxCheckCount),
-      note: "手动与定时任务",
-    },
-    {
-      label: "令牌总量",
-      value: formatInteger(dashboard.totals.totalTokens),
-      note: "累计资源消耗",
-    },
-  ];
+  const legendItems = RISK_ORDER.map((group) => {
+    const count = countRisk(dashboard.riskDistribution, group);
 
-  const topActions = dashboard.enforcementDistribution
-    .filter((item) => item.count > 0)
-    .slice(0, 5);
+    return {
+      key: group,
+      label: RISK_LEGEND_LABELS[group],
+      count,
+      color: RISK_META[group].color,
+      percent: formatPercent(count, totalEvents),
+    };
+  });
 
   return (
-    <div className="page-stack page-stack--dashboard">
-      <section className="dashboard-hero">
-        <div className="dashboard-hero__content">
-          <div className="dashboard-hero__eyebrowRow">
-            <p className="dashboard-hero__eyebrow">MULTI-DIMENSION LOG WORKBENCH</p>
-            <StatusBadge label={statusLabel} tone={statusTone} />
-          </div>
-          <h1 className="dashboard-hero__title">日志态势总览</h1>
-          <p className="dashboard-hero__description">{headlineDescription}</p>
-          <div className="dashboard-hero__tags">
-            <span className="dashboard-tag">多维日志</span>
-            <span className="dashboard-tag">值班视角</span>
-            <span className="dashboard-tag">本地守护</span>
-          </div>
-        </div>
+    <div className="page-stack">
+      {statusText ? <p className="small-note">{statusText}</p> : null}
 
-        <div className="dashboard-hero__stats">
-          {headlineStats.map((item) => (
-            <article key={item.label} className="dashboard-kpi">
-              <p className="dashboard-kpi__label">{item.label}</p>
-              <strong className="dashboard-kpi__value">{item.value}</strong>
-              <p className="dashboard-kpi__note">{item.note}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="dashboard-signalGrid" aria-label="风险总览卡带">
-        {overviewCards.map((card) => (
-          <article key={card.title} className={`dashboard-signal dashboard-signal--${card.tone}`}>
-            <p className="dashboard-signal__label">{card.title}</p>
-            <strong className="dashboard-signal__value">{card.value}</strong>
-            <p className="dashboard-signal__note">{card.note}</p>
+      <section className="overview-metric-grid" aria-label="风险等级指标">
+        {metricCards.map((card) => (
+          <article key={card.label} className={`overview-card ${card.cssClass}`}>
+            <div>
+              <p className="overview-card__label">{card.label}</p>
+              <strong className="overview-card__value">{formatInteger(card.value)}</strong>
+            </div>
+            <p className="overview-card__note">{card.note}</p>
           </article>
         ))}
+
+        <article className="overview-card overview-card--total">
+          <div>
+            <p className="overview-card__label">总计</p>
+            <strong className="overview-card__value">{formatInteger(totalEvents)}</strong>
+          </div>
+          <p className="overview-card__note">所有安全事件</p>
+        </article>
       </section>
 
       <section className="dashboard-insightGrid">
-        <article className="panel dashboard-panel">
+        <article className="panel">
           <div className="panel__header">
             <div>
-              <p className="dashboard-sectionLabel">RISK MIX</p>
               <h2 className="panel__title">风险分布</h2>
-              <p className="panel__subtitle">将真实风险层级聚合成一张可快速判断的环形概览。</p>
             </div>
+            <span className="technical-label">◐</span>
           </div>
 
           <div className="risk-ring">
             <div className="risk-ring__chart" style={{ background: riskRingBackground }}>
               <div className="risk-ring__inner">
-                <strong>{formatInteger(dashboard.totals.eventCount)}</strong>
+                <strong>{formatInteger(totalEvents)}</strong>
                 <span>总事件</span>
               </div>
             </div>
             <ul className="risk-ring__legend">
-              {dashboard.riskDistribution.map((item) => (
-                <li key={item.riskLevel} className="risk-ring__legendItem">
-                  <span
-                    className="risk-ring__swatch"
-                    style={{ background: RISK_COLORS[item.riskLevel] ?? "var(--accent)" }}
-                  />
-                  <span className="risk-ring__legendLabel">{item.riskLevel}</span>
-                  <strong className="risk-ring__legendValue">{formatInteger(item.count)}</strong>
+              {legendItems.map((item) => (
+                <li key={item.key} className="risk-ring__legendItem">
+                  <span className="risk-ring__swatch" style={{ background: item.color }} />
+                  <span>{item.label}</span>
+                  <span className="risk-ring__legendPercent">{item.percent}</span>
                 </li>
               ))}
             </ul>
           </div>
         </article>
 
-        <article className="panel dashboard-panel">
+        <article className="panel risk-level-panel">
           <div className="panel__header">
             <div>
-              <p className="dashboard-sectionLabel">TREND & ACTIONS</p>
-              <h2 className="panel__title">趋势与动作</h2>
-              <p className="panel__subtitle">同时看事件强度、令牌走势和策略动作分布。</p>
+              <h2 className="panel__title">威胁等级分布</h2>
+              <p className="panel__subtitle">L0 到 L4 事件量与占比</p>
             </div>
+            <span className="technical-label">L0-L4</span>
           </div>
 
-          <div className="dashboard-trendStack">
-            <div className="dashboard-trendBlock">
-              <div className="dashboard-trendBlock__header">
-                <span>事件趋势</span>
-                <strong>{formatInteger(dashboard.totals.eventCount)}</strong>
-              </div>
-              <div className="dashboard-trendBars">
-                {dashboard.eventTrend.map((point) => (
-                  <div key={`events-${point.bucketStartMs}`} className="dashboard-trendPoint">
-                    <div
-                      className="dashboard-trendBar"
-                      style={{
-                        height: `${Math.max(
-                          (point.value / Math.max(...dashboard.eventTrend.map((entry) => entry.value), 1)) * 100,
-                          10,
-                        )}%`,
-                      }}
-                    />
-                    <span className="dashboard-trendLabel">{formatTimestamp(point.bucketStartMs)}</span>
-                  </div>
-                ))}
-              </div>
+          <div className="risk-level-chart" aria-label="L0 到 L4 事件数量">
+            <div className="risk-level-chart__axis" aria-hidden="true">
+              {riskLevelAxisTicks.map((tick) => (
+                <span key={tick}>{tick}</span>
+              ))}
             </div>
-
-            <div className="dashboard-trendBlock dashboard-trendBlock--secondary">
-              <div className="dashboard-trendBlock__header">
-                <span>令牌趋势</span>
-                <strong>{formatInteger(dashboard.totals.totalTokens)}</strong>
-              </div>
-              <div className="dashboard-trendBars">
-                {dashboard.tokenTrend.map((point) => (
-                  <div key={`tokens-${point.bucketStartMs}`} className="dashboard-trendPoint">
-                    <div
-                      className="dashboard-trendBar dashboard-trendBar--violet"
-                      style={{
-                        height: `${Math.max(
-                          (point.value / Math.max(...dashboard.tokenTrend.map((entry) => entry.value), 1)) * 100,
-                          10,
-                        )}%`,
-                      }}
-                    />
-                    <span className="dashboard-trendLabel">{formatTimestamp(point.bucketStartMs)}</span>
-                  </div>
+            <div className="risk-level-chart__plot">
+              <div className="risk-level-chart__grid" aria-hidden="true">
+                {riskLevelAxisTicks.map((tick) => (
+                  <span key={tick} />
                 ))}
+              </div>
+              <div className="risk-level-bars">
+                {riskLevelBars.map((item) => {
+                  const height = Math.max((item.count / riskLevelBarMax) * 100, item.count > 0 ? 10 : 2);
+
+                  return (
+                    <div key={item.key} className="risk-level-bar">
+                      <div className="risk-level-bar__track">
+                        <div
+                          aria-label={`${item.key}: ${item.count}`}
+                          className="risk-level-bar__fill"
+                          style={{ height: `${height}%`, background: item.color }}
+                        />
+                      </div>
+                      <div className="risk-level-bar__meta">
+                        <strong>{item.key}</strong>
+                        <span>{item.shortLabel}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
-
-          <div className="dashboard-actionCloud">
-            {topActions.map((item) => (
-              <div key={item.enforcementAction} className="dashboard-actionPill">
-                <span>{formatActionLabel(item.enforcementAction)}</span>
-                <strong>{formatInteger(item.count)}</strong>
-              </div>
+          <div className="risk-level-summary" aria-label="等级占比">
+            {riskLevelBars.map((item) => (
+              <span
+                key={item.key}
+                className="risk-level-summary__item"
+                aria-label={`${item.key} ${item.description} 占比 ${item.percent}`}
+              >
+                <i style={{ background: item.color }} />
+                <strong>{item.key}</strong>
+                <span>{item.description}</span>
+                <em>{item.percent}</em>
+              </span>
             ))}
+          </div>
+        </article>
+
+        <article className="panel trend-line-panel">
+          <div className="panel__header">
+            <div>
+              <h2 className="panel__title">7 日趋势</h2>
+              <p className="panel__subtitle">每日安全事件发生次数统计</p>
+            </div>
+            <span className="status-badge status-badge--info">事件数</span>
+          </div>
+
+          <div className="trend-line-shell">
+            <svg
+              className="trend-line-chart"
+              viewBox={`0 0 ${TREND_CHART.width} ${TREND_CHART.height}`}
+              role="img"
+              aria-label="7 日趋势折线图"
+            >
+              <defs>
+                <linearGradient id="trendLineArea" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.2" />
+                  <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <g className="trend-line-chart__grid" aria-hidden="true">
+                {trendAxisTicks.map((tick) => {
+                  const y = TREND_CHART.top + (1 - tick / trendChartMax) * trendPlotHeight;
+
+                  return (
+                    <g key={tick}>
+                      <text x={TREND_CHART.left - 10} y={y + 4} textAnchor="end">
+                        {tick}
+                      </text>
+                      <line
+                        x1={TREND_CHART.left}
+                        x2={TREND_CHART.width - TREND_CHART.right}
+                        y1={y}
+                        y2={y}
+                      />
+                    </g>
+                  );
+                })}
+              </g>
+              <polygon className="trend-line-chart__area" points={trendAreaPoints} />
+              <polyline className="trend-line-chart__line" points={trendPolyline} />
+              <g className="trend-line-chart__points">
+                {trendLinePoints.map((point, index) => (
+                  <g key={`${point.label}-${index}`}>
+                    <circle cx={point.x} cy={point.y} r="4" />
+                    <text x={point.x} y={point.y - 10} textAnchor="middle">
+                      {formatInteger(point.value)}
+                    </text>
+                  </g>
+                ))}
+              </g>
+              <g className="trend-line-chart__labels" aria-hidden="true">
+                {trendLinePoints.map((point, index) => (
+                  <text
+                    key={`${point.label}-${index}`}
+                    x={point.x}
+                    y={TREND_CHART.height - 10}
+                    textAnchor="middle"
+                  >
+                    {point.label}
+                  </text>
+                ))}
+              </g>
+            </svg>
+            <div className="trend-line-foot">
+              <span>
+                峰值 <strong>{formatInteger(trendMax)}</strong>
+              </span>
+              <span>
+                今日 <strong>{formatInteger(trendPoints.at(-1)?.value ?? 0)}</strong>
+              </span>
+            </div>
           </div>
         </article>
       </section>
 
-      <section className="dashboard-workbench">
-        <article className="panel dashboard-panel dashboard-panel--table">
-          <div className="panel__header">
-            <div>
-              <p className="dashboard-sectionLabel">PRIORITY LOGS</p>
-              <h2 className="panel__title">最近高风险事件</h2>
-              <p className="panel__subtitle">优先展示需要值班同学第一时间关注的最新事件。</p>
-            </div>
-          </div>
-
-          <DataTable
-            columns={[
-              { key: "title", label: "标题" },
-              { key: "risk", label: "风险" },
-              { key: "action", label: "动作" },
-              { key: "time", label: "发生时间" },
-            ]}
-            rows={dashboard.recentHighRiskEvents.map((event) => ({
-              id: event.eventId,
-              title: (
-                <div className="row-stack">
-                  <strong>{event.title}</strong>
-                  <span>{event.summary ?? "暂无摘要"}</span>
-                </div>
-              ),
-              risk: renderRiskBadge(event.riskLevel),
-              action: renderActionBadge(event.enforcementAction),
-              time: formatTimestamp(event.occurredAtMs),
-            }))}
-          />
-        </article>
-
-        <div className="page-stack page-stack--compact">
-          <article className="panel dashboard-panel">
-            <div className="panel__header">
-              <div>
-                <p className="dashboard-sectionLabel">TOOL STREAM</p>
-                <h2 className="panel__title">最近工具调用</h2>
-                <p className="panel__subtitle">追踪最近进入控制台审计的工具调用结果。</p>
-              </div>
-            </div>
-            <div className="list-stack">
-              {dashboard.recentToolCalls.map((call) => (
-                <div key={call.toolCallId} className="list-item">
-                  <div>
-                    <strong>{formatToolLabel(call.toolName)}</strong>
-                    <p>{call.resultExcerpt ?? "暂无结果摘要"}</p>
-                  </div>
-                  {renderStateBadge(call.resultStatus)}
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="panel dashboard-panel">
-            <div className="panel__header">
-              <div>
-                <p className="dashboard-sectionLabel">APPROVAL STREAM</p>
-                <h2 className="panel__title">最近审批记录</h2>
-                <p className="panel__subtitle">快速确认待处理与刚处理完成的审批链路。</p>
-              </div>
-            </div>
-            <div className="list-stack">
-              {dashboard.recentApprovals.map((approval) => (
-                <div key={approval.approvalId} className="list-item">
-                  <div>
-                    <strong>{approval.promptExcerpt ?? "暂无审批摘要"}</strong>
-                    <p>{approval.requesterOuId ?? "未知申请人"} · {approval.module}</p>
-                  </div>
-                  {renderStateBadge(approval.resolution)}
-                </div>
-              ))}
-            </div>
-          </article>
+      <section className="table-panel">
+        <div className="table-panel__header">
+          <h2 className="panel__title">最近安全事件</h2>
+          <Link className="inline-link" to="/events">查看全部</Link>
         </div>
+        <DataTable
+          columns={[
+            { key: "id", label: "事件 ID" },
+            { key: "risk", label: "风险等级" },
+            { key: "action", label: "执行动作" },
+            { key: "recommendation", label: "处置建议" },
+            { key: "time", label: "时间" },
+          ]}
+          rows={dashboard.recentHighRiskEvents.map((event) => ({
+            id: event.eventId,
+            risk: renderRiskBadge(event.riskLevel),
+            action: event.title,
+            recommendation: event.summary ?? formatActionText(event.enforcementAction),
+            time: formatTimestamp(event.occurredAtMs),
+          }))}
+        />
       </section>
     </div>
   );

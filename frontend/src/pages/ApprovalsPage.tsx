@@ -1,108 +1,139 @@
-import type { ApprovalDetailDto, ApprovalListItemDto, RiskLevel } from "@lynx/local-console-shared";
+import { startTransition, useEffect, useState } from "react";
+import type { ApprovalListItemDto } from "@lynx/local-console-shared";
 
-import { getApprovalDetail, listApprovals } from "../api/approvals";
-import { MetricCard } from "../components/cards/MetricCard";
-import { DetailPanel } from "../components/detail/DetailPanel";
-import { StatusBadge } from "../components/feedback/StatusBadge";
-import { FilterBar } from "../components/filters/FilterBar";
+import { listApprovals } from "../api/approvals";
+import { mockApprovals } from "../data/mock-console";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { filterPresets } from "../data/filter-presets";
-import { useListDetailResource } from "../hooks/useListDetailResource";
 import { formatTimestamp } from "../utils/format";
-import { formatChannelLabel, renderRiskBadge, renderStateBadge } from "../utils/status";
-
-const RISK_ORDER: Record<RiskLevel, number> = {
-  L0: 0,
-  L1: 1,
-  L2: 2,
-  L3: 3,
-  L4: 4,
-};
+import { renderRiskBadge, renderStateBadge } from "../utils/status";
 
 export function ApprovalsPage() {
-  const { items, detail, loading, error } = useListDetailResource<ApprovalListItemDto, ApprovalDetailDto>({
-    loadList: () => listApprovals({ limit: 20 }),
-    loadDetail: getApprovalDetail,
-    getItemId: (item) => item.approvalId,
-  });
+  const [items, setItems] = useState<ApprovalListItemDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const pendingCount = items.filter((item) => item.resolution === "pending").length;
-  const resolvedCount = items.filter((item) => item.resolution && item.resolution !== "pending").length;
-  const scopeCount = new Set(items.map((item) => item.scopeType)).size;
-  const highestRisk = items.reduce<RiskLevel>(
-    (currentHighest, item) => {
-      if (!item.riskLevel) {
-        return currentHighest;
+  useEffect(() => {
+    let active = true;
+
+    async function loadApprovals() {
+      try {
+        const response = await listApprovals({ limit: 20 });
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setItems(response.items);
+          setError(null);
+          setLoading(false);
+        });
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setItems(import.meta.env.DEV ? mockApprovals : []);
+          setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
+          setLoading(false);
+        });
       }
-      return RISK_ORDER[item.riskLevel] > RISK_ORDER[currentHighest] ? item.riskLevel : currentHighest;
-    },
-    "L0",
-  );
-  const headerDescription = loading
-    ? "正在从本地控制台后端加载审批链路。"
-    : error
-      ? `审批数据加载失败：${error}`
-      : "展示真实审批队列与默认详情记录。";
-  const headerTone = error ? "danger" : loading ? "info" : "success";
-  const headerLabel = error ? "请求失败" : loading ? "加载中" : "实时数据";
+    }
+
+    void loadApprovals();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const pendingCount = items.filter((item) => item.resolution === "pending" || !item.resolution).length;
+  const approvedCount = items.filter((item) => item.resolution === "approved" || item.resolution === "completed").length;
+  const blockedCount = items.filter((item) => item.resolution === "blocked" || item.resolution === "failed").length;
+  const statusDescription = error ? `审批数据加载失败：${error}` : loading ? "正在加载审批队列" : "治理控制台聚合所有待复核与已决策请求。";
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="审批"
-        description={headerDescription}
-        eyebrow="审批链路"
-        actions={<StatusBadge label={headerLabel} tone={headerTone} />}
+        title="审批管理"
+        description={statusDescription}
+        eyebrow="GOVERNANCE CONTROL"
+        actions={(
+          <>
+            <button className="btn" type="button">导出报告</button>
+            <button className="btn btn--dark" type="button">批量处理</button>
+          </>
+        )}
       />
-      <section className="metric-grid metric-grid--compact">
-        <MetricCard label="待处理" value={`${pendingCount}`} note="等待审批人确认" />
-        <MetricCard label="已处理" value={`${resolvedCount}`} note="已收到审批结果" />
-        <MetricCard label="审批范围" value={`${scopeCount}`} note="去重后的 scopeType 数量" />
-        <MetricCard label="最高风险" value={highestRisk} note="来自当前列表的最高等级" />
-      </section>
-      <FilterBar chips={filterPresets.approvals} />
-      <section className="split-grid">
-        <article className="panel">
-          <div className="panel__header">
-            <div>
-              <h2 className="panel__title">审批队列</h2>
-              <p className="panel__subtitle">列表来自真实审批接口，默认展示最近 20 条记录。</p>
-            </div>
-          </div>
-          <DataTable
-            columns={[
-              { key: "requester", label: "申请人" },
-              { key: "module", label: "模块" },
-              { key: "risk", label: "风险" },
-              { key: "resolution", label: "结果" },
-              { key: "requested", label: "申请时间" },
-            ]}
-            rows={items.map((approval) => ({
-              id: approval.approvalId,
-              requester: approval.requesterOuId ?? "未知",
-              module: approval.module,
-              risk: renderRiskBadge(approval.riskLevel),
-              resolution: renderStateBadge(approval.resolution),
-              requested: formatTimestamp(approval.requestedAtMs),
-            }))}
-          />
+
+      <section className="summary-card-grid">
+        <article className="summary-card">
+          <p className="summary-card__label">待处理申请数</p>
+          <strong className="summary-card__value">{pendingCount}</strong>
         </article>
-        <DetailPanel
-          title={detail?.promptExcerpt ?? "暂无审批详情"}
-          subtitle={detail?.approvalId ?? "等待后端返回审批详情"}
-          fields={[
-            {
-              label: "渠道",
-              value: detail
-                ? `${formatChannelLabel(detail.channelProfile)} · ${detail.channelId ?? "暂无"}`
-                : "暂无",
-            },
-            { label: "审批人", value: detail?.approverOuIds?.join(", ") || "暂无" },
-            { label: "处理人", value: detail?.resolvedApproverOuId ?? "待处理" },
-            { label: "指纹", value: detail?.requestFingerprintHash ?? "暂无" },
+        <article className="summary-card">
+          <p className="summary-card__label">今日已核准</p>
+          <strong className="summary-card__value">{approvedCount}</strong>
+        </article>
+        <article className="summary-card">
+          <p className="summary-card__label">风险拦截数</p>
+          <strong className="summary-card__value">{blockedCount}</strong>
+        </article>
+      </section>
+
+      <section className="table-panel">
+        <div className="table-panel__header">
+          <h2 className="panel__title">活跃审核流</h2>
+          <div className="page-header__actions">
+            <button className="btn btn--dark" type="button">待审核</button>
+            <button className="btn" type="button">历史记录</button>
+            <button className="btn" type="button">搜索 ID 或申请人...</button>
+          </div>
+        </div>
+        <DataTable
+          columns={[
+            { key: "approvalId", label: "审批 ID" },
+            { key: "requester", label: "申请人" },
+            { key: "risk", label: "风险权重" },
+            { key: "scope", label: "范围类型" },
+            { key: "summary", label: "请求摘要" },
+            { key: "status", label: "状态" },
+            { key: "action", label: "操作" },
           ]}
+          rows={items.map((approval) => ({
+            id: approval.approvalId,
+            approvalId: approval.approvalId,
+            requester: approval.requesterOuId ?? "未知申请人",
+            risk: renderRiskBadge(approval.riskLevel),
+            scope: approval.scopeType,
+            summary: approval.promptExcerpt ?? "暂无审批摘要",
+            status: renderStateBadge(approval.resolution ?? "pending"),
+            action: <a className="inline-link" href={`/approvals#${approval.approvalId}`}>查看详情</a>,
+          }))}
         />
+        <div className="table-panel__footer">
+          <span>显示 1-{items.length} 条，共 {items.length || pendingCount} 条待审核申请</span>
+          <span>1 · 2 · 3</span>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel__header">
+          <h2 className="panel__title">二次确认流机制</h2>
+        </div>
+        <div className="summary-card-grid">
+          {[
+            ["1", "发起阶段", "申请人提交高风险请求，系统自动进行规则检测与初始评分。"],
+            ["2", "一级审核", "直属负责人或业务管理员根据上下文进行逻辑一致性校验。"],
+            ["3", "二次安全校验", "安全合规审计官对特权访问、数据分发等关键操作进行二次锁定。"],
+          ].map(([step, title, description]) => (
+            <article key={step} className="metric-card">
+              <p className="status-badge status-badge--info">{step}</p>
+              <h3 className="panel__title">{title}</h3>
+              <p className="panel__subtitle">{description}</p>
+            </article>
+          ))}
+        </div>
       </section>
     </div>
   );

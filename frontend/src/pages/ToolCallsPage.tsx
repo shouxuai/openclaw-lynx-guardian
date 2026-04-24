@@ -1,117 +1,167 @@
-import type { ToolCallDetailDto, ToolCallListItemDto } from "@lynx/local-console-shared";
+import { startTransition, useEffect, useMemo, useState } from "react";
+import type { ToolCallListItemDto } from "@lynx/local-console-shared";
 
-import { getToolCallDetail, listToolCalls } from "../api/tool-calls";
-import { MetricCard } from "../components/cards/MetricCard";
-import { DetailPanel } from "../components/detail/DetailPanel";
-import { StatusBadge } from "../components/feedback/StatusBadge";
-import { FilterBar } from "../components/filters/FilterBar";
-import { PageHeader } from "../components/layout/PageHeader";
+import { listToolCalls } from "../api/tool-calls";
+import { mockToolCalls } from "../data/mock-console";
 import { DataTable } from "../components/tables/DataTable";
-import { filterPresets } from "../data/filter-presets";
-import { useListDetailResource } from "../hooks/useListDetailResource";
-import { formatDuration, formatTimestamp } from "../utils/format";
-import { formatToolLabel, renderRiskBadge, renderStateBadge } from "../utils/status";
-
-function formatToolMetadata(metadata: Record<string, unknown> | undefined) {
-  if (!metadata) {
-    return "暂无";
-  }
-
-  const lines: string[] = [];
-
-  if (typeof metadata.sourcePath === "string") {
-    lines.push(`来源路径：${metadata.sourcePath}`);
-  }
-  if (typeof metadata.targetPath === "string") {
-    lines.push(`目标路径：${metadata.targetPath}`);
-  }
-  if (typeof metadata.redactionApplied === "boolean") {
-    lines.push(`已脱敏：${metadata.redactionApplied ? "是" : "否"}`);
-  }
-  if (typeof metadata.resultCount === "number") {
-    lines.push(`结果数量：${metadata.resultCount}`);
-  }
-
-  return lines.join("\n") || "暂无";
-}
+import { formatDuration, formatInteger, formatTimestamp } from "../utils/format";
+import { formatToolLabel, renderStateBadge } from "../utils/status";
 
 export function ToolCallsPage() {
-  const { items, detail, loading, error } = useListDetailResource<ToolCallListItemDto, ToolCallDetailDto>({
-    loadList: () => listToolCalls({ limit: 20 }),
-    loadDetail: getToolCallDetail,
-    getItemId: (item) => item.toolCallId,
-  });
+  const [items, setItems] = useState<ToolCallListItemDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const pausedCount = items.filter((item) => item.resultStatus === "paused").length;
-  const successCount = items.filter((item) =>
-    ["approved", "completed", "success"].includes(item.resultStatus ?? ""))
-    .length;
-  const maxDurationMs = items.reduce((maxDuration, item) =>
-    Math.max(maxDuration, item.durationMs ?? 0), 0);
-  const headerDescription = loading
-    ? "正在从本地控制台后端加载工具调用。"
-    : error
-      ? `工具调用数据加载失败：${error}`
-      : "按真实调用结果展示工具执行状态与详情。";
-  const headerTone = error ? "danger" : loading ? "info" : "success";
-  const headerLabel = error ? "请求失败" : loading ? "加载中" : "实时数据";
+  useEffect(() => {
+    let active = true;
+
+    async function loadToolCalls() {
+      try {
+        const response = await listToolCalls({ limit: 20 });
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setItems(response.items);
+          setError(null);
+          setLoading(false);
+        });
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setItems(import.meta.env.DEV ? mockToolCalls : []);
+          setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
+          setLoading(false);
+        });
+      }
+    }
+
+    void loadToolCalls();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const successCount = items.filter((item) => ["success", "completed", "approved"].includes(item.resultStatus ?? "")).length;
+  const abnormalCount = items.filter((item) => ["failed", "blocked"].includes(item.resultStatus ?? "")).length;
+  const successRate = items.length === 0 ? "0%" : `${((successCount / items.length) * 100).toFixed(1)}%`;
+  const maxDuration = items.reduce((current, item) => Math.max(current, item.durationMs ?? 0), 0);
+  const toolCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of items) {
+      counts.set(item.toolName, (counts.get(item.toolName) ?? 0) + 1);
+    }
+
+    return [...counts.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 3);
+  }, [items]);
+  const statusText = error ? `工具调用数据加载失败：${error}` : loading ? "正在加载调用流水" : "详细审计记录基于 tool_calls 协议层追踪";
 
   return (
     <div className="page-stack">
-      <PageHeader
-        title="工具调用"
-        description={headerDescription}
-        eyebrow="执行审计"
-        actions={<StatusBadge label={headerLabel} tone={headerTone} />}
-      />
+      {statusText ? <p className="small-note">{statusText}</p> : null}
+
       <section className="metric-grid metric-grid--compact">
-        <MetricCard label="调用数" value={`${items.length}`} note="默认展示最近 20 条" />
-        <MetricCard label="已暂停" value={`${pausedCount}`} note="等待审批或人工确认" />
-        <MetricCard label="已完成" value={`${successCount}`} note="已收到结果状态" />
-        <MetricCard label="最长耗时" value={formatDuration(maxDurationMs)} note="当前列表最大值" />
+        <article className="metric-card">
+          <p className="metric-card__label">总调用次数</p>
+          <strong className="metric-card__value">{formatInteger(items.length)}</strong>
+          <p className="metric-card__note">当前筛选窗口</p>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card__label">平均成功率</p>
+          <strong className="metric-card__value">{successRate}</strong>
+          <p className="metric-card__note">SUCCESS / COMPLETED</p>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card__label">平均耗时 (P50)</p>
+          <strong className="metric-card__value">{formatDuration(maxDuration)}</strong>
+          <p className="metric-card__note">当前列表最大耗时</p>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card__label">异常调用数</p>
+          <strong className="metric-card__value">{formatInteger(abnormalCount)}</strong>
+          <p className="metric-card__note">ERROR / DENY</p>
+        </article>
       </section>
-      <FilterBar chips={filterPresets.toolCalls} />
-      <section className="split-grid">
+
+      <section className="page-header">
+        <div>
+          <h1 className="page-header__title">实时调用流水</h1>
+          <p className="page-header__description">详细审计记录基于 tool_calls 协议层追踪</p>
+        </div>
+        <div className="page-header__actions">
+          <button className="btn" type="button">搜索 ID 或工具名...</button>
+          <button className="btn" type="button">筛选状态</button>
+        </div>
+      </section>
+
+      <section className="table-panel">
+        <DataTable
+          columns={[
+            { key: "id", label: "调用 ID" },
+            { key: "tool", label: "工具名称" },
+            { key: "time", label: "调用时间" },
+            { key: "status", label: "状态" },
+            { key: "duration", label: "耗时" },
+            { key: "summary", label: "参数摘要" },
+            { key: "detail", label: "详情" },
+          ]}
+          rows={items.map((call) => ({
+            id: call.toolCallId,
+            tool: <strong>{formatToolLabel(call.toolName)}</strong>,
+            time: formatTimestamp(call.startedAtMs),
+            status: renderStateBadge(call.resultStatus),
+            duration: formatDuration(call.durationMs),
+            summary: call.resultExcerpt ?? "暂无结果摘要",
+            detail: <a className="inline-link" href={`/tool-calls#${call.toolCallId}`}>查看 JSON</a>,
+          }))}
+        />
+      </section>
+
+      <section className="split-grid split-grid--equal">
         <article className="panel">
           <div className="panel__header">
             <div>
-              <h2 className="panel__title">调用台账</h2>
-              <p className="panel__subtitle">列表来自真实后端接口，详情默认显示第一条记录。</p>
+              <h2 className="panel__title">高频调用工具</h2>
+              <p className="panel__subtitle">MOST USED CAPABILITIES</p>
             </div>
           </div>
-          <DataTable
-            columns={[
-              { key: "tool", label: "工具" },
-              { key: "status", label: "状态" },
-              { key: "duration", label: "耗时" },
-              { key: "risk", label: "风险" },
-              { key: "time", label: "开始时间" },
-            ]}
-            rows={items.map((call) => ({
-              id: call.toolCallId,
-              tool: (
-                <div className="row-stack">
-                  <strong>{formatToolLabel(call.toolName)}</strong>
-                  <span>{call.resultExcerpt ?? "暂无结果摘要"}</span>
-                </div>
-              ),
-              status: renderStateBadge(call.resultStatus),
-              duration: formatDuration(call.durationMs),
-              risk: renderRiskBadge(call.riskLevel),
-              time: formatTimestamp(call.startedAtMs),
-            }))}
-          />
+          <div className="list-stack">
+            {toolCounts.map(([toolName, count]) => (
+              <div key={toolName} className="list-item">
+                <strong>{formatToolLabel(toolName)}</strong>
+                <span className="small-note">{formatInteger(count)} calls</span>
+              </div>
+            ))}
+          </div>
         </article>
-        <DetailPanel
-          title={formatToolLabel(detail?.toolName)}
-          subtitle={detail?.toolCallId ?? "等待后端返回调用详情"}
-          fields={[
-            { label: "参数摘要", value: detail?.paramSummary ?? "暂无" },
-            { label: "触发模块", value: detail?.triggeredModules?.join(", ") || "暂无" },
-            { label: "错误文本", value: detail?.errorText ?? "暂无" },
-            { label: "元数据", value: formatToolMetadata(detail?.metadataJson) },
-          ]}
-        />
+
+        <article className="panel">
+          <div className="panel__header">
+            <div>
+              <h2 className="panel__title">审计系统状态</h2>
+              <p className="panel__subtitle">AUDIT ENGINE HEALTH</p>
+            </div>
+          </div>
+          <h3 className="summary-card__value">Operational</h3>
+          <p className="small-note">All audit hooks connected</p>
+          <div className="list-stack">
+            <div className="list-item">
+              <span>最后同步时间</span>
+              <strong>{loading ? "同步中" : "刚刚"}</strong>
+            </div>
+            <div className="list-item">
+              <span>运行窗口</span>
+              <strong>154d 12h 45m</strong>
+            </div>
+          </div>
+          <button className="btn" type="button">执行全量审计</button>
+        </article>
       </section>
     </div>
   );

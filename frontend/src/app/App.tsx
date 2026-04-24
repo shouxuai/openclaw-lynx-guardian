@@ -1,16 +1,23 @@
 import { BrowserRouter } from "react-router-dom";
 
 import { ConsoleLayout } from "../components/layout/ConsoleLayout";
+import { normalizeWebviewLocation, WEBVIEW_BASE_PATH } from "./route-paths";
 import { AppRoutes } from "./router";
 
-function resolveRouterBasename(): string {
-  const baseUrl = import.meta.env.BASE_URL.replace(/\/+$/, "");
-  return baseUrl.length > 0 ? baseUrl : "/";
+function ensureWebviewLocation(): void {
+  const normalizedLocation = normalizeWebviewLocation(window.location);
+  if (normalizedLocation === null) {
+    return;
+  }
+
+  window.history.replaceState(window.history.state, "", normalizedLocation);
 }
 
 export function App() {
+  ensureWebviewLocation();
+
   return (
-    <BrowserRouter basename={resolveRouterBasename()}>
+    <BrowserRouter basename={WEBVIEW_BASE_PATH}>
       <ConsoleLayout>
         <AppRoutes />
       </ConsoleLayout>

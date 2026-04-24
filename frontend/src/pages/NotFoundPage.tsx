@@ -7,13 +7,13 @@ export function NotFoundPage() {
     <div className="page-stack">
       <PageHeader
         title="页面不存在"
-        description="当前路由不在本地控制台静态页面范围内。"
-        eyebrow="兜底页"
+        description="当前路由不在 Lynx Guardian 控制台页面范围内。"
+        eyebrow="NOT FOUND"
       />
       <article className="panel panel--centered">
-        <p>返回总览，继续使用当前已经批准的本地控制台导航。</p>
+        <p>返回概览，继续使用当前已经批准的本地控制台导航。</p>
         <Link className="inline-link" to="/">
-          返回总览
+          返回概览
         </Link>
       </article>
     </div>

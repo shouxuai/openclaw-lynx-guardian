@@ -14,8 +14,11 @@ import type {
   SessionUpsertItem,
   ToolCallUpsertItem,
 } from "../../shared/src/ingest.js";
+import { SensitiveDataBlocker } from "../guard/sensitive.js";
 
 type JsonRecord = Record<string, unknown>;
+
+const auditExcerptRedactor = new SensitiveDataBlocker();
 
 interface BaseHookInput {
   occurredAtMs?: number;
@@ -206,6 +209,22 @@ function truncateText(value: unknown, maxLength = 240): string | undefined {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}...`;
 }
 
+function redactAuditExcerpt(value: unknown, maxLength = 320): string | undefined {
+  const text = typeof value === "string"
+    ? value.trim()
+    : typeof value === "number" || typeof value === "boolean"
+      ? String(value)
+      : "";
+  if (!text) {
+    return undefined;
+  }
+
+  const redaction = auditExcerptRedactor.redactSensitiveData(text, {
+    includePersonalFinancial: true,
+  });
+  return truncateText(redaction.text, maxLength);
+}
+
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) {
     return JSON.stringify(value);
@@ -259,6 +278,7 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
   const payloadJson = cleanRecord({
     ...(input.payloadJson ?? {}),
   });
+  const contentExcerpt = redactAuditExcerpt(input.contentExcerpt, 320);
   const eventId = buildStableId("audit", [
     input.hookName,
     input.sessionKey,
@@ -269,7 +289,7 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
     input.eventType,
     occurredAtMs,
     input.summary,
-    input.contentExcerpt,
+    contentExcerpt,
   ]);
 
   return {
@@ -299,8 +319,8 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
       title: input.title,
       summary: truncateText(input.summary, 320),
       recommendation: truncateText(input.recommendation, 320),
-      contentExcerpt: truncateText(input.contentExcerpt, 320),
-      contentHash: hashValue(input.contentExcerpt),
+      contentExcerpt,
+      contentHash: hashValue(contentExcerpt),
       payloadJson,
     },
   };
@@ -418,7 +438,7 @@ function createApprovalUpsert(input: ApprovalSnapshotInput, fallback: BaseHookIn
       expiresAtMs: input.expiresAtMs,
       resolvedAtMs: input.resolvedAtMs,
       resolution: input.resolution,
-      promptExcerpt: truncateText(input.promptExcerpt, 320),
+      promptExcerpt: redactAuditExcerpt(input.promptExcerpt, 320),
       auditSummaryJson: cleanRecord({
         ...(input.auditSummaryJson ?? {}),
       }),
@@ -567,7 +587,7 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
           direction: "input",
           title: "Inbound message received",
           summary: input.summary ?? "Inbound message evaluated by input guard.",
-          contentExcerpt: input.contentExcerpt ?? truncateText(typeof input.content === "string" ? input.content : stableSerialize(input.content), 320),
+          contentExcerpt: input.contentExcerpt ?? (typeof input.content === "string" ? input.content : stableSerialize(input.content)),
         }),
       );
       return items;
@@ -590,7 +610,7 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
           direction: "input",
           title: "Agent start evaluated",
           summary: input.summary ?? "Agent start prompt evaluated before launch.",
-          contentExcerpt: input.contentExcerpt ?? truncateText(input.promptText, 320),
+          contentExcerpt: input.contentExcerpt ?? input.promptText,
         }),
       );
       if (input.lynxCheck) {
@@ -614,7 +634,7 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
           direction: "output",
           title: "Agent finished",
           summary: input.summary ?? "Agent end hook completed.",
-          contentExcerpt: input.contentExcerpt ?? truncateText(input.outputText, 320),
+          contentExcerpt: input.contentExcerpt ?? input.outputText,
         }),
       );
       return items;

@@ -15,14 +15,25 @@ export function formatTimestamp(timestamp: number | undefined): string {
   }).format(new Date(timestamp));
 }
 
+export function formatDateOnly(timestamp: number | undefined): string {
+  if (!timestamp) {
+    return "--";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(timestamp));
+}
+
 export function formatDuration(durationMs: number | undefined): string {
   if (!durationMs) {
     return "待处理";
   }
 
   if (durationMs < 1000) {
-    return `${durationMs} 毫秒`;
+    return `${durationMs}ms`;
   }
 
-  return `${(durationMs / 1000).toFixed(1)} 秒`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
 }

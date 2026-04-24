@@ -30,6 +30,7 @@ export interface TimeSeriesPointDto {
 }
 
 export interface CommonListQuery {
+  q?: string;
   fromMs?: number;
   toMs?: number;
   sessionKey?: string;
@@ -72,6 +73,7 @@ export interface AuditEventListItemDto {
   enforcementAction: EnforcementAction;
   title: string;
   summary?: string;
+  recommendation?: string;
   contentExcerpt?: string;
   occurredAtMs: number;
 }

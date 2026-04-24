@@ -181,6 +181,7 @@ export function createQueryFixture(baseTimeMs = 1_776_928_800_000): QueryFixture
           enforcementAction: "requireApproval",
           title: "Tool call evaluated",
           summary: "Approval is required before running exec.",
+          recommendation: "Review requester identity before approving exec.",
           contentExcerpt: "exec command requires approval",
           payloadJson: {
             toolName: "exec",

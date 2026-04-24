@@ -2,7 +2,6 @@
 name: SX-security-audit
 description: Use when a managed `/lynx-check` run or a direct audit request needs security audit findings that can be delivered standalone or merged into the final Lynx report.
 ---
-
 # SX-security-audit
 
 This capability owns the audit portion of Lynx Guardian checks.
@@ -21,6 +20,17 @@ If the plugin-level managed `/lynx-check` flow uses this capability during preco
 2. keep the output easy to merge into one composite report;
 3. do not claim the final `/lynx-check` report has been sent;
 4. let the managed plugin flow handle final assembly and delivery.
+
+## Local Log Webview Note
+
+The plugin-level managed `/lynx-check` report should end with a separated, footnote-style local log Webview note. Keep this note out of the main audit body:
+
+```markdown
+---
+[本地日志页面]: <http://127.0.0.1:18789/webview>。这里汇总 Lynx Guardian 记录的审计日志、工具调用、审批和 /lynx-check 结果，可用于追踪本次安全事件。
+```
+
+Do not duplicate the note if the managed plugin flow already appended it.
 
 ## Recommended Sections
 

@@ -7,6 +7,7 @@ export function registerEventRoutes(app: FastifyInstance, repository: EventsRepo
   app.get("/events", async (request) => {
     const query = request.query as Record<string, unknown>;
     return repository.list({
+      q: readStringQuery(query.q),
       fromMs: readNumberQuery(query.fromMs),
       toMs: readNumberQuery(query.toMs),
       sessionKey: readStringQuery(query.sessionKey),

@@ -58,6 +58,25 @@ export function appendInFilter(
   parameters.push(...values);
 }
 
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+export function appendTextSearchFilter(
+  filters: string[],
+  parameters: SqlParameter[],
+  fieldNames: string[],
+  value: string | undefined,
+): void {
+  const trimmed = value?.trim();
+  if (!trimmed || fieldNames.length === 0) {
+    return;
+  }
+
+  filters.push(`(${fieldNames.map((fieldName) => `COALESCE(${fieldName}, '') LIKE ? ESCAPE '\\'`).join(" OR ")})`);
+  parameters.push(...fieldNames.map(() => `%${escapeLikePattern(trimmed)}%`));
+}
+
 export function appendDescendingCursorFilter(
   filters: string[],
   parameters: SqlParameter[],

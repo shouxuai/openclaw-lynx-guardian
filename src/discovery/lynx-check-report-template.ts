@@ -1,3 +1,5 @@
+import { appendLocalConsoleWebviewFootnote } from "../runtime/local-console-webview-note.js";
+
 export interface DetailedAuditSection {
   title: string;
   summary: string;
@@ -29,7 +31,7 @@ const SECTION_LABELS = [
 ] as const;
 
 export function renderDetailedLynxAuditReport(input: DetailedLynxAuditReportInput): string {
-  return [
+  return appendLocalConsoleWebviewFootnote([
     "# 🛡️ OpenClaw 全方位安全审计报告",
     `生成时间：${input.generatedAt}`,
     `总体评级：${input.overallRating}`,
@@ -45,5 +47,5 @@ export function renderDetailedLynxAuditReport(input: DetailedLynxAuditReportInpu
     ]),
     "## 八、优先级整改建议",
     ...input.nextActions.map((line, index) => `${index + 1}. ${line}`),
-  ].join("\n");
+  ].join("\n"));
 }

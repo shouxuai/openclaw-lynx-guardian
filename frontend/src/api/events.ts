@@ -9,6 +9,7 @@ import type {
 import { buildQueryString, fetchJson } from "./client";
 
 export interface EventListQuery extends CommonListQuery {
+  q?: string;
   hookName?: string;
   eventType?: string;
   category?: string;

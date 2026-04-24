@@ -12,6 +12,7 @@ import {
   appendEqualsFilter,
   appendInFilter,
   appendRangeFilter,
+  appendTextSearchFilter,
   buildWhereClause,
   type SqlParameter,
 } from "./query-utils.js";
@@ -54,6 +55,7 @@ interface AuditEventListRow {
   enforcement_action: string;
   title: string;
   summary: string | null;
+  recommendation: string | null;
   content_excerpt: string | null;
   occurred_at: number;
 }
@@ -88,6 +90,7 @@ export function mapAuditEventListRow(row: AuditEventListRow): AuditEventListItem
     enforcementAction: fromDbEnforcementAction(row.enforcement_action) ?? "allow",
     title: row.title,
     summary: row.summary ?? undefined,
+    recommendation: row.recommendation ?? undefined,
     contentExcerpt: row.content_excerpt ?? undefined,
     occurredAtMs: row.occurred_at,
   };
@@ -102,6 +105,27 @@ export class EventsRepository {
     const filters: string[] = [];
     const parameters: SqlParameter[] = [];
 
+    appendTextSearchFilter(filters, parameters, [
+      "event_id",
+      "session_key",
+      "run_id",
+      "tool_call_id",
+      "approval_id",
+      "request_id",
+      "hook_name",
+      "event_type",
+      "category",
+      "sub_category",
+      "direction",
+      "primary_module",
+      "risk_level",
+      "policy_decision",
+      "enforcement_action",
+      "title",
+      "summary",
+      "recommendation",
+      "content_excerpt",
+    ], query.q);
     appendRangeFilter(filters, parameters, "occurred_at", query.fromMs, query.toMs);
     appendEqualsFilter(filters, parameters, "session_key", query.sessionKey);
     appendEqualsFilter(filters, parameters, "run_id", query.runId);
@@ -146,6 +170,7 @@ export class EventsRepository {
           enforcement_action,
           title,
           summary,
+          recommendation,
           content_excerpt,
           occurred_at
         FROM audit_events

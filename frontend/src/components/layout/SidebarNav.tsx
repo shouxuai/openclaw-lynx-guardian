@@ -10,7 +10,7 @@ function NavIcon({ id }: { id: string }) {
     stroke: "currentColor",
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
-    strokeWidth: 1.8,
+    strokeWidth: 2,
     viewBox: "0 0 24 24",
   };
 
@@ -18,17 +18,19 @@ function NavIcon({ id }: { id: string }) {
     case "dashboard":
       return (
         <svg {...commonProps}>
-          <path d="M4.5 10.5 12 4l7.5 6.5" />
-          <path d="M6.5 9.5V20h11V9.5" />
-          <path d="M10 20v-5h4v5" />
+          <path d="M4 4h6v6H4z" />
+          <path d="M14 4h6v6h-6z" />
+          <path d="M4 14h6v6H4z" />
+          <path d="M14 14h6v6h-6z" />
         </svg>
       );
     case "events":
       return (
         <svg {...commonProps}>
-          <path d="M4 12h3l2-4 3 8 2-4h6" />
-          <path d="M5 5.5h14" />
-          <path d="M5 18.5h14" />
+          <path d="M7 3h10v4H7z" />
+          <path d="M5 7h14v14H5z" />
+          <path d="M8 12h8" />
+          <path d="M8 16h6" />
         </svg>
       );
     case "tool-calls":
@@ -50,29 +52,16 @@ function NavIcon({ id }: { id: string }) {
     case "lynx-checks":
       return (
         <svg {...commonProps}>
-          <path d="M12 6.5a5.5 5.5 0 1 1 0 11" />
-          <path d="M12 3.5v2" />
-          <path d="M12 18.5v2" />
-          <path d="M20.5 12h-2" />
-          <path d="M5.5 12h-2" />
-          <path d="m17.7 6.3-1.4 1.4" />
-          <path d="m7.7 16.3-1.4 1.4" />
-        </svg>
-      );
-    case "sessions":
-      return (
-        <svg {...commonProps}>
-          <path d="M5 7.5h10a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H10l-4 3v-3H5a3 3 0 0 1-3-3v-4a3 3 0 0 1 3-3Z" />
-          <path d="M8 11.5h7" />
-          <path d="M8 14.5h4.5" />
+          <path d="M7 5h10a2 2 0 0 1 2 2v12H5V7a2 2 0 0 1 2-2Z" />
+          <path d="m8.8 13 2 2 4.4-5" />
+          <path d="M9 3h6v4H9z" />
         </svg>
       );
     case "tokens":
       return (
         <svg {...commonProps}>
-          <ellipse cx="12" cy="6.5" rx="5.5" ry="2.5" />
-          <path d="M6.5 6.5v5c0 1.4 2.5 2.5 5.5 2.5s5.5-1.1 5.5-2.5v-5" />
-          <path d="M6.5 11.5v5c0 1.4 2.5 2.5 5.5 2.5s5.5-1.1 5.5-2.5v-5" />
+          <path d="M8 18a7 7 0 1 1 0-12" />
+          <circle cx="14" cy="12" r="7" />
         </svg>
       );
     default:
@@ -84,11 +73,8 @@ export function SidebarNav() {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
+        <h1 className="sidebar__title">OpenClaw</h1>
         <p className="sidebar__eyebrow">GUARDIAN CONSOLE</p>
-        <h1 className="sidebar__title">日志控制台</h1>
-        <p className="sidebar__summary">
-          把本地守护日志整理成值班工作台，便于快速巡查、人工复核和事后回放。
-        </p>
       </div>
 
       <nav aria-label="主导航" className="sidebar__nav">
@@ -101,16 +87,19 @@ export function SidebarNav() {
             end={item.path === "/"}
             to={item.path}
           >
-            <span className="sidebar__linkMark">
-              <NavIcon id={item.id} />
-            </span>
-            <span>
-              <span className="sidebar__linkLabel">{item.label}</span>
-              <span className="sidebar__linkDescription">{item.description}</span>
-            </span>
+            <NavIcon id={item.id} />
+            <span className="sidebar__linkLabel">{item.label}</span>
           </NavLink>
         ))}
       </nav>
+
+      <div className="sidebar__user">
+        <div aria-hidden="true" className="sidebar__avatar">系</div>
+        <div>
+          <p className="sidebar__userName">系统管理员</p>
+          <p className="sidebar__userMeta">admin@openclaw.io</p>
+        </div>
+      </div>
     </aside>
   );
 }

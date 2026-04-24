@@ -49,6 +49,7 @@ import { buildApprovalRequestFingerprint } from "./approval-request-fingerprint.
 import { persistGrantFromApproval } from "./tool-approval-runtime.js";
 import { buildParamSummary } from "./policy-runtime.js";
 import { hasManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
+import { appendLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";
 import { ensureParentDirectory } from "../discovery/pending-discovery-store.js";
 
 export function describeDeliveryTarget(ctx: any): string {
@@ -149,7 +150,7 @@ export function appendFeishuNativeApprovalGuidance(text: string): string {
     "不要再使用 `/lynx-approve`。",
   ].filter(Boolean);
 
-  return lines.join("\n");
+  return appendLocalConsoleWebviewFootnote(lines.join("\n"));
 }
 
 export function buildFeishuNativeToolApprovalReplyPrompt(params: {
@@ -161,7 +162,7 @@ export function buildFeishuNativeToolApprovalReplyPrompt(params: {
   confirmationPhrase: string;
 }): string {
   const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
-  return [
+  const prompt = [
     `[Lynx Guardian] ${params.toolName} 已进入原生审批窗口。`,
     `模块: ${params.module}`,
     `风险: ${params.riskLevel}`,
@@ -171,6 +172,10 @@ export function buildFeishuNativeToolApprovalReplyPrompt(params: {
     `如果你之前习惯回复“${params.confirmationPhrase}”，本次请直接回复上面的 /approve 命令，或在 webchat 中完成审批。`,
     "如使用 Feishu，请直接回复上面的 /approve 命令。",
   ].join("\n");
+
+  return params.riskLevel === "L3"
+    ? appendLocalConsoleWebviewFootnote(prompt)
+    : prompt;
 }
 
 function isPluginSubsystem(ctx: any): boolean {
@@ -616,7 +621,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     timeoutMs: number;
   }): string {
     const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
-    return [
+    const prompt = [
       `[Lynx Guardian] 工具 ${params.toolName} 需要 owner 审批。`,
       `模块: ${params.module}`,
       `风险: ${params.riskLevel}`,
@@ -626,6 +631,10 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       "仅接受已配置 owner/approver 的 Feishu ou_id 审批回复。",
       "审批通过后会自动继续执行刚才的请求，无需重新发送。",
     ].join("\n");
+
+    return params.riskLevel === "L3"
+      ? appendLocalConsoleWebviewFootnote(prompt)
+      : prompt;
   }
 
   function buildFeishuLocalApprovalPendingBlockReason(params: {
@@ -634,7 +643,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     module: string;
     riskLevel: string;
   }): string {
-    return [
+    const blockReason = [
       `[Lynx Guardian] ${params.toolName} 正在等待 owner 审批。`,
       `模块: ${params.module}`,
       `风险: ${params.riskLevel}`,
@@ -642,6 +651,10 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       `如需拒绝：${LOCAL_TOOL_APPROVAL_COMMAND} ${params.approvalToken} deny`,
       "审批通过后会自动继续执行刚才的请求，无需重新发送。",
     ].join("\n");
+
+    return params.riskLevel === "L3"
+      ? appendLocalConsoleWebviewFootnote(blockReason)
+      : blockReason;
   }
 
   function buildFeishuApprovedReplayContext(params: {

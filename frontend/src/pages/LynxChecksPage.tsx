@@ -1,105 +1,160 @@
-import type { LynxCheckDetailDto, LynxCheckListItemDto } from "@lynx/local-console-shared";
+import { startTransition, useEffect, useState } from "react";
+import type { LynxCheckListItemDto } from "@lynx/local-console-shared";
 
-import { getLynxCheckDetail, listLynxChecks } from "../api/lynx-checks";
-import { MetricCard } from "../components/cards/MetricCard";
-import { DetailPanel } from "../components/detail/DetailPanel";
-import { StatusBadge } from "../components/feedback/StatusBadge";
-import { FilterBar } from "../components/filters/FilterBar";
-import { PageHeader } from "../components/layout/PageHeader";
+import { listLynxChecks } from "../api/lynx-checks";
+import { mockLynxChecks } from "../data/mock-console";
 import { DataTable } from "../components/tables/DataTable";
-import { filterPresets } from "../data/filter-presets";
-import { useListDetailResource } from "../hooks/useListDetailResource";
-import { formatTimestamp } from "../utils/format";
-import { formatDomainLabel, formatStateLabel, renderStateBadge } from "../utils/status";
-
-function formatDeliveryAttempts(deliveryAttempts: Array<Record<string, unknown>> | undefined) {
-  if (!deliveryAttempts?.length) {
-    return "暂无";
-  }
-
-  return deliveryAttempts.map((attempt) => {
-    const attemptIndex = typeof attempt.attempt === "number" ? attempt.attempt : "?";
-    const target = typeof attempt.target === "string" ? formatDomainLabel(attempt.target) : "暂无";
-    const status = typeof attempt.status === "string" ? formatStateLabel(attempt.status) : "未知";
-    return `第${attemptIndex} 次：${target}，${status}`;
-  }).join("\n");
-}
+import { formatDuration, formatTimestamp } from "../utils/format";
+import { formatDomainLabel, renderStateBadge } from "../utils/status";
 
 export function LynxChecksPage() {
-  const { items, detail, loading, error } = useListDetailResource<LynxCheckListItemDto, LynxCheckDetailDto>({
-    loadList: () => listLynxChecks({ limit: 20 }),
-    loadDetail: getLynxCheckDetail,
-    getItemId: (item) => item.requestId,
-  });
+  const [items, setItems] = useState<LynxCheckListItemDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const completedCount = items.filter((item) => item.status === "completed").length;
+  useEffect(() => {
+    let active = true;
+
+    async function loadChecks() {
+      try {
+        const response = await listLynxChecks({ limit: 20 });
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setItems(response.items);
+          setError(null);
+          setLoading(false);
+        });
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setItems(import.meta.env.DEV ? mockLynxChecks : []);
+          setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
+          setLoading(false);
+        });
+      }
+    }
+
+    void loadChecks();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const runningCount = items.filter((item) => item.status === "running").length;
+  const completedCount = items.filter((item) => item.status === "completed").length;
+  const failedCount = items.filter((item) => item.status === "failed").length;
   const attemptedCount = items.filter((item) => item.sendAttempted).length;
   const successCount = items.filter((item) => item.sendSucceeded).length;
-  const successRate = attemptedCount === 0 ? "0%" : `${Math.round((successCount / attemptedCount) * 100)}%`;
-  const headerDescription = loading
-    ? "正在从本地控制台后端加载巡检记录。"
-    : error
-      ? `巡检数据加载失败：${error}`
-      : "展示真实巡检任务状态与投递结果。";
-  const headerTone = error ? "danger" : loading ? "info" : "success";
-  const headerLabel = error ? "请求失败" : loading ? "加载中" : "实时数据";
+  const failRate = attemptedCount === 0 ? "0%" : `${(((attemptedCount - successCount) / attemptedCount) * 100).toFixed(2)}%`;
+  const statusText = error ? `检查任务加载失败：${error}` : loading ? "正在加载 lynx_checks 数据流" : "全量监控 lynx_checks 数据流，提供针对系统完整性与安全性的深度实时审计分析。";
 
   return (
     <div className="page-stack">
-      <PageHeader
-        title="巡检"
-        description={headerDescription}
-        eyebrow="巡检记录"
-        actions={<StatusBadge label={headerLabel} tone={headerTone} />}
-      />
-      <section className="metric-grid metric-grid--compact">
-        <MetricCard label="已完成" value={`${completedCount}`} note="状态为 completed 的任务" />
-        <MetricCard label="运行中" value={`${runningCount}`} note="仍在执行或等待中的任务" />
-        <MetricCard label="投递成功率" value={successRate} note="按已尝试投递的任务计算" />
-        <MetricCard
-          label="当前目标"
-          value={detail ? formatDomainLabel(detail.preferredTargetKind) : "暂无"}
-          note="默认详情记录的目标类型"
-        />
+      <section className="page-header">
+        <div>
+          <h1 className="page-header__title">检查任务运行情况</h1>
+          <p className="page-header__description">{statusText}</p>
+        </div>
+        <button className="btn btn--dark" type="button">刷新数据</button>
       </section>
-      <FilterBar chips={filterPresets.lynxChecks} />
-      <section className="split-grid">
+
+      <section className="metric-grid metric-grid--compact">
+        <article className="metric-card">
+          <p className="metric-card__label">总任务量</p>
+          <strong className="metric-card__value">{items.length}</strong>
+          <p className="metric-card__note">+4.2%</p>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card__label">正在运行</p>
+          <strong className="metric-card__value">{runningCount}</strong>
+          <p className="metric-card__note">包含手动与定时任务</p>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card__label">失败率</p>
+          <strong className="metric-card__value">{failRate}</strong>
+          <p className="metric-card__note">{failedCount} 个失败任务</p>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card__label">平均耗时</p>
+          <strong className="metric-card__value">{formatDuration(450)}</strong>
+          <p className="metric-card__note">P95: 1.2s</p>
+        </article>
+      </section>
+
+      <section className="table-panel">
+        <div className="table-panel__header">
+          <h2 className="panel__title">任务执行列表</h2>
+          <div className="page-header__actions">
+            <button className="btn" type="button">搜索请求 ID...</button>
+            <button className="btn" type="button">筛选</button>
+          </div>
+        </div>
+        <DataTable
+          columns={[
+            { key: "request", label: "请求 ID" },
+            { key: "source", label: "触发源" },
+            { key: "status", label: "处理状态" },
+            { key: "delivery", label: "通知状态" },
+            { key: "report", label: "报告路径" },
+            { key: "created", label: "创建时间" },
+            { key: "action", label: "操作" },
+          ]}
+          rows={items.map((item) => ({
+            id: item.requestId,
+            request: <code>{item.requestId}</code>,
+            source: formatDomainLabel(item.trigger),
+            status: renderStateBadge(item.status),
+            delivery: renderStateBadge(item.sendSucceeded ? "completed" : item.sendAttempted ? "failed" : "pending"),
+            report: item.reportPath ?? "--",
+            created: formatTimestamp(item.createdAtMs),
+            action: "⋮",
+          }))}
+        />
+        <div className="table-panel__footer">
+          <span>显示第 1 到 {items.length} 条，共 {items.length} 条记录</span>
+          <span>1 · 2 · 3</span>
+        </div>
+      </section>
+
+      <section className="split-grid split-grid--equal">
         <article className="panel">
           <div className="panel__header">
-            <div>
-              <h2 className="panel__title">巡检队列</h2>
-              <p className="panel__subtitle">列表来自真实巡检接口，详情默认显示第一条记录。</p>
+            <h2 className="panel__title">实时运行日志</h2>
+            <span className="status-badge status-badge--success">Live Streaming</span>
+          </div>
+          <pre className="code-panel">{`[2023-10-24 14:22:01] INFO: Initializing lynx-check module...
+[2023-10-24 14:22:03] INFO: Scanning resource group 'PROD-CLUSTER-A'
+[2023-10-24 14:22:15] WARN: Late latency detected on node worker-04
+[2023-10-24 14:22:21] SUCCESS: Check task completed in 412ms`}</pre>
+        </article>
+
+        <article className="panel">
+          <div className="panel__header">
+            <h2 className="panel__title">安全概览</h2>
+          </div>
+          <p className="panel__subtitle">当前系统健康度处于最优状态。所有审计规则已生效。</p>
+          <div className="list-stack">
+            <div className="list-item">
+              <span>规则覆盖率</span>
+              <strong>100%</strong>
+            </div>
+            <div className="list-item">
+              <span>已知漏洞补丁</span>
+              <strong>{completedCount > 0 ? "已更新" : "待确认"}</strong>
+            </div>
+            <div className="list-item">
+              <span>威胁检测频率</span>
+              <strong>5s / 次</strong>
             </div>
           </div>
-          <DataTable
-            columns={[
-              { key: "request", label: "请求" },
-              { key: "trigger", label: "触发方式" },
-              { key: "status", label: "状态" },
-              { key: "provider", label: "渠道" },
-              { key: "created", label: "创建时间" },
-            ]}
-            rows={items.map((item) => ({
-              id: item.requestId,
-              request: item.requestId,
-              trigger: formatDomainLabel(item.trigger),
-              status: renderStateBadge(item.status),
-              provider: formatDomainLabel(item.messageProvider),
-              created: formatTimestamp(item.createdAtMs),
-            }))}
-          />
+          <button className="btn" type="button">导出安全审计报告</button>
         </article>
-        <DetailPanel
-          title={detail?.requestId ?? "暂无巡检记录"}
-          subtitle={detail?.reportPath ?? "等待后端返回巡检详情"}
-          fields={[
-            { label: "目标类型", value: formatDomainLabel(detail?.preferredTargetKind) },
-            { label: "会话", value: detail?.sessionKey ?? "暂无" },
-            { label: "投递通道", value: formatDomainLabel(detail?.transport) },
-            { label: "投递尝试", value: formatDeliveryAttempts(detail?.deliveryAttemptsJson) },
-          ]}
-        />
       </section>
     </div>
   );

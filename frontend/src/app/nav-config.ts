@@ -2,50 +2,44 @@ export interface NavItem {
   id: string;
   label: string;
   path: string;
-  description: string;
+  pageTitle: string;
 }
 
 export const PRIMARY_NAV_ITEMS: NavItem[] = [
   {
     id: "dashboard",
-    label: "总览",
+    label: "概览",
     path: "/",
-    description: "查看整体风险态势与最新记录。",
+    pageTitle: "安全概览",
   },
   {
     id: "events",
-    label: "事件",
+    label: "审计日志",
     path: "/events",
-    description: "查看统一审计时间线。",
+    pageTitle: "审计控制台",
   },
   {
     id: "tool-calls",
     label: "工具调用",
     path: "/tool-calls",
-    description: "追踪执行过程与调用风险。",
+    pageTitle: "工具调用审计",
   },
   {
     id: "approvals",
-    label: "审批",
+    label: "审批管理",
     path: "/approvals",
-    description: "查看人工复核与授权状态。",
+    pageTitle: "审批管理",
   },
   {
     id: "lynx-checks",
-    label: "巡检",
+    label: "检查任务",
     path: "/lynx-checks",
-    description: "查看巡检运行与投递状态。",
-  },
-  {
-    id: "sessions",
-    label: "会话",
-    path: "/sessions",
-    description: "查看会话健康与历史概况。",
+    pageTitle: "检查任务",
   },
   {
     id: "tokens",
-    label: "令牌",
+    label: "Token 统计",
     path: "/tokens",
-    description: "查看用量、趋势与效率。",
+    pageTitle: "Token 统计报表",
   },
 ];

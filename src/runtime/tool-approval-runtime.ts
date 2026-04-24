@@ -3,6 +3,7 @@ import {
   saveApprovalGrant,
   type ApprovalRiskLevel,
 } from "./approval-grant-store.js";
+import { appendLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";
 import type { ChannelProfile } from "./requester-provenance-store.js";
 
 export function toApprovalRiskLevel(value?: string): ApprovalRiskLevel | undefined {
@@ -20,17 +21,21 @@ export function buildToolApprovalRequest(params: {
   timeoutMs: number;
   onResolution: (decision: ToolApprovalResolution) => Promise<void> | void;
 }): ToolApprovalRequest {
+  const description = [
+    `[module] ${params.module}`,
+    `[risk] ${params.riskLevel}`,
+    params.description,
+    "Approval will resume the current tool call.",
+  ].join("\n");
+
   return {
     title:
       params.riskLevel === "L3"
         ? `Lynx Guardian Approval (High Risk): ${params.toolName}`
         : `Lynx Guardian Approval: ${params.toolName}`,
-    description: [
-      `[module] ${params.module}`,
-      `[risk] ${params.riskLevel}`,
-      params.description,
-      "Approval will resume the current tool call.",
-    ].join("\n"),
+    description: params.riskLevel === "L3"
+      ? appendLocalConsoleWebviewFootnote(description)
+      : description,
     severity: params.riskLevel === "L3" ? "critical" : "warning",
     timeoutMs: params.timeoutMs,
     timeoutBehavior: "deny",

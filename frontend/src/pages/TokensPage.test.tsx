@@ -22,7 +22,7 @@ describe("TokensPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders live token data from the backend APIs", async () => {
+  it("renders token statistics in the approved reference structure", async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse({
         totalTokens: 1_322,
@@ -36,7 +36,7 @@ describe("TokensPage", () => {
       .mockResolvedValueOnce(createJsonResponse({
         items: [{
           usageEventId: "token-usage:1",
-          sessionKey: "agent:main:main",
+          sessionKey: "#LX-90821-AF",
           provider: "bailian",
           model: "glm-5",
           inputTokens: 1_300,
@@ -56,9 +56,13 @@ describe("TokensPage", () => {
 
     render(<TokensPage />);
 
-    await screen.findByText("包含估算回填记录");
+    expect(screen.getByText("Token 统计报表")).toBeInTheDocument();
+    expect(screen.getByText("今日消耗总数")).toBeInTheDocument();
+    expect(screen.getByText("输入/输出比例")).toBeInTheDocument();
+    expect(screen.getByText("7 日消耗趋势分析")).toBeInTheDocument();
+    expect(screen.getByText("实时审计数据流")).toBeInTheDocument();
+    await screen.findByText("bailian / glm-5");
     expect(screen.getAllByText("1,322").length).toBeGreaterThan(0);
-    expect(screen.getByText("bailian / glm-5")).toBeInTheDocument();
     expect(screen.getAllByText("估算").length).toBeGreaterThan(0);
 
     await waitFor(() => {

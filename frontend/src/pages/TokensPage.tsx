@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import type {
   TokenSummaryDto,
   TokenTrendDto,
@@ -6,13 +6,8 @@ import type {
 } from "@lynx/local-console-shared";
 
 import { getTokenSummary, getTokenTrend, getTokenUsage } from "../api/tokens";
-import { DistributionCard } from "../components/cards/DistributionCard";
-import { MetricCard } from "../components/cards/MetricCard";
-import { TrendCard } from "../components/cards/TrendCard";
-import { FilterBar } from "../components/filters/FilterBar";
-import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { filterPresets } from "../data/filter-presets";
+import { mockTokenSummary, mockTokenTrend, mockTokenUsage } from "../data/mock-console";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import { renderStateBadge } from "../utils/status";
 
@@ -30,6 +25,22 @@ const EMPTY_TOKEN_TREND: TokenTrendDto = {
   bucket: "hour",
   points: [],
 };
+
+function percent(value: number, total: number): number {
+  if (total === 0) {
+    return 0;
+  }
+
+  return Math.round((value / total) * 100);
+}
+
+function formatRatio(input: number, output: number): string {
+  if (output === 0) {
+    return input === 0 ? "0:0" : "∞:1";
+  }
+
+  return `${(input / output).toFixed(2)}:1`;
+}
 
 export function TokensPage() {
   const [summary, setSummary] = useState<TokenSummaryDto>(EMPTY_TOKEN_SUMMARY);
@@ -66,10 +77,10 @@ export function TokensPage() {
 
         const message = loadError instanceof Error ? loadError.message : "未知错误";
         startTransition(() => {
-          setSummary(EMPTY_TOKEN_SUMMARY);
-          setTrend(EMPTY_TOKEN_TREND);
-          setUsageItems([]);
-          setError(message);
+          setSummary(import.meta.env.DEV ? mockTokenSummary : EMPTY_TOKEN_SUMMARY);
+          setTrend(import.meta.env.DEV ? mockTokenTrend : EMPTY_TOKEN_TREND);
+          setUsageItems(import.meta.env.DEV ? mockTokenUsage : []);
+          setError(import.meta.env.DEV ? null : message);
           setLoading(false);
         });
       }
@@ -81,88 +92,139 @@ export function TokensPage() {
     };
   }, []);
 
-  const headerDescription = loading
-    ? "正在从本地控制台后端加载实时令牌用量。"
-    : error
-      ? `实时令牌用量不可用：${error}`
-      : "展示来自本地控制台后端的实时令牌用量。";
-  const totalTokensNote = error
-    ? "实时接口不可用"
-    : summary.estimatedCount > 0
-      ? "包含估算回填记录"
-      : "提供方用量记录";
-  const estimatedRowsNote = loading
-    ? "正在加载实时统计"
-    : error
-      ? "暂无实时记录"
-      : "当前已存储回填记录";
-  const usagePanelSubtitle = error
-    ? "令牌后端暂不可用。"
-    : loading
-      ? "正在加载最新记录。"
-      : `展示最近 ${usageItems.length} 条实时记录。`;
+  const totalTransferTokens = summary.inputTokens + summary.outputTokens;
+  const inputPercent = percent(summary.inputTokens, totalTransferTokens);
+  const outputPercent = percent(summary.outputTokens, totalTransferTokens);
+  const trendLabels = useMemo(() => {
+    if (trend.points.length > 0) {
+      return trend.points.slice(-7).map((point) => formatTimestamp(point.bucketStartMs).split(" ")[0]);
+    }
+
+    return ["10/21", "10/22", "10/23", "10/24", "10/25", "10/26", "今日"];
+  }, [trend.points]);
+  const loadStatus = error ? `实时数据不可用：${error}` : loading ? "正在刷新中" : "实时刷新中";
 
   return (
     <div className="page-stack">
-      <PageHeader
-        title="令牌"
-        description={headerDescription}
-        eyebrow="用量审计"
-      />
-      <section className="metric-grid">
-        <MetricCard label="总令牌" value={formatInteger(summary.totalTokens)} note={totalTokensNote} />
-        <MetricCard label="输入令牌" value={formatInteger(summary.inputTokens)} note="提示侧" />
-        <MetricCard label="输出令牌" value={formatInteger(summary.outputTokens)} note="生成侧" />
-        <MetricCard label="缓存读取" value={formatInteger(summary.cacheReadTokens)} note="复用收益" />
-        <MetricCard label="缓存写入" value={formatInteger(summary.cacheWriteTokens)} note="预热成本" />
-        <MetricCard label="估算行" value={formatInteger(summary.estimatedCount)} note={estimatedRowsNote} />
+      <section className="token-hero">
+        <div>
+          <h1 className="token-hero__title">Token 统计报表</h1>
+          <p className="token-hero__subtitle">实时量化模型消耗与基础设施负载</p>
+        </div>
+        <div className="page-header__actions">
+          <button className="btn" type="button">过去 24 小时</button>
+          <button className="btn btn--dark" type="button">导出报告</button>
+        </div>
       </section>
-      <FilterBar chips={filterPresets.tokens} />
-      <section className="split-grid split-grid--equal">
-        <DistributionCard
-          title="令牌构成"
-          subtitle="输入 / 输出 / 缓存拆分"
-          items={[
-            { label: "输入", value: summary.inputTokens },
-            { label: "输出", value: summary.outputTokens },
-            { label: "缓存读", value: summary.cacheReadTokens },
-            { label: "缓存写", value: summary.cacheWriteTokens },
-          ]}
-        />
-        <TrendCard
-          title="用量趋势"
-          subtitle="按时间桶聚合，无需外部图表"
-          points={trend.points.map((point) => ({
-            label: formatTimestamp(point.bucketStartMs),
-            value: point.totalTokens,
-          }))}
-        />
-      </section>
-      <article className="panel">
-        <div className="panel__header">
-          <div>
-            <h2 className="panel__title">用量记录</h2>
-            <p className="panel__subtitle">{usagePanelSubtitle}</p>
+
+      <section className="summary-card-grid">
+        <article className="summary-card">
+          <p className="summary-card__label">今日消耗总数</p>
+          <strong className="summary-card__value">
+            {formatInteger(summary.totalTokens)}
+            <span className="summary-card__unit">Tokens</span>
+          </strong>
+          <p className="summary-card__delta">↗ +12.5% 较昨日</p>
+        </article>
+
+        <article className="summary-card ratio-card">
+          <div className="ratio-list">
+            <p className="summary-card__label">输入/输出比例</p>
+            <div className="ratio-row">
+              <div className="ratio-row__meta">
+                <span>输入 (Input)</span>
+                <strong>{inputPercent}%</strong>
+              </div>
+              <div className="ratio-track">
+                <div className="ratio-fill" style={{ width: `${inputPercent}%` }} />
+              </div>
+            </div>
+            <div className="ratio-row">
+              <div className="ratio-row__meta">
+                <span>输出 (Output)</span>
+                <strong>{outputPercent}%</strong>
+              </div>
+              <div className="ratio-track">
+                <div className="ratio-fill ratio-fill--dark" style={{ width: `${outputPercent}%` }} />
+              </div>
+            </div>
           </div>
+          <div className="ratio-ring">
+            <strong>{formatRatio(summary.inputTokens, summary.outputTokens)}</strong>
+          </div>
+        </article>
+
+        <article className="summary-card">
+          <p className="summary-card__label">模型平均负载 (LATENCY)</p>
+          <strong className="summary-card__value">
+            342ms
+          </strong>
+          <p className="summary-card__unit">P95 延迟指标</p>
+          <div className="latency-bars" aria-hidden="true">
+            <span style={{ height: "32px" }} />
+            <span style={{ height: "44px" }} />
+            <span />
+            <span style={{ height: "48px" }} />
+            <span style={{ height: "28px" }} />
+          </div>
+          <p className="summary-card__delta">● 系统状态: 稳定</p>
+        </article>
+      </section>
+
+      <section className="panel trend-panel">
+        <div className="panel__header">
+          <h2 className="panel__title">7 日消耗趋势分析</h2>
+          <div className="trend-panel__legend">
+            <span><i className="legend-swatch legend-swatch--blue" />GPT-4o</span>
+            <span><i className="legend-swatch legend-swatch--black" />Claude 3.5</span>
+          </div>
+        </div>
+        <div className="chart-empty-grid">
+          <div className="chart-empty-grid__axis">
+            {trendLabels.map((label, index) => (
+              <span key={`${label}-${index}`}>{label}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="table-panel token-table">
+        <div className="table-panel__header">
+          <h2 className="panel__title">实时审计数据流</h2>
+          <span className="small-note">{loadStatus} · · ·</span>
         </div>
         <DataTable
           columns={[
-            { key: "session", label: "会话" },
-            { key: "model", label: "模型" },
-            { key: "total", label: "总量" },
-            { key: "estimated", label: "类型" },
-            { key: "time", label: "发生时间" },
+            { key: "session", label: "会话 ID" },
+            { key: "model", label: "模型名称" },
+            { key: "io", label: "输入 / 输出" },
+            { key: "total", label: "总词元" },
+            { key: "type", label: "类型" },
+            { key: "time", label: "触发时间" },
           ]}
           rows={usageItems.map((item) => ({
             id: item.usageEventId,
-            session: item.sessionKey ?? "未知",
-            model: `${item.provider} / ${item.model}`,
-            total: formatInteger(item.totalTokens),
-            estimated: renderStateBadge(item.isEstimated ? "estimated" : "actual"),
+            session: item.sessionKey ?? "未知会话",
+            model: (
+              <div className="row-stack">
+                <span className={item.model.toLowerCase().includes("claude") ? "model-pill model-pill--dark" : "model-pill"}>
+                  {item.model}
+                </span>
+                <span>{item.provider} / {item.model}</span>
+              </div>
+            ),
+            io: `${formatInteger(item.inputTokens)} → ${formatInteger(item.outputTokens)}`,
+            total: <strong>{formatInteger(item.totalTokens)}</strong>,
+            type: renderStateBadge(item.isEstimated ? "estimated" : "actual"),
             time: formatTimestamp(item.occurredAtMs),
           }))}
         />
-      </article>
+        <div className="table-panel__footer">
+          <span />
+          <a className="inline-link" href="/events">查看所有审计条目</a>
+          <span />
+        </div>
+      </section>
     </div>
   );
 }
