@@ -1,4 +1,4 @@
-
+import type { IncomingMessage, ServerResponse } from "http";
 import type { OpenClawDiscoveryConfig } from "./discovery/openclaw-discovery.js";
 
 export interface Logger {
@@ -10,6 +10,17 @@ export interface Logger {
 
 export interface PluginConfig {
   enabled?: boolean;
+  localConsole?: {
+    enabled?: boolean;
+    autoStart?: boolean;
+    host?: string;
+    port?: number;
+    dataDir?: string;
+    requestTimeoutMs?: number;
+    flushIntervalMs?: number;
+    maxBatchItems?: number;
+    maxQueueItems?: number;
+  };
   selfSafetyGuard?: {
     enabled?: boolean;
     inputGuard?: boolean;
@@ -159,6 +170,22 @@ export interface AgentEndEvent {
   [key: string]: any;
 }
 
+export interface LlmOutputEvent {
+  runId: string;
+  sessionId: string;
+  provider: string;
+  model: string;
+  assistantTexts: string[];
+  lastAssistant?: unknown;
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    total?: number;
+  };
+}
+
 export interface GatewayStartEvent {
   port?: number;
   [key: string]: any;
@@ -277,6 +304,15 @@ export interface HookApi {
 export interface OpenClawPluginApi {
   logger: Logger;
   config: PluginConfig;
+  registerHttpRoute(params: {
+    path: string;
+    auth: "gateway" | "plugin";
+    match?: "exact" | "prefix";
+    handler: (
+      req: IncomingMessage,
+      res: ServerResponse,
+    ) => Promise<boolean | void> | boolean | void;
+  }): void;
   on(
     event: "before_dispatch",
     handler: (
@@ -311,6 +347,13 @@ export interface OpenClawPluginApi {
       event: AgentEndEvent,
       ctx: EventContext
     ) => Promise<void>
+  ): void;
+  on(
+    event: "llm_output",
+    handler: (
+      event: LlmOutputEvent,
+      ctx: EventContext
+    ) => Promise<void> | void
   ): void;
   on(
     event: "gateway_start",

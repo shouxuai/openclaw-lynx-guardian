@@ -9,7 +9,9 @@ import {
   DEFAULT_GATEWAY_CONTAINER,
   DEFAULT_PLUGIN_NAME,
   assessGatewayLogs,
+  buildContainerSubprojectPath,
   buildDevSyncPlan,
+  buildInstallLocalConsoleRuntimeDepsShellCommand,
   findStalePluginManagedDirectories,
   pickGatewayContainer,
   resolveOpenClawHome,
@@ -92,8 +94,8 @@ Options:
   --plugin-name <name>      Override the plugin directory name
   --repo-root <path>        Use a different repo root (for worktrees)
   --logs <count>            Tail this many container log lines after restart (default: 200)
-  --dry-run                 Print the sync plan without changing files
-  --skip-restart            Stage and copy files but do not restart the gateway
+  --dry-run                 Print the sync plan and runtime-deps command without changing files
+  --skip-restart            Stage files and install runtime deps but do not restart the gateway
 `);
 }
 
@@ -254,6 +256,31 @@ function copyPluginIntoContainer(plan, stagePluginPath) {
   ]);
 }
 
+function installLocalConsoleRuntimeDeps(plan, { dryRun = false } = {}) {
+  const backendContainerPath = buildContainerSubprojectPath(plan.containerPluginPath, "backend");
+  const shellCommand = buildInstallLocalConsoleRuntimeDepsShellCommand({
+    containerPluginPath: plan.containerPluginPath,
+  });
+
+  if (dryRun) {
+    console.log(
+      `[lynx-dev-sync] dry-run runtime deps: docker exec -u node:node ${plan.containerName} sh -lc ${shellQuote(shellCommand)}`,
+    );
+    return;
+  }
+
+  console.log(`[lynx-dev-sync] installing local-console backend runtime deps in ${backendContainerPath}`);
+  runCommand("docker", [
+    "exec",
+    "-u",
+    "node:node",
+    plan.containerName,
+    "sh",
+    "-lc",
+    shellCommand,
+  ]);
+}
+
 function restartGateway(containerName) {
   runCommand("docker", ["restart", containerName]);
 }
@@ -287,6 +314,7 @@ function logPlan(plan, options) {
   console.log(`  hostHooksPath: ${plan.hostHooksPath}`);
   console.log(`  hostSkillsPath: ${plan.hostSkillsPath}`);
   console.log(`  containerPluginPath: ${plan.containerPluginPath}`);
+  console.log(`  localConsoleBackendPath: ${buildContainerSubprojectPath(plan.containerPluginPath, "backend")}`);
   console.log(`  dryRun: ${options.dryRun}`);
   console.log(`  skipRestart: ${options.skipRestart}`);
 }
@@ -313,12 +341,14 @@ async function main() {
 
   try {
     if (options.dryRun) {
+      installLocalConsoleRuntimeDeps(plan, { dryRun: true });
       console.log("[lynx-dev-sync] dry-run finished");
       return;
     }
 
     prepareContainerPluginPath(plan);
     copyPluginIntoContainer(plan, stagePluginPath);
+    installLocalConsoleRuntimeDeps(plan);
 
     if (options.skipRestart) {
       console.log("[lynx-dev-sync] sync finished without restart (--skip-restart)");

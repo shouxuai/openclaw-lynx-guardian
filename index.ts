@@ -191,6 +191,16 @@ import {
   adaptContentCheckResult,
   adaptToolCheckResult,
 } from "./src/runtime/api-risk-adapter.js";
+import {
+  createLocalConsoleTokenProvider,
+  ensureLocalConsoleToken,
+} from "./src/runtime/local-console-auth.js";
+import { createLocalConsoleIngestClient } from "./src/runtime/local-console-client.js";
+import { resolveLocalConsoleRuntimeConfig } from "./src/runtime/local-console-config.js";
+import { createLocalConsoleGatewayRouteRegistrations } from "./src/runtime/local-console-gateway-routes.js";
+import { createLocalConsoleHookHandlers } from "./src/runtime/local-console-hook-handlers.js";
+import { createLocalConsoleSupervisor } from "./src/runtime/local-console-supervisor.js";
+import { createLocalConsoleTokenHook } from "./src/runtime/local-console-token-hook.js";
 import { resolvePluginRuntimeConfig } from "./src/runtime/plugin-runtime-config.js";
 import {
   buildDeliveryTargetSnapshot,
@@ -207,6 +217,50 @@ export default function setup(api: OpenClawPluginApi) {
   log.info("[lynx-guardian] Plugin loading...");
   const sensitiveDataBlocker = new SensitiveDataBlocker();
   const config = resolvePluginRuntimeConfig(api.config, log);
+  const localConsoleRuntimeConfig = resolveLocalConsoleRuntimeConfig(config.localConsole);
+  const localConsoleRuntime = (() => {
+    if (!localConsoleRuntimeConfig.enabled) {
+      return null;
+    }
+
+    try {
+      ensureLocalConsoleToken(localConsoleRuntimeConfig.paths.tokenPath);
+      return {
+        config: localConsoleRuntimeConfig,
+        client: createLocalConsoleIngestClient({
+          config: localConsoleRuntimeConfig,
+          logger: log,
+          getToken: createLocalConsoleTokenProvider(localConsoleRuntimeConfig.paths.tokenPath),
+        }),
+        supervisor: createLocalConsoleSupervisor({
+          config: localConsoleRuntimeConfig,
+          logger: log,
+        }),
+      };
+    } catch (error: any) {
+      log.error(`[lynx-guardian] Failed to initialize local console runtime: ${error.message}`);
+      return null;
+    }
+  })();
+  if (localConsoleRuntime) {
+    log.info(
+      `[lynx-guardian] Local console configured host=${localConsoleRuntime.config.host} port=${localConsoleRuntime.config.port} autoStart=${String(localConsoleRuntime.config.autoStart)}`,
+    );
+    for (const route of createLocalConsoleGatewayRouteRegistrations({
+      config: localConsoleRuntime.config,
+      supervisor: localConsoleRuntime.supervisor,
+      logger: log,
+    })) {
+      api.registerHttpRoute(route);
+    }
+    log.info("[lynx-guardian] Local console gateway routes registered at /webview and /lynx");
+  }
+  const localConsoleHooks = localConsoleRuntime
+    ? createLocalConsoleHookHandlers({
+      client: localConsoleRuntime.client,
+      logger: log,
+    })
+    : null;
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const outputEnforcementMode = selfSafetyGuardConfig.outputEnforcementMode ?? "block";
   const riskPolicyConfig = normalizePolicyConfig((selfSafetyGuardConfig as any).policy ?? {});
@@ -228,6 +282,12 @@ export default function setup(api: OpenClawPluginApi) {
   const openClawDiscoveryConfig = discoveryRuntime.config;
   const runtimeVersion = getOpenClawRuntimeVersion();
   const hookCapabilityReport = getHookCapabilityReport(runtimeVersion);
+  const localConsoleTokenHook = localConsoleRuntime && hookCapabilityReport.supported === true
+    ? createLocalConsoleTokenHook({
+      client: localConsoleRuntime.client,
+      logger: log,
+    })
+    : null;
   const DISCOVERY_RESULT_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.txt");
   const DISCOVERY_RESULT_CONSUMED_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.consumed");
   const DISCOVERY_REQUEST_PATH = join(process.env.HOME ?? process.env.USERPROFILE ?? "/tmp", ".openclaw", ".lynx-pending-discovery.request.json");
@@ -278,6 +338,13 @@ export default function setup(api: OpenClawPluginApi) {
       log.warn(
         `[lynx-guardian] Output interception requires openclaw >= ${hookCapabilityReport.testedMinimumVersion}; some hooks may not fire on this runtime.`,
       );
+    }
+
+    if (localConsoleRuntime) {
+      process.env.LYNX_LOCAL_CONSOLE_TOKEN_USAGE_ENABLED = localConsoleTokenHook ? "true" : "false";
+      if (localConsoleRuntime.config.autoStart) {
+        void localConsoleRuntime.supervisor.ensureRunning("plugin-startup");
+      }
     }
 
     userId = ensureUserRegistered();
@@ -415,6 +482,24 @@ export default function setup(api: OpenClawPluginApi) {
         config: buildScheduledLynxCheckSyncConfig(),
         logger: log,
       });
+      const backendHealthy = localConsoleRuntime
+        ? await localConsoleRuntime.supervisor.probeHealth()
+        : undefined;
+      if (localConsoleRuntime?.config.autoStart) {
+        void localConsoleRuntime.supervisor.ensureRunning("gateway_start");
+      }
+      localConsoleHooks?.gatewayStart({
+        occurredAtMs: Date.now(),
+        summary: "Gateway startup hook executed and local console startup was checked.",
+        payloadJson: {
+          port: event?.port,
+          autoStart: localConsoleRuntime?.config.autoStart,
+        },
+        port: event?.port,
+        autoStart: localConsoleRuntime?.config.autoStart,
+        backendHealthy,
+        startReason: "gateway_start",
+      });
     } catch (err: any) {
       log.error(`[lynx-guardian] Failed to sync resources on gateway_start: ${err.message}`);
     }
@@ -428,6 +513,18 @@ export default function setup(api: OpenClawPluginApi) {
         ctx?.messageProvider ?? ctx?.channelId ?? ctx?.channel ?? event?.channel,
       );
       if (channelProfile !== "feishu") {
+        localConsoleHooks?.beforeDispatch({
+          occurredAtMs: Date.now(),
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: "Observed local approval reply outside Feishu route.",
+          localApprovalReply: true,
+          specialRoute: "local_approval_reply_non_feishu",
+          payloadJson: {
+            resolution: localApprovalReply.resolution,
+            token: localApprovalReply.token,
+            channelProfile,
+          },
+        });
         return { handled: false };
       }
       log.info(
@@ -442,6 +539,18 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(
           `[lynx-guardian] before_dispatch consumed local approval reply token=${localApprovalReply.token ?? "none"}`,
         );
+        localConsoleHooks?.beforeDispatch({
+          occurredAtMs: Date.now(),
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: "Local approval reply was consumed in before_dispatch.",
+          localApprovalReply: true,
+          specialRoute: "local_approval_reply_consumed",
+          payloadJson: {
+            resolution: localApprovalReply.resolution,
+            token: localApprovalReply.token,
+            handled: true,
+          },
+        });
         return {
           handled: true,
           text: resolution.replyText,
@@ -450,6 +559,18 @@ export default function setup(api: OpenClawPluginApi) {
       log.info(
         `[lynx-guardian] before_dispatch staged local approval replay token=${localApprovalReply.token ?? "none"}`,
       );
+      localConsoleHooks?.beforeDispatch({
+        occurredAtMs: Date.now(),
+        sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        summary: "Local approval reply was staged for later replay handling.",
+        localApprovalReply: true,
+        specialRoute: "local_approval_reply_staged",
+        payloadJson: {
+          resolution: localApprovalReply.resolution,
+          token: localApprovalReply.token,
+          handled: false,
+        },
+      });
       return {
         handled: false,
         text: resolution.replyText,
@@ -482,15 +603,36 @@ export default function setup(api: OpenClawPluginApi) {
           : String(event.content);
       log.info(`[lynx-guardian] message_received text: ${text}`);
       if (!text || text.length === 0) return;
+      const localConsoleOccurredAtMs = Date.now();
       const lynxCheckTrigger = classifyLynxCheckTrigger(text);
 
       if (lynxCheckTrigger.kind === "native_passthrough") {
         log.info(`[lynx-guardian] Native check command passthrough: ${text}`);
+        localConsoleHooks?.messageReceived({
+          occurredAtMs: localConsoleOccurredAtMs,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: "Inbound native check command passed through without extra interception.",
+          contentExcerpt: text,
+          contentKind: "text",
+          payloadJson: {
+            triggerKind: lynxCheckTrigger.kind,
+          },
+        });
         return;
       }
 
       if (lynxCheckTrigger.kind === "lynx_command") {
         log.info(`[lynx-guardian] Manual /lynx-check will be handled in before_agent_start: ${text}`);
+        localConsoleHooks?.messageReceived({
+          occurredAtMs: localConsoleOccurredAtMs,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: "Manual /lynx-check command observed and deferred to before_agent_start.",
+          contentExcerpt: text,
+          contentKind: "text",
+          payloadJson: {
+            triggerKind: lynxCheckTrigger.kind,
+          },
+        });
         return;
       }
 
@@ -499,6 +641,18 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(
           `[lynx-guardian] message_received observed approval command=${localApprovalReply.command} token=${localApprovalReply.token ?? "none"}; awaiting before_dispatch/native handler`,
         );
+        localConsoleHooks?.messageReceived({
+          occurredAtMs: localConsoleOccurredAtMs,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: "Local approval reply observed at message_received and deferred to dispatch handling.",
+          contentExcerpt: text,
+          contentKind: "text",
+          payloadJson: {
+            command: localApprovalReply.command,
+            token: localApprovalReply.token,
+            resolution: localApprovalReply.resolution,
+          },
+        });
         return;
       }
       /*
@@ -571,6 +725,17 @@ export default function setup(api: OpenClawPluginApi) {
             context: "message sensitive data",
           },
         );
+        localConsoleHooks?.messageReceived({
+          occurredAtMs: localConsoleOccurredAtMs,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: "Sensitive data blocker detected protected content in inbound message.",
+          contentExcerpt: text,
+          contentKind: "text",
+          enforcementAction: "block",
+          payloadJson: {
+            source: "sensitive_data_blocker",
+          },
+        });
         await sendHookFeedback(ctx, "Sensitive data detected");
         return;
       }
@@ -587,10 +752,34 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian] approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardInput(text, ctx.sessionKey, guardContext);
-        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
+        const {
+          guardActionRequired,
+          policyEvaluation,
+          policyResolution,
+          effectiveAssessment,
+          blockReason,
+        } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
         if (guardActionRequired && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
+          localConsoleHooks?.messageReceived({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            summary: blockReason,
+            contentExcerpt: text,
+            contentKind: "text",
+            primaryModule: effectiveAssessment.modules[0],
+            modules: effectiveAssessment.modules,
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: policyResolution.finalDecision.kind,
+            enforcementAction: "block",
+            payloadJson: {
+              approvedInputOverride: Boolean(approvedInputOverride),
+              warning: decision.warning,
+              legacyRiskLevel: policyEvaluation.legacyRiskLevel,
+            },
+          });
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
           await pushRecordBestEffort(
             {
@@ -633,6 +822,24 @@ export default function setup(api: OpenClawPluginApi) {
         if (decision.warning) {
           log.warn(`[lynx-guardian] Self-safety-guard warning: ${decision.warning}`);
         }
+        localConsoleHooks?.messageReceived({
+          occurredAtMs: localConsoleOccurredAtMs,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: decision.warning ?? "Inbound message passed input guard evaluation.",
+          contentExcerpt: text,
+          contentKind: "text",
+          primaryModule: effectiveAssessment.modules[0],
+          modules: effectiveAssessment.modules,
+          riskLevel: effectiveAssessment.level,
+          riskScore: effectiveAssessment.score,
+          policyDecision: policyResolution.finalDecision.kind,
+          enforcementAction: decision.warning ? "warn" : "allow",
+          payloadJson: {
+            approvedInputOverride: Boolean(approvedInputOverride),
+            warning: decision.warning,
+            guardActionRequired,
+          },
+        });
       }
 
       // Free-text approval is disabled. Critical non-tool review now happens
@@ -794,6 +1001,8 @@ export default function setup(api: OpenClawPluginApi) {
       const sessionKey = normalizeString(ctx.sessionKey) || undefined;
       const channelId = normalizeString(ctx.channelId) || undefined;
       const promptText = resolveAgentStartPromptText(event);
+      const localConsoleOccurredAtMs = Date.now();
+      let localConsoleLynxCheckSnapshot: Record<string, unknown> | undefined;
       const normalizedConversationIdInput = resolveChannelProfile(channelId) === "feishu"
         ? normalizeFeishuConversationId(normalizeString((ctx as any).conversationId) || undefined)
         : (normalizeString((ctx as any).conversationId) || undefined);
@@ -895,6 +1104,19 @@ export default function setup(api: OpenClawPluginApi) {
             localApprovalReply,
           });
           if (localApprovalResolution.handled) {
+            localConsoleHooks?.beforeAgentStart({
+              occurredAtMs: localConsoleOccurredAtMs,
+              sessionKey,
+              runId: normalizeString(ctx.runId) || undefined,
+              promptText,
+              summary: localApprovalResolution.blockReason ?? "Local approval reply was consumed before agent start.",
+              contentExcerpt: promptText,
+              contentKind: "text",
+              enforcementAction: "block",
+              payloadJson: {
+                localApprovalReply: true,
+              },
+            });
             return {
               block: true,
               blockReason: localApprovalResolution.blockReason ?? "[Lynx Guardian] Local approval reply consumed.",
@@ -978,6 +1200,22 @@ export default function setup(api: OpenClawPluginApi) {
           transport: "precomputed",
           reportPath,
         });
+        localConsoleLynxCheckSnapshot = {
+          requestId: runIntent.requestId,
+          source: runIntent.source,
+          trigger: runIntent.trigger,
+          preferredTargetKind: runIntent.preferredTargetKind,
+          sessionKey: runIntent.sessionKey,
+          targetKey: runIntent.routeHint?.targetKey,
+          channelId: runIntent.routeHint?.channelId,
+          messageProvider: runIntent.routeHint?.messageProvider,
+          status: "running",
+          sendAttempted: false,
+          sendSucceeded: false,
+          transport: "precomputed",
+          reportPath,
+          createdAtMs: runIntent.createdAtMs,
+        };
 
         const channel = resolveManagedLynxCheckPromptChannel(ctx, routeHint);
         prependContext += `${
@@ -1015,7 +1253,13 @@ export default function setup(api: OpenClawPluginApi) {
           managedLynxCheckPreauthorized,
         });
         const decision = guardInput(promptText, ctx.sessionKey, guardContext);
-        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
+        const {
+          guardActionRequired,
+          policyEvaluation,
+          policyResolution,
+          effectiveAssessment,
+          blockReason,
+        } = resolveGuardPolicyState(decision);
         if (guardActionRequired && !managedLynxCheckPreauthorized) {
           const shouldInjectForcedDenyContext = normalizeString(effectiveAssessment.level) === "L4";
           const denyPrependContext = shouldInjectForcedDenyContext
@@ -1029,6 +1273,27 @@ export default function setup(api: OpenClawPluginApi) {
               .filter(Boolean)
               .join("\n")
             : prependContext.trim() || undefined;
+          localConsoleHooks?.beforeAgentStart({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey,
+            runId: normalizeString(ctx.runId) || undefined,
+            promptText,
+            summary: blockReason,
+            contentExcerpt: promptText,
+            contentKind: "text",
+            primaryModule: effectiveAssessment.modules[0],
+            modules: effectiveAssessment.modules,
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: policyResolution.finalDecision.kind,
+            enforcementAction: "block",
+            lynxCheck: localConsoleLynxCheckSnapshot as any,
+            payloadJson: {
+              managedLynxCheckPreauthorized,
+              legacyRiskLevel: policyEvaluation.legacyRiskLevel,
+              forcedDenyContext: shouldInjectForcedDenyContext,
+            },
+          });
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
           log.info(
             `[lynx-guardian] before_agent_start denyContext injected=${String(shouldInjectForcedDenyContext)} risk=${effectiveAssessment.level}`,
@@ -1074,6 +1339,27 @@ export default function setup(api: OpenClawPluginApi) {
             },
           );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
+            localConsoleHooks?.beforeAgentStart({
+              occurredAtMs: localConsoleOccurredAtMs,
+              sessionKey,
+              runId: normalizeString(ctx.runId) || undefined,
+              promptText,
+              summary: blockReason,
+              contentExcerpt: promptText,
+              contentKind: "text",
+              primaryModule: effectiveAssessment.modules[0],
+              modules: effectiveAssessment.modules,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: policyResolution.finalDecision.kind,
+              enforcementAction: "block",
+              lynxCheck: localConsoleLynxCheckSnapshot as any,
+              payloadJson: {
+                managedLynxCheckPreauthorized,
+                approvedAgentStartOverride: Boolean(approvedAgentStartOverride),
+                overrideAllowed: true,
+              },
+            });
             savePendingOverrideFull(ctx, {
               operationFingerprint: agentStartFingerprint,
               createdAt: Date.now(),
@@ -1093,6 +1379,27 @@ export default function setup(api: OpenClawPluginApi) {
               ),
             } as any;
           }
+          localConsoleHooks?.beforeAgentStart({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey,
+            runId: normalizeString(ctx.runId) || undefined,
+            promptText,
+            summary: blockReason,
+            contentExcerpt: promptText,
+            contentKind: "text",
+            primaryModule: effectiveAssessment.modules[0],
+            modules: effectiveAssessment.modules,
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: policyResolution.finalDecision.kind,
+            enforcementAction: "block",
+            lynxCheck: localConsoleLynxCheckSnapshot as any,
+            payloadJson: {
+              managedLynxCheckPreauthorized,
+              approvedAgentStartOverride: Boolean(approvedAgentStartOverride),
+              overrideAllowed: false,
+            },
+          });
           return {
             block: true,
             blockReason,
@@ -1177,13 +1484,6 @@ export default function setup(api: OpenClawPluginApi) {
           }
           log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
 
-          if (adaptedContentCheck.externalRiskLevel >= 3 && !managedLynxCheckPreauthorized) {
-            return {
-              block: true,
-              blockReason: `[Lynx Guardian] ${warning}`,
-            } as any;
-          }
-
           if (adaptedContentCheck.externalRiskLevel >= 3 && managedLynxCheckPreauthorized) {
             log.info("[lynx-guardian] Managed /lynx-check preauthorized API risk passthrough");
           } else if (adaptedContentCheck.externalRiskLevel >= 3 && !approvedAgentStartOverride) {
@@ -1204,6 +1504,27 @@ export default function setup(api: OpenClawPluginApi) {
                 matchedModules: apiAssessment.modules,
                 sourceKeys: resolveOverrideKeys(ctx),
               });
+              localConsoleHooks?.beforeAgentStart({
+                occurredAtMs: localConsoleOccurredAtMs,
+                sessionKey,
+                runId: normalizeString(ctx.runId) || undefined,
+                promptText,
+                summary: `[Lynx Guardian] ${warning}`,
+                contentExcerpt: promptText,
+                contentKind: "text",
+                primaryModule: apiAssessment.modules[0],
+                modules: apiAssessment.modules,
+                riskLevel: apiAssessment.level,
+                riskScore: apiAssessment.score,
+                policyDecision: "confirm",
+                enforcementAction: "block",
+                lynxCheck: localConsoleLynxCheckSnapshot as any,
+                payloadJson: {
+                  apiRiskLevel: adaptedContentCheck.externalRiskLevel,
+                  inputCategorySummary,
+                  overrideAllowed: true,
+                },
+              });
               return {
                 block: true,
                 blockReason: buildOverridePrompt(
@@ -1212,6 +1533,27 @@ export default function setup(api: OpenClawPluginApi) {
                 ),
               } as any;
             }
+            localConsoleHooks?.beforeAgentStart({
+              occurredAtMs: localConsoleOccurredAtMs,
+              sessionKey,
+              runId: normalizeString(ctx.runId) || undefined,
+              promptText,
+              summary: `[Lynx Guardian] ${warning}`,
+              contentExcerpt: promptText,
+              contentKind: "text",
+              primaryModule: apiAssessment.modules[0],
+              modules: apiAssessment.modules,
+              riskLevel: apiAssessment.level,
+              riskScore: apiAssessment.score,
+              policyDecision: "deny",
+              enforcementAction: "block",
+              lynxCheck: localConsoleLynxCheckSnapshot as any,
+              payloadJson: {
+                apiRiskLevel: adaptedContentCheck.externalRiskLevel,
+                inputCategorySummary,
+                overrideAllowed: false,
+              },
+            });
             return {
               block: true,
               blockReason: `[Lynx Guardian] ${warning}`,
@@ -1221,6 +1563,25 @@ export default function setup(api: OpenClawPluginApi) {
         }
       }
 
+      localConsoleHooks?.beforeAgentStart({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey,
+        runId: normalizeString(ctx.runId) || undefined,
+        promptText,
+        summary: managedLynxCheckSource
+          ? "Managed /lynx-check agent start prepared successfully."
+          : "Agent start evaluation completed.",
+        contentExcerpt: promptText,
+        contentKind: "text",
+        enforcementAction: prependContext.trim().length > 0 ? "warn" : "allow",
+        lynxCheck: localConsoleLynxCheckSnapshot as any,
+        payloadJson: {
+          managedLynxCheckSource: managedLynxCheckSource ?? undefined,
+          managedLynxCheckPreauthorized,
+          prependContextLength: prependContext.length,
+          publicAccessWarning: publicAccessResult?.result?.is_public === true,
+        },
+      });
       return {
         prependContext,
       } as any;
@@ -1236,11 +1597,11 @@ export default function setup(api: OpenClawPluginApi) {
       const revokedAuth = revokeWorkflowAuth(resolveOverrideKeys(ctx));
       if (revokedAuth) {
         log.info(`[lynx-guardian] Workflow auth revoked; ${revokedAuth.auditLog.length} operation(s) recorded`);
-        if (ctx.sendMessage) {
-          try {
-            await ctx.sendMessage({
-              role: "assistant",
-              content: formatWorkflowAuthSummary(revokedAuth),
+      if (ctx.sendMessage) {
+        try {
+          await ctx.sendMessage({
+            role: "assistant",
+            content: formatWorkflowAuthSummary(revokedAuth),
             });
           } catch (sendErr: any) {
             log.error(`[lynx-guardian] Failed to send workflow auth summary: ${sendErr.message}`);
@@ -1249,6 +1610,7 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       if (!event.messages || event.messages.length === 0) return;
+      const localConsoleOccurredAtMs = Date.now();
 
       const activeRunIntent = readLatestPendingLynxCheckRunIntent(ctx.sessionKey);
       if (activeRunIntent) {
@@ -1329,6 +1691,21 @@ export default function setup(api: OpenClawPluginApi) {
             reportPath: existsSync(reportPath) ? reportPath : undefined,
           });
           markLynxCheckRunCompleted(activeRunIntent.requestId);
+          localConsoleHooks?.agentEnd({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            runId: normalizeString((ctx as any).runId) || undefined,
+            requestId: activeRunIntent.requestId,
+            summary: "Managed /lynx-check inline report delivery completed during agent_end.",
+            outputText: inlineOutput,
+            contentExcerpt: inlineOutput,
+            contentKind: "assistant_message",
+            enforcementAction: "allow",
+            payloadJson: {
+              deliveryAttempts: deliveryAttempts.length,
+              deliveredTransports,
+            },
+          });
           return;
         }
 
@@ -1370,6 +1747,25 @@ export default function setup(api: OpenClawPluginApi) {
           }
         }
 
+        localConsoleHooks?.agentEnd({
+          occurredAtMs: localConsoleOccurredAtMs,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          runId: normalizeString((ctx as any).runId) || undefined,
+          requestId: activeRunIntent.requestId,
+          summary: runResult?.status === "completed" && runResult.sendSucceeded
+            ? "Managed /lynx-check run was already completed before agent_end delivery fallback."
+            : "Managed /lynx-check delivery fallback was processed during agent_end.",
+          outputText: inlineOutput,
+          contentExcerpt: inlineOutput,
+          contentKind: "assistant_message",
+          enforcementAction: (runResult?.status === "failed" || runResult?.sendSucceeded === false) ? "warn" : "allow",
+          payloadJson: {
+            requestId: activeRunIntent.requestId,
+            runResultStatus: runResult?.status,
+            sendSucceeded: runResult?.sendSucceeded,
+            transport: runResult?.transport,
+          },
+        });
         return;
       }
 
@@ -1483,6 +1879,20 @@ export default function setup(api: OpenClawPluginApi) {
               context: "output guard block",
             },
           );
+          localConsoleHooks?.agentEnd({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            runId: normalizeString((ctx as any).runId) || undefined,
+            summary: decision.warning ?? "Assistant output was changed during agent_end enforcement.",
+            outputText: enforcement.content,
+            contentExcerpt: enforcement.content,
+            contentKind: "assistant_message",
+            primaryModule: effectiveAssessment.modules[0],
+            modules: effectiveAssessment.modules,
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            enforcementAction: enforcement.changed ? "redact" : "block",
+          });
           return;
             log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
           redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险");
@@ -1530,13 +1940,31 @@ export default function setup(api: OpenClawPluginApi) {
           }
         }
       }
+      localConsoleHooks?.agentEnd({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        runId: normalizeString((ctx as any).runId) || undefined,
+        summary: "Agent end completed and assistant output remained available for downstream handling.",
+        outputText: output,
+        contentExcerpt: output,
+        contentKind: "assistant_message",
+        enforcementAction: "allow",
+      });
     } catch (err: any) {
       log.error(`[lynx-guardian] Output check failed: ${err.message}`);
     }
   });
 
+  if (localConsoleTokenHook) {
+    api.on("llm_output", async (event, ctx) => {
+      appendLifecycleProbe("llm_output", event, ctx);
+      localConsoleTokenHook.handle(event, ctx);
+    });
+  }
+
   api.on("before_message_write", (event, ctx) => {
     try {
+      const localConsoleOccurredAtMs = Date.now();
       const originalMessage = event?.message;
       if (!originalMessage) return;
 
@@ -1562,14 +1990,49 @@ export default function setup(api: OpenClawPluginApi) {
           log.warn(`[lynx-guardian] Assistant persistence guard diagnostic: ${persistenceDecision.warning}`);
         }
         if (persistenceDecision.block) {
+          localConsoleHooks?.beforeMessageWrite({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            summary: persistenceDecision.warning ?? "Assistant message was blocked before persistence.",
+            contentExcerpt: extractMessageText(persistenceDecision.message),
+            contentKind: "assistant_message",
+            messageRole: nextMessage.role,
+            blocked: true,
+            enforcementAction: "block",
+            payloadJson: {
+              messageChanged: nextMessage !== originalMessage,
+            },
+          });
           return {
             message: persistenceDecision.message,
           };
         }
       }
-      if (nextMessage === originalMessage) return;
+      if (nextMessage === originalMessage) {
+        localConsoleHooks?.beforeMessageWrite({
+          occurredAtMs: localConsoleOccurredAtMs,
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          summary: "Assistant message passed through before_message_write without mutation.",
+          contentExcerpt: extractMessageText(nextMessage),
+          contentKind: "assistant_message",
+          messageRole: nextMessage.role,
+          messageChanged: false,
+          enforcementAction: "allow",
+        });
+        return;
+      }
 
       log.info("[lynx-guardian] Assistant message decorated before persistence");
+      localConsoleHooks?.beforeMessageWrite({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        summary: "Assistant message was reshaped before persistence.",
+        contentExcerpt: extractMessageText(nextMessage),
+        contentKind: "assistant_message",
+        messageRole: nextMessage.role,
+        messageChanged: true,
+        enforcementAction: "allow",
+      });
       return {
         message: nextMessage,
       };
@@ -1580,6 +2043,7 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("tool_result_persist", (event, ctx) => {
     appendLifecycleProbe("tool_result_persist", event, ctx);
+    const localConsoleOccurredAtMs = Date.now();
     if (selfSafetyGuardConfig.resultGuard === false) return;
     const { guardContext } = buildManagedGuardContext(event, ctx);
     const decision = guardToolResultPersistence(event.toolName, event.message, {
@@ -1589,7 +2053,31 @@ export default function setup(api: OpenClawPluginApi) {
     if (decision.warning) {
       log.warn(`[lynx-guardian] Tool result guard diagnostic: ${decision.warning}`);
     }
-    if (!decision.block) return;
+    if (!decision.block) {
+      localConsoleHooks?.toolResultPersist({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        toolCallId: normalizeString(event.toolCallId) || undefined,
+        toolName: normalizeString(event.toolName) || undefined,
+        summary: decision.warning ?? "Tool result passed persistence guard evaluation.",
+        contentExcerpt: extractMessageText(event.message),
+        contentKind: "tool_result",
+        enforcementAction: decision.warning ? "warn" : "allow",
+        blocked: false,
+      });
+      return;
+    }
+    localConsoleHooks?.toolResultPersist({
+      occurredAtMs: localConsoleOccurredAtMs,
+      sessionKey: normalizeString(ctx.sessionKey) || undefined,
+      toolCallId: normalizeString(event.toolCallId) || undefined,
+      toolName: normalizeString(event.toolName) || undefined,
+      summary: decision.warning ?? "Tool result was blocked before persistence.",
+      contentExcerpt: extractMessageText(decision.message),
+      contentKind: "tool_result",
+      enforcementAction: "block",
+      blocked: true,
+    });
     return {
       message: decision.message,
     };
@@ -1597,6 +2085,37 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("message_sending", async (event, ctx) => {
     appendLifecycleProbe("message_sending", event, ctx);
+    const localConsoleOccurredAtMs = Date.now();
+    const localConsoleSessionKey = normalizeString(ctx.sessionKey) || undefined;
+    const activeManagedLynxCheckRun = localConsoleSessionKey
+      ? readLatestPendingLynxCheckRunIntent(localConsoleSessionKey)
+      : null;
+    const outboundTarget = buildOutboundDeliveryTarget(event, ctx);
+    const managedLynxCheckSnapshot = (
+      typeof event.content === "string"
+      && isTrustedManagedLynxCheckReportText(event.content)
+      && activeManagedLynxCheckRun
+    )
+      ? {
+        requestId: activeManagedLynxCheckRun.requestId,
+        source: activeManagedLynxCheckRun.source,
+        trigger: activeManagedLynxCheckRun.trigger,
+        preferredTargetKind: activeManagedLynxCheckRun.preferredTargetKind,
+        sessionKey: activeManagedLynxCheckRun.sessionKey,
+        targetKey: activeManagedLynxCheckRun.routeHint?.targetKey
+          ?? ([
+            normalizeString(outboundTarget.messageProvider ?? outboundTarget.channelId),
+            normalizeString(outboundTarget.channelId ?? outboundTarget.messageProvider),
+            normalizeString(outboundTarget.to ?? outboundTarget.sessionKey),
+          ].filter(Boolean).join(":") || undefined),
+        channelId: normalizeString(outboundTarget.channelId) || activeManagedLynxCheckRun.routeHint?.channelId,
+        messageProvider: normalizeString(outboundTarget.messageProvider) || activeManagedLynxCheckRun.routeHint?.messageProvider,
+        status: "running",
+        sendAttempted: true,
+        transport: "message_sending",
+        createdAtMs: activeManagedLynxCheckRun.createdAtMs,
+      }
+      : undefined;
     let shapedContent: string | undefined;
     if (typeof event.content === "string" && resolveOutboundPromptChannel(event, ctx) === "feishu") {
       const nextContent = shapeTextForProvider(event.content, "feishu");
@@ -1616,10 +2135,42 @@ export default function setup(api: OpenClawPluginApi) {
       log.warn(
         `[lynx-guardian] Cancelled scheduled /lynx-check outbound message without concrete recipient session=${normalizeString(ctx.sessionKey) || "unknown"} target=${normalizeString((event as any)?.to) || "none"}`,
       );
+      localConsoleHooks?.messageSending({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey: localConsoleSessionKey,
+        summary: "Scheduled /lynx-check outbound message was cancelled because no concrete recipient was available.",
+        contentExcerpt: typeof event.content === "string" ? event.content : undefined,
+        contentKind: "outbound_message",
+        direction: "output",
+        enforcementAction: "block",
+        canceled: true,
+        targetKey: managedLynxCheckSnapshot?.targetKey,
+        lynxCheck: managedLynxCheckSnapshot
+          ? {
+            ...managedLynxCheckSnapshot,
+            status: "failed",
+            sendSucceeded: false,
+            transport: "cancelled-no-target",
+            errorMessage: "No concrete outbound recipient available",
+          }
+          : undefined,
+      });
       return { cancel: true };
     }
 
     if (selfSafetyGuardConfig.outputGuard === false) {
+      localConsoleHooks?.messageSending({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey: localConsoleSessionKey,
+        summary: "Outbound message sending bypassed output guard because it is disabled.",
+        contentExcerpt: shapedContent ?? (typeof event.content === "string" ? event.content : undefined),
+        contentKind: "outbound_message",
+        direction: "output",
+        enforcementAction: "allow",
+        canceled: false,
+        targetKey: managedLynxCheckSnapshot?.targetKey,
+        lynxCheck: managedLynxCheckSnapshot as any,
+      });
       return shapedContent ? { content: shapedContent } : undefined;
     }
     const { guardContext } = buildManagedGuardContext(event, ctx);
@@ -1633,14 +2184,86 @@ export default function setup(api: OpenClawPluginApi) {
       log.warn(`[lynx-guardian] Outbound guard diagnostic: ${enforcement.warning}`);
     }
     if (enforcement.changed) {
+      localConsoleHooks?.messageSending({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey: localConsoleSessionKey,
+        summary: enforcement.warning ?? "Outbound message content was changed by output enforcement.",
+        contentExcerpt: enforcement.content,
+        contentKind: "outbound_message",
+        direction: "output",
+        enforcementAction: "redact",
+        canceled: false,
+        targetKey: managedLynxCheckSnapshot?.targetKey,
+        lynxCheck: managedLynxCheckSnapshot as any,
+      });
       return { content: enforcement.content };
     }
+    localConsoleHooks?.messageSending({
+      occurredAtMs: localConsoleOccurredAtMs,
+      sessionKey: localConsoleSessionKey,
+      summary: enforcement.warning ?? "Outbound message passed message_sending evaluation.",
+      contentExcerpt: shapedContent ?? (typeof event.content === "string" ? event.content : undefined),
+      contentKind: "outbound_message",
+      direction: "output",
+      enforcementAction: enforcement.warning ? "warn" : "allow",
+      canceled: false,
+      targetKey: managedLynxCheckSnapshot?.targetKey,
+      lynxCheck: managedLynxCheckSnapshot as any,
+    });
     return shapedContent ? { content: shapedContent } : undefined;
   });
 
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
     log.info(`[lynx-guardian] before_tool_call tool=${JSON.stringify(toolName)} params=${JSON.stringify(params)}`);
+    const localConsoleOccurredAtMs = Date.now();
+    const localConsoleSessionKey = normalizeString(ctx.sessionKey) || undefined;
+    const localConsoleRunId = normalizeString((ctx as any).runId) || undefined;
+    const localConsoleToolCallId = normalizeString((event as any)?.toolCallId) || undefined;
+    const localConsoleParamSummary = buildParamSummary(toolName, params ?? {});
+    const recordBeforeToolCall = (overrides: Record<string, unknown> = {}) => {
+      localConsoleHooks?.beforeToolCall({
+        occurredAtMs: localConsoleOccurredAtMs,
+        sessionKey: localConsoleSessionKey,
+        runId: localConsoleRunId,
+        toolCallId: localConsoleToolCallId,
+        toolName,
+        params,
+        paramSummary: localConsoleParamSummary,
+        ...overrides,
+      } as any);
+    };
+    const buildLocalConsoleApproval = (approvalParams: {
+      approvalId: string;
+      module: string;
+      riskLevel: "L2" | "L3";
+      transport?: string;
+      resolution?: string;
+      resolvedAtMs?: number;
+      metadataJson?: Record<string, unknown>;
+    }) => ({
+      approvalId: approvalParams.approvalId,
+      pendingId: approvalParams.approvalId,
+      sessionKey: localConsoleSessionKey,
+      runId: localConsoleRunId,
+      transport: approvalParams.transport,
+      channelProfile: approvalRoute.channelProfile,
+      channelId: approvalRoute.channelId,
+      accountId: approvalRoute.accountId,
+      conversationId: approvalRoute.conversationId,
+      requesterOuId: approvalRoute.requesterOuId,
+      approverOuIds: localApprovalApproverOuIds,
+      module: approvalParams.module,
+      riskLevel: approvalParams.riskLevel,
+      toolName,
+      scopeType: "singleTool" as const,
+      requestedAtMs: localConsoleOccurredAtMs,
+      expiresAtMs: localConsoleOccurredAtMs + riskPolicyConfig.toolApprovalTimeoutMs,
+      resolvedAtMs: approvalParams.resolvedAtMs,
+      resolution: approvalParams.resolution,
+      promptExcerpt: runApprovalContext?.promptText,
+      metadataJson: approvalParams.metadataJson,
+    });
     let execBlacklistContext: CheckExecBlacklistContext | undefined;
     let trustedManagedLynxCheckToolCall = false;
     const toolFingerprint = buildOperationFingerprint({
@@ -1727,6 +2350,15 @@ export default function setup(api: OpenClawPluginApi) {
 
         if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info(`[lynx-guardian] Managed /lynx-check blocked extra tool call outside whitelist: ${toolName}`);
+          recordBeforeToolCall({
+            summary: "[Lynx Guardian] Managed /lynx-check 已完成预计算，仅允许白名单内的内部读写与报告发送链路。",
+            triggeredModules: effectiveAssessment.modules,
+            primaryModule: effectiveAssessment.modules[0],
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: "deny",
+            enforcementAction: "block",
+          });
           return {
             block: true,
             blockReason: "[Lynx Guardian] Managed /lynx-check 已完成预计算，仅允许白名单内的内部读写与报告发送链路。",
@@ -1754,6 +2386,15 @@ export default function setup(api: OpenClawPluginApi) {
           const approvalRiskLevel = toApprovalRiskLevel(effectiveAssessment.level);
           const primaryModule = effectiveAssessment.modules[0];
           if (!policyResult.override.allowed || !approvalRiskLevel || !primaryModule) {
+            recordBeforeToolCall({
+              summary: blockReason,
+              triggeredModules: effectiveAssessment.modules,
+              primaryModule,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+              enforcementAction: "block",
+            });
             return {
               block: true,
               blockReason,
@@ -1761,6 +2402,27 @@ export default function setup(api: OpenClawPluginApi) {
           }
 
           if (approvalRoute.compatMode === "deny-no-route") {
+            const approvalId = `lynx:ssg:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
+            recordBeforeToolCall({
+              summary: approvalRoute.blockReason ?? "Approval unavailable",
+              approvalId,
+              triggeredModules: effectiveAssessment.modules,
+              primaryModule,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+              enforcementAction: "block",
+              approval: buildLocalConsoleApproval({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: approvalRoute.approvalTransport,
+                metadataJson: {
+                  compatMode: approvalRoute.compatMode,
+                  runtimeTier: approvalRoute.runtimeTier,
+                },
+              }),
+            });
             return {
               block: true,
               blockReason: approvalRoute.blockReason ?? "Approval unavailable",
@@ -1786,6 +2448,25 @@ export default function setup(api: OpenClawPluginApi) {
             approvalSessionKey: approvalRoute.sessionKey,
           });
           if (feishuLocalApproval.handled) {
+            recordBeforeToolCall({
+              summary: feishuLocalApproval.blockReason ?? "Feishu local approval flow handled this tool call.",
+              approvalId: `lynx:ssg:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`,
+              triggeredModules: effectiveAssessment.modules,
+              primaryModule,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+              enforcementAction: feishuLocalApproval.blockReason ? "block" : "requireApproval",
+              approval: buildLocalConsoleApproval({
+                approvalId: `lynx:ssg:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: "local-chat",
+                metadataJson: {
+                  localFlow: true,
+                },
+              }),
+            });
             if (feishuLocalApproval.blockReason) {
               return {
                 block: true,
@@ -1808,6 +2489,16 @@ export default function setup(api: OpenClawPluginApi) {
             log.info(
               `[lynx-guardian] approval grant hit source=${approvalRoute.conversationId ?? "none"} module=${primaryModule} risk=${approvalRiskLevel}`,
             );
+            recordBeforeToolCall({
+              summary: "Existing approval grant matched this tool call.",
+              approvalId: `lynx:ssg:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`,
+              triggeredModules: effectiveAssessment.modules,
+              primaryModule,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+              enforcementAction: "allow",
+            });
             return;
           }
 
@@ -1827,14 +2518,86 @@ export default function setup(api: OpenClawPluginApi) {
           if (pendingApproval?.pending && !pendingApproval.created) {
             const resolution = await pendingApproval.pending.wait();
             if (resolution === "allow-once" || resolution === "allow-always") {
+              recordBeforeToolCall({
+                summary: "Pending approval was reused and resolved to allow the tool call.",
+                approvalId,
+                triggeredModules: effectiveAssessment.modules,
+                primaryModule,
+                riskLevel: effectiveAssessment.level,
+                riskScore: effectiveAssessment.score,
+                policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+                enforcementAction: "allow",
+                approval: buildLocalConsoleApproval({
+                  approvalId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  transport: approvalRoute.approvalTransport,
+                  resolution,
+                  resolvedAtMs: Date.now(),
+                }),
+              });
               return;
             }
             if (resolution === "deny") {
+              recordBeforeToolCall({
+                summary: "Pending approval was explicitly denied.",
+                approvalId,
+                triggeredModules: effectiveAssessment.modules,
+                primaryModule,
+                riskLevel: effectiveAssessment.level,
+                riskScore: effectiveAssessment.score,
+                policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+                enforcementAction: "block",
+                approval: buildLocalConsoleApproval({
+                  approvalId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  transport: approvalRoute.approvalTransport,
+                  resolution,
+                  resolvedAtMs: Date.now(),
+                }),
+              });
               return { block: true, blockReason: "Denied by user" };
             }
             if (resolution === "cancelled") {
+              recordBeforeToolCall({
+                summary: "Pending approval was cancelled.",
+                approvalId,
+                triggeredModules: effectiveAssessment.modules,
+                primaryModule,
+                riskLevel: effectiveAssessment.level,
+                riskScore: effectiveAssessment.score,
+                policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+                enforcementAction: "block",
+                approval: buildLocalConsoleApproval({
+                  approvalId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  transport: approvalRoute.approvalTransport,
+                  resolution,
+                  resolvedAtMs: Date.now(),
+                }),
+              });
               return { block: true, blockReason: "Approval cancelled" };
             }
+            recordBeforeToolCall({
+              summary: "Pending approval timed out.",
+              approvalId,
+              triggeredModules: effectiveAssessment.modules,
+              primaryModule,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+              enforcementAction: "block",
+              approval: buildLocalConsoleApproval({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: approvalRoute.approvalTransport,
+                resolution: "timeout",
+                resolvedAtMs: Date.now(),
+              }),
+            });
             return { block: true, blockReason: "Approval timed out" };
           }
           const { resolveApproval, transport, blockReason: approvalBlockReason } = await prepareToolApprovalHandlers({
@@ -1858,6 +2621,22 @@ export default function setup(api: OpenClawPluginApi) {
             pendingApproval,
           });
           if (transport === "blocked") {
+            recordBeforeToolCall({
+              summary: approvalBlockReason ?? "Approval unavailable",
+              approvalId,
+              triggeredModules: effectiveAssessment.modules,
+              primaryModule,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+              enforcementAction: "block",
+              approval: buildLocalConsoleApproval({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: approvalRoute.approvalTransport,
+              }),
+            });
             return {
               block: true,
               blockReason: approvalBlockReason ?? "Approval unavailable",
@@ -1883,6 +2662,22 @@ export default function setup(api: OpenClawPluginApi) {
               }),
             });
           }
+          recordBeforeToolCall({
+            summary: blockReason,
+            approvalId,
+            triggeredModules: effectiveAssessment.modules,
+            primaryModule,
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+            enforcementAction: "requireApproval",
+            approval: buildLocalConsoleApproval({
+              approvalId,
+              module: primaryModule,
+              riskLevel: approvalRiskLevel,
+              transport: transport === "native" ? "native" : approvalRoute.approvalTransport,
+            }),
+          });
           return {
             requireApproval: buildToolApprovalRequest({
               toolName,
@@ -1960,6 +2755,15 @@ export default function setup(api: OpenClawPluginApi) {
               ),
             };
           }
+          recordBeforeToolCall({
+            summary: blockReason,
+            triggeredModules: effectiveAssessment.modules,
+            primaryModule: effectiveAssessment.modules[0],
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: policyResult.override.allowed ? "confirm" : "deny",
+            enforcementAction: "block",
+          });
           return {
             block: true,
             blockReason,
@@ -1972,6 +2776,10 @@ export default function setup(api: OpenClawPluginApi) {
 
     if (trustedManagedLynxCheckToolCall) {
       log.info(`[lynx-guardian] Managed /lynx-check trusted tool passthrough: ${toolName}`);
+      recordBeforeToolCall({
+        summary: "Managed /lynx-check trusted tool call passed through.",
+        enforcementAction: "allow",
+      });
       return;
     }
 
@@ -2083,7 +2891,13 @@ export default function setup(api: OpenClawPluginApi) {
       match = checkPathBlacklist(safePath);
     }
     log.info(`[lynx-guardian] Tool call: ${toolName} | ${JSON.stringify(params)}`);
-    if (!match) return;
+    if (!match) {
+      recordBeforeToolCall({
+        summary: "Tool call passed before_tool_call evaluation without blacklist hits.",
+        enforcementAction: "allow",
+      });
+      return;
+    }
 
     log.warn(`[lynx-guardian] Blacklist hit: ${toolName} | ${match.reason}`);
 
@@ -2102,6 +2916,14 @@ export default function setup(api: OpenClawPluginApi) {
         riskLevel: match.level === "critical" ? "L4" : "L2",
       });
       log.info(`[lynx-guardian] Workflow auth reused for blacklist hit: ${toolName} (${match.reason})`);
+      recordBeforeToolCall({
+        summary: `Workflow authorization reused for blacklist hit: ${match.reason}`,
+        triggeredModules: blacklistModules,
+        primaryModule: blacklistModules[0],
+        riskLevel: match.level === "critical" ? "L4" : "L2",
+        riskScore: match.level === "critical" ? 9 : 6,
+        enforcementAction: "allow",
+      });
       return;
     }
     const contentToReport = toolName === "exec" ? `执行 ${detail} 命令` : `${toolName} ${detail}`;
@@ -2163,6 +2985,27 @@ export default function setup(api: OpenClawPluginApi) {
         const primaryModule = blacklistModules[0];
         if (policyResult.override.allowed && approvalRiskLevel && primaryModule) {
           if (approvalRoute.compatMode === "deny-no-route") {
+            const approvalId = `lynx:blacklist:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
+            recordBeforeToolCall({
+              summary: approvalRoute.blockReason ?? "Approval unavailable",
+              approvalId,
+              triggeredModules: blacklistModules,
+              primaryModule,
+              riskLevel: apiAssessment.level,
+              riskScore: apiAssessment.score,
+              policyDecision: "confirm",
+              enforcementAction: "block",
+              approval: buildLocalConsoleApproval({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: approvalRoute.approvalTransport,
+                metadataJson: {
+                  compatMode: approvalRoute.compatMode,
+                  blacklistReason: match.reason,
+                },
+              }),
+            });
             return {
               block: true,
               blockReason: approvalRoute.blockReason ?? "Approval unavailable",
@@ -2189,6 +3032,26 @@ export default function setup(api: OpenClawPluginApi) {
             approvalSessionKey: approvalRoute.sessionKey,
           });
           if (feishuLocalApproval.handled) {
+            recordBeforeToolCall({
+              summary: feishuLocalApproval.blockReason ?? "Blacklist hit entered Feishu local approval flow.",
+              approvalId,
+              triggeredModules: blacklistModules,
+              primaryModule,
+              riskLevel: apiAssessment.level,
+              riskScore: apiAssessment.score,
+              policyDecision: "confirm",
+              enforcementAction: feishuLocalApproval.blockReason ? "block" : "requireApproval",
+              approval: buildLocalConsoleApproval({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: "local-chat",
+                metadataJson: {
+                  blacklistReason: match.reason,
+                  localFlow: true,
+                },
+              }),
+            });
             if (feishuLocalApproval.blockReason) {
               return {
                 block: true,
@@ -2211,6 +3074,16 @@ export default function setup(api: OpenClawPluginApi) {
             log.info(
               `[lynx-guardian] approval grant hit source=${approvalRoute.conversationId ?? "none"} module=${primaryModule} risk=${approvalRiskLevel}`,
             );
+            recordBeforeToolCall({
+              summary: "Existing approval grant matched blacklist-protected tool call.",
+              approvalId,
+              triggeredModules: blacklistModules,
+              primaryModule,
+              riskLevel: apiAssessment.level,
+              riskScore: apiAssessment.score,
+              policyDecision: "confirm",
+              enforcementAction: "allow",
+            });
             return;
           }
 
@@ -2232,14 +3105,86 @@ export default function setup(api: OpenClawPluginApi) {
             const resolution = await pendingApproval.pending.wait();
             log.info(`[lynx-guardian] blacklist approval reused resolution=${JSON.stringify(resolution)}`);
             if (resolution === "allow-once" || resolution === "allow-always") {
+              recordBeforeToolCall({
+                summary: "Blacklist approval reused an existing allow resolution.",
+                approvalId,
+                triggeredModules: blacklistModules,
+                primaryModule,
+                riskLevel: apiAssessment.level,
+                riskScore: apiAssessment.score,
+                policyDecision: "confirm",
+                enforcementAction: "allow",
+                approval: buildLocalConsoleApproval({
+                  approvalId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  transport: approvalRoute.approvalTransport,
+                  resolution,
+                  resolvedAtMs: Date.now(),
+                }),
+              });
               return;
             }
             if (resolution === "deny") {
+              recordBeforeToolCall({
+                summary: "Blacklist approval was denied.",
+                approvalId,
+                triggeredModules: blacklistModules,
+                primaryModule,
+                riskLevel: apiAssessment.level,
+                riskScore: apiAssessment.score,
+                policyDecision: "confirm",
+                enforcementAction: "block",
+                approval: buildLocalConsoleApproval({
+                  approvalId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  transport: approvalRoute.approvalTransport,
+                  resolution,
+                  resolvedAtMs: Date.now(),
+                }),
+              });
               return { block: true, blockReason: "Denied by user" };
             }
             if (resolution === "cancelled") {
+              recordBeforeToolCall({
+                summary: "Blacklist approval was cancelled.",
+                approvalId,
+                triggeredModules: blacklistModules,
+                primaryModule,
+                riskLevel: apiAssessment.level,
+                riskScore: apiAssessment.score,
+                policyDecision: "confirm",
+                enforcementAction: "block",
+                approval: buildLocalConsoleApproval({
+                  approvalId,
+                  module: primaryModule,
+                  riskLevel: approvalRiskLevel,
+                  transport: approvalRoute.approvalTransport,
+                  resolution,
+                  resolvedAtMs: Date.now(),
+                }),
+              });
               return { block: true, blockReason: "Approval cancelled" };
             }
+            recordBeforeToolCall({
+              summary: "Blacklist approval timed out.",
+              approvalId,
+              triggeredModules: blacklistModules,
+              primaryModule,
+              riskLevel: apiAssessment.level,
+              riskScore: apiAssessment.score,
+              policyDecision: "confirm",
+              enforcementAction: "block",
+              approval: buildLocalConsoleApproval({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: approvalRoute.approvalTransport,
+                resolution: "timeout",
+                resolvedAtMs: Date.now(),
+              }),
+            });
             return { block: true, blockReason: "Approval timed out" };
           }
           log.info(`[lynx-guardian] blacklist approval prepare handlers`);
@@ -2265,6 +3210,22 @@ export default function setup(api: OpenClawPluginApi) {
           });
           log.info(`[lynx-guardian] blacklist approval transport=${JSON.stringify(transport)}`);
           if (transport === "blocked") {
+            recordBeforeToolCall({
+              summary: blockReason ?? "Approval unavailable",
+              approvalId,
+              triggeredModules: blacklistModules,
+              primaryModule,
+              riskLevel: apiAssessment.level,
+              riskScore: apiAssessment.score,
+              policyDecision: "confirm",
+              enforcementAction: "block",
+              approval: buildLocalConsoleApproval({
+                approvalId,
+                module: primaryModule,
+                riskLevel: approvalRiskLevel,
+                transport: approvalRoute.approvalTransport,
+              }),
+            });
             return {
               block: true,
               blockReason: blockReason ?? "Approval unavailable",
@@ -2290,6 +3251,22 @@ export default function setup(api: OpenClawPluginApi) {
               }),
             });
           }
+          recordBeforeToolCall({
+            summary: `[Lynx Guardian] Risk Level ${riskLevel}: ${match.reason}`,
+            approvalId,
+            triggeredModules: blacklistModules,
+            primaryModule,
+            riskLevel: apiAssessment.level,
+            riskScore: apiAssessment.score,
+            policyDecision: "confirm",
+            enforcementAction: "requireApproval",
+            approval: buildLocalConsoleApproval({
+              approvalId,
+              module: primaryModule,
+              riskLevel: approvalRiskLevel,
+              transport: transport === "native" ? "native" : approvalRoute.approvalTransport,
+            }),
+          });
           return {
             requireApproval: buildToolApprovalRequest({
               toolName,
@@ -2303,6 +3280,18 @@ export default function setup(api: OpenClawPluginApi) {
         }
 
         return {
+          ...(() => {
+            recordBeforeToolCall({
+              summary: `[Lynx Guardian] ${riskLevel >= 3 ? "High-risk tool call blocked" : "Tool call blocked"} (Risk Level ${riskLevel}): ${match.reason}`,
+              triggeredModules: blacklistModules,
+              primaryModule: blacklistModules[0],
+              riskLevel: apiAssessment.level,
+              riskScore: apiAssessment.score,
+              policyDecision: "deny",
+              enforcementAction: "block",
+            });
+            return {};
+          })(),
           block: true,
           blockReason: `[Lynx Guardian] ${riskLevel >= 3 ? "High-risk tool call blocked" : "Tool call blocked"} (Risk Level ${riskLevel}): ${match.reason}`,
         };
@@ -2332,6 +3321,15 @@ export default function setup(api: OpenClawPluginApi) {
             matchedModules: blacklistModules,
             sourceKeys: ctxKeys,
           });
+          recordBeforeToolCall({
+            summary: `[Lynx Guardian] ${riskLevel >= 3 ? "High-risk tool call blocked" : "Confirmation required"} (Risk Level ${riskLevel}): ${match.reason}`,
+            triggeredModules: blacklistModules,
+            primaryModule: blacklistModules[0],
+            riskLevel: apiAssessment.level,
+            riskScore: apiAssessment.score,
+            policyDecision: "confirm",
+            enforcementAction: "block",
+          });
           return {
             block: true,
             blockReason: buildOverridePrompt(
@@ -2343,48 +3341,170 @@ export default function setup(api: OpenClawPluginApi) {
       }
 
       if (riskLevel >= 3 && !approvedToolOverride) {
+        recordBeforeToolCall({
+          summary: `[Lynx Guardian] 高危操作被拦截 (Risk Level ${riskLevel}): ${match.reason}`,
+          triggeredModules: blacklistModules,
+          primaryModule: blacklistModules[0],
+          riskLevel: match.level === "critical" ? "L4" : "L2",
+          riskScore: match.level === "critical" ? 9 : 6,
+          policyDecision: "deny",
+          enforcementAction: "block",
+        });
         return {
           block: true,
           blockReason: `[Lynx Guardian] 高危操作被拦截 (Risk Level ${riskLevel}): ${match.reason}`,
         };
       } else if (riskLevel === 2 && !approvedToolOverride) {
+        recordBeforeToolCall({
+          summary: `[Lynx Guardian] Confirmation required: ${match.reason}. Reply with "同意" and retry.`,
+          triggeredModules: blacklistModules,
+          primaryModule: blacklistModules[0],
+          riskLevel: "L2",
+          riskScore: 6,
+          policyDecision: "confirm",
+          enforcementAction: "block",
+        });
         return {
           block: true,
           blockReason: `[Lynx Guardian] Confirmation required: ${match.reason}. Reply with "同意" and retry.`,
         };
       } else if (riskLevel >= 2) {
         log.info(`[lynx-guardian] One-time override consumed for tool risk: ${toolName}`);
+        recordBeforeToolCall({
+          summary: "One-time override consumed for risky tool call.",
+          triggeredModules: blacklistModules,
+          primaryModule: blacklistModules[0],
+          riskLevel: match.level === "critical" ? "L4" : "L2",
+          riskScore: match.level === "critical" ? 9 : 6,
+          policyDecision: "allow",
+          enforcementAction: "allow",
+        });
         return;
       } else if (riskLevel === 1) {
         log.info(`[lynx-guardian] 识别到内容风险：${adaptedToolCheck.content}`);
+        recordBeforeToolCall({
+          summary: `识别到内容风险：${adaptedToolCheck.content}`,
+          triggeredModules: blacklistModules,
+          primaryModule: blacklistModules[0],
+          riskLevel: "L1",
+          riskScore: 3,
+          policyDecision: "warn",
+          enforcementAction: "warn",
+        });
         return;
       } else {
+        recordBeforeToolCall({
+          summary: "Blacklist-matched tool call was ultimately allowed.",
+          triggeredModules: blacklistModules,
+          primaryModule: blacklistModules[0],
+          riskLevel: "L0",
+          riskScore: 0,
+          policyDecision: "allow",
+          enforcementAction: "allow",
+        });
         return;
       }
     } catch (err: any) {
       log.error(`[lynx-guardian] Tool risk handling failed: ${err.message}`);
       if (match.level === "critical") {
+        recordBeforeToolCall({
+          summary: `[Lynx Guardian] 安全检测失败（高危操作）: ${err.message}`,
+          triggeredModules: inferBlacklistModules(toolName, match.reason),
+          primaryModule: inferBlacklistModules(toolName, match.reason)[0],
+          riskLevel: "L4",
+          riskScore: 9,
+          policyDecision: "deny",
+          enforcementAction: "block",
+        });
         return {
           block: true,
           blockReason: `[Lynx Guardian] 安全检测失败（高危操作）: ${err.message}`,
         };
       }
       log.warn(`[lynx-guardian] API unreachable, allowing warning-level operation: ${match.reason}`);
+      recordBeforeToolCall({
+        summary: `API unreachable, allowing warning-level operation: ${match.reason}`,
+        triggeredModules: inferBlacklistModules(toolName, match.reason),
+        primaryModule: inferBlacklistModules(toolName, match.reason)[0],
+        riskLevel: "L1",
+        riskScore: 1,
+        policyDecision: "allow",
+        enforcementAction: "warn",
+      });
       return;
     }
   });
 
   api.on("after_tool_call", async (event, ctx) => {
     appendLifecycleProbe("after_tool_call", event, ctx);
+    localConsoleHooks?.afterToolCall({
+      occurredAtMs: Date.now(),
+      sessionKey: normalizeString(ctx.sessionKey) || undefined,
+      runId: normalizeString((ctx as any).runId) || undefined,
+      toolCallId: normalizeString((event as any)?.toolCallId) || undefined,
+      toolName: normalizeString((event as any)?.toolName) || "unknown",
+      params: (event as any)?.params,
+      paramSummary: buildParamSummary(
+        normalizeString((event as any)?.toolName) || "unknown",
+        ((event as any)?.params ?? {}) as Record<string, unknown>,
+      ),
+      resultStatus: normalizeString((event as any)?.status) || (normalizeString((event as any)?.errorText) ? "error" : "completed"),
+      resultExcerpt: extractMessageText((event as any)?.message) || normalizeString((event as any)?.result) || undefined,
+      errorText: normalizeString((event as any)?.errorText)
+        || normalizeString((event as any)?.error?.message)
+        || undefined,
+      durationMs: typeof (event as any)?.durationMs === "number" && Number.isFinite((event as any)?.durationMs)
+        ? Math.trunc((event as any).durationMs)
+        : undefined,
+      finishedAtMs: typeof (event as any)?.finishedAtMs === "number" && Number.isFinite((event as any)?.finishedAtMs)
+        ? Math.trunc((event as any).finishedAtMs)
+        : Date.now(),
+      summary: "Tool call completed and after_tool_call hook observed the result.",
+      payloadJson: {
+        hookPayloadKeys: Object.keys((event as any) ?? {}),
+      },
+    });
   });
 
   api.on("session_start", async (event, ctx) => {
     appendLifecycleProbe("session_start", event, ctx);
     rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
+    localConsoleHooks?.sessionStart({
+      occurredAtMs: Date.now(),
+      sessionKey: normalizeString(ctx.sessionKey) || undefined,
+      channelProfile: resolveChannelProfile(ctx.messageProvider ?? ctx.channelId ?? ctx.channel),
+      channelId: normalizeString(ctx.channelId ?? ctx.channel) || undefined,
+      requesterId: normalizeString((ctx as any).senderId ?? ctx.userId) || undefined,
+      requesterOuId: normalizeString((ctx as any).senderOpenId) || undefined,
+      accountId: normalizeString((ctx as any).accountId) || undefined,
+      conversationId: normalizeString((ctx as any).conversationId) || undefined,
+      threadId: (ctx as any).threadId,
+      isGroup: (ctx as any).isGroup === true,
+      metadataJson: {
+        hook: "session_start",
+      },
+      summary: "Session start hook observed.",
+    });
   });
 
   api.on("session_end", async (event, ctx) => {
     appendLifecycleProbe("session_end", event, ctx);
     clearRecentActiveDeliveryTargetForContext(ctx);
+    localConsoleHooks?.sessionEnd({
+      occurredAtMs: Date.now(),
+      sessionKey: normalizeString(ctx.sessionKey) || undefined,
+      channelProfile: resolveChannelProfile(ctx.messageProvider ?? ctx.channelId ?? ctx.channel),
+      channelId: normalizeString(ctx.channelId ?? ctx.channel) || undefined,
+      requesterId: normalizeString((ctx as any).senderId ?? ctx.userId) || undefined,
+      requesterOuId: normalizeString((ctx as any).senderOpenId) || undefined,
+      accountId: normalizeString((ctx as any).accountId) || undefined,
+      conversationId: normalizeString((ctx as any).conversationId) || undefined,
+      threadId: (ctx as any).threadId,
+      isGroup: (ctx as any).isGroup === true,
+      metadataJson: {
+        hook: "session_end",
+      },
+      summary: "Session end hook observed.",
+    });
   });
 }

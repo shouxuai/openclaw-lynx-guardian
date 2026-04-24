@@ -39,7 +39,7 @@ for (const file of filesToCopy) {
 }
 
 // 3.1 Copy directories (hooks, skills)
-const dirsToCopy = ["hooks", "skills"];
+const dirsToCopy = ["hooks", "skills", "server"];
 console.log("Copying directories...");
 for (const dir of dirsToCopy) {
   const src = path.join(rootDir, dir);
