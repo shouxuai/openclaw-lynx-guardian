@@ -358,6 +358,17 @@ function appendInFilter(filters, parameters, fieldName, values) {
   filters.push(`${fieldName} IN (${values.map(() => "?").join(", ")})`);
   parameters.push(...values);
 }
+function escapeLikePattern(value) {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+function appendTextSearchFilter(filters, parameters, fieldNames, value) {
+  const trimmed = value?.trim();
+  if (!trimmed || fieldNames.length === 0) {
+    return;
+  }
+  filters.push(`(${fieldNames.map((fieldName) => `COALESCE(${fieldName}, '') LIKE ? ESCAPE '\\'`).join(" OR ")})`);
+  parameters.push(...fieldNames.map(() => `%${escapeLikePattern(trimmed)}%`));
+}
 function appendDescendingCursorFilter(filters, parameters, sortFieldName, idFieldName, cursor) {
   if (!cursor) {
     return;
@@ -457,6 +468,7 @@ var ApprovalsRepository = class {
   constructor(database) {
     this.database = database;
   }
+  database;
   list(query) {
     const limit = resolveListLimit(query.limit);
     const cursor = decodeDescendingCursor(query.cursor);
@@ -583,19 +595,77 @@ function mapAuditEventListRow(row) {
     enforcementAction: fromDbEnforcementAction(row.enforcement_action) ?? "allow",
     title: row.title,
     summary: row.summary ?? void 0,
+    recommendation: row.recommendation ?? void 0,
     contentExcerpt: row.content_excerpt ?? void 0,
     occurredAtMs: row.occurred_at
   };
+}
+function appendRoutineHeartbeatDefaultFilter(filters, includeRoutineHeartbeat) {
+  if (includeRoutineHeartbeat === true) {
+    return;
+  }
+  filters.push(`
+    NOT (
+      risk_level IS NULL
+      AND risk_score IS NULL
+      AND primary_module IS NULL
+      AND (modules_json IS NULL OR modules_json = '[]')
+      AND (policy_decision IS NULL OR policy_decision NOT IN ('deny', 'confirm', 'block', 'requireApproval', 'require_approval'))
+      AND enforcement_action NOT IN ('block', 'redact', 'require_approval')
+      AND (
+        lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%heartbeat_ok%'
+        OR (
+          lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%read heartbeat.md if it exists%'
+          AND lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%workspace context%'
+        )
+        OR (
+          lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%# heartbeat.md template%'
+          AND lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%skip heartbeat api calls%'
+        )
+        OR (
+          lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%enoent%'
+          AND lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%heartbeat.md%'
+        )
+        OR (
+          hook_name IN ('before_tool_call', 'after_tool_call', 'tool_result_persist')
+          AND lower(COALESCE(payload_json, '')) LIKE '%"toolname":"read"%'
+          AND lower(COALESCE(payload_json, '')) LIKE '%heartbeat.md%'
+        )
+      )
+    )
+  `);
 }
 var EventsRepository = class {
   constructor(database) {
     this.database = database;
   }
+  database;
   list(query) {
     const limit = resolveListLimit(query.limit);
     const cursor = decodeDescendingCursor(query.cursor);
     const filters = [];
     const parameters = [];
+    appendTextSearchFilter(filters, parameters, [
+      "event_id",
+      "session_key",
+      "run_id",
+      "tool_call_id",
+      "approval_id",
+      "request_id",
+      "hook_name",
+      "event_type",
+      "category",
+      "sub_category",
+      "direction",
+      "primary_module",
+      "risk_level",
+      "policy_decision",
+      "enforcement_action",
+      "title",
+      "summary",
+      "recommendation",
+      "content_excerpt"
+    ], query.q);
     appendRangeFilter(filters, parameters, "occurred_at", query.fromMs, query.toMs);
     appendEqualsFilter(filters, parameters, "session_key", query.sessionKey);
     appendEqualsFilter(filters, parameters, "run_id", query.runId);
@@ -615,6 +685,7 @@ var EventsRepository = class {
       "enforcement_action",
       query.enforcementAction?.map((value) => toDbEnforcementAction(value))
     );
+    appendRoutineHeartbeatDefaultFilter(filters, query.includeRoutineHeartbeat);
     appendDescendingCursorFilter(filters, parameters, "occurred_at", "event_id", cursor);
     const rows = this.database.prepare(
       `
@@ -638,6 +709,7 @@ var EventsRepository = class {
           enforcement_action,
           title,
           summary,
+          recommendation,
           content_excerpt,
           occurred_at
         FROM audit_events
@@ -729,6 +801,7 @@ var ToolCallsRepository = class {
   constructor(database) {
     this.database = database;
   }
+  database;
   list(query) {
     const limit = resolveListLimit(query.limit);
     const cursor = decodeDescendingCursor(query.cursor);
@@ -843,6 +916,7 @@ var DashboardRepository = class {
   constructor(database) {
     this.database = database;
   }
+  database;
   getOverview(query) {
     const eventsRange = buildTimeRangeWhere("occurred_at", query.fromMs, query.toMs);
     const toolCallsRange = buildTimeRangeWhere("started_at", query.fromMs, query.toMs);
@@ -1012,6 +1086,7 @@ var IngestRepository = class {
   constructor(database) {
     this.database = database;
   }
+  database;
   withTransaction(callback) {
     const transaction = this.database.transaction(callback);
     return transaction();
@@ -1530,6 +1605,7 @@ var LynxChecksRepository = class {
   constructor(database) {
     this.database = database;
   }
+  database;
   list(query) {
     const limit = resolveListLimit(query.limit);
     const cursor = decodeDescendingCursor(query.cursor);
@@ -1636,6 +1712,7 @@ var SessionsRepository = class _SessionsRepository {
   constructor(database) {
     this.database = database;
   }
+  database;
   static COUNTS_SQL = `
     SELECT
       s.session_key,
@@ -1837,6 +1914,7 @@ var TokensRepository = class {
   constructor(database) {
     this.database = database;
   }
+  database;
   buildCommonFilters(query) {
     const filters = [];
     const parameters = [];
@@ -2041,6 +2119,7 @@ function registerEventRoutes(app2, repository) {
   app2.get("/events", async (request) => {
     const query = request.query;
     return repository.list({
+      q: readStringQuery(query.q),
       fromMs: readNumberQuery(query.fromMs),
       toMs: readNumberQuery(query.toMs),
       sessionKey: readStringQuery(query.sessionKey),
@@ -2057,7 +2136,8 @@ function registerEventRoutes(app2, repository) {
       primaryModule: readStringQuery(query.primaryModule),
       requestId: readStringQuery(query.requestId),
       toolCallId: readStringQuery(query.toolCallId),
-      approvalId: readStringQuery(query.approvalId)
+      approvalId: readStringQuery(query.approvalId),
+      includeRoutineHeartbeat: readBooleanQuery(query.includeRoutineHeartbeat)
     });
   });
   app2.get("/events/:eventId", async (request, reply) => {
@@ -2406,6 +2486,8 @@ var IngestService = class {
     this.repository = repository;
     this.now = now;
   }
+  repository;
+  now;
   processBatch(payload) {
     const parsedBatch = ingestBatchSchema.parse(payload);
     const validItems = [];

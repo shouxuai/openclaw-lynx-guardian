@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import type { AuditEventItem, IngestItemV1, TokenUsageItem } from "../../shared/src/ingest.js";
 import type { EventContext, LlmOutputEvent, Logger } from "../types.js";
 import type { LocalConsoleIngestClient } from "./local-console-client.js";
+import { filterRoutineHeartbeatIngestItems } from "./local-console-heartbeat-filter.js";
 import { createSessionReplayTokenUsageEstimator } from "./local-console-session-token-estimator.js";
 
 export interface EstimatedTokenUsage {
@@ -344,7 +345,7 @@ export function createLocalConsoleTokenHook(options: LocalConsoleTokenHookOption
   return {
     handle(event, ctx) {
       try {
-        const items = buildTokenHookItems(event, ctx, estimator);
+        const items = filterRoutineHeartbeatIngestItems(buildTokenHookItems(event, ctx, estimator));
         if (items.length === 0) {
           return;
         }

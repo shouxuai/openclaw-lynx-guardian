@@ -57,6 +57,24 @@ export function buildReadySyncSuccessMessage({ containerName, startedAt }) {
   return `[lynx-dev-ready] SUCCESS: ${resolvedContainer} restarted and ready at ${resolvedStartedAt}`;
 }
 
+export function buildPackageLocalConsoleServerArgs({
+  packageScriptPath,
+  repoRoot,
+} = {}) {
+  if (!packageScriptPath) {
+    throw new Error("packageScriptPath is required.");
+  }
+  if (!repoRoot) {
+    throw new Error("repoRoot is required.");
+  }
+
+  return [
+    packageScriptPath,
+    "--repo-root",
+    repoRoot,
+  ];
+}
+
 export function resolveCronStoreSyncPaths({
   legacyStateRoot = DEFAULT_LEGACY_CRON_STORE_ROOT,
   runtimeStateRoot = DEFAULT_DOCKER_STATE_ROOT,

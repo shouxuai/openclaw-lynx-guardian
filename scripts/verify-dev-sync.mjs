@@ -12,6 +12,7 @@ import {
 } from "./dev-sync-lib.mjs";
 import {
   buildReadySyncSuccessMessage,
+  buildPackageLocalConsoleServerArgs,
   buildCronStoreContainsJobShellCommand,
   buildCronStoreSyncShellCommand,
   extractContainerHealthStatus,
@@ -101,6 +102,18 @@ assert.equal(
     startedAt: "2026-04-12T02:29:31.194287003Z",
   }),
   "[lynx-dev-ready] SUCCESS: openclaw-openclaw-gateway-1 restarted and ready at 2026-04-12T02:29:31.194287003Z",
+);
+
+assert.deepEqual(
+  buildPackageLocalConsoleServerArgs({
+    packageScriptPath: "C:\\repo\\scripts\\package-local-console-server.mjs",
+    repoRoot: "C:\\repo",
+  }),
+  [
+    "C:\\repo\\scripts\\package-local-console-server.mjs",
+    "--repo-root",
+    "C:\\repo",
+  ],
 );
 
 const cronStorePaths = resolveCronStoreSyncPaths();

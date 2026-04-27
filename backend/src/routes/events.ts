@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import type { EventsRepository } from "../repositories/events-repository.js";
-import { readNumberQuery, readStringArrayQuery, readStringQuery } from "./query-helpers.js";
+import { readBooleanQuery, readNumberQuery, readStringArrayQuery, readStringQuery } from "./query-helpers.js";
 
 export function registerEventRoutes(app: FastifyInstance, repository: EventsRepository): void {
   app.get("/events", async (request) => {
@@ -25,6 +25,7 @@ export function registerEventRoutes(app: FastifyInstance, repository: EventsRepo
       requestId: readStringQuery(query.requestId),
       toolCallId: readStringQuery(query.toolCallId),
       approvalId: readStringQuery(query.approvalId),
+      includeRoutineHeartbeat: readBooleanQuery(query.includeRoutineHeartbeat),
     });
   });
 

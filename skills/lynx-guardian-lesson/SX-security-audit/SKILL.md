@@ -27,7 +27,7 @@ The plugin-level managed `/lynx-check` report should end with a separated, footn
 
 ```markdown
 ---
-[本地日志页面]: <http://127.0.0.1:18789/webview>。这里汇总 Lynx Guardian 记录的审计日志、工具调用、审批和 /lynx-check 结果，可用于追踪本次安全事件。
+[^lynx-log]: 本地日志页面 Webview: <http://127.0.0.1:18789/webview>。这里汇总 Lynx Guardian 记录的审计日志、工具调用、审批和 /lynx-check 结果，可用于追踪本次安全事件。
 ```
 
 Do not duplicate the note if the managed plugin flow already appended it.

@@ -1,5 +1,6 @@
 import type { Logger } from "../types.js";
 import type { LocalConsoleIngestClient } from "./local-console-client.js";
+import { filterRoutineHeartbeatIngestItems } from "./local-console-heartbeat-filter.js";
 import {
   createLocalConsoleEventBuilder,
   type AgentEndInput,
@@ -53,7 +54,7 @@ export function createLocalConsoleHookHandlers(options: LocalConsoleHookHandlers
     input: Parameters<LocalConsoleEventBuilder[K]>[0],
   ): void {
     try {
-      const items = builder[methodName](input as never);
+      const items = filterRoutineHeartbeatIngestItems(builder[methodName](input as never));
       if (!items || items.length === 0) {
         return;
       }

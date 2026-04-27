@@ -2,11 +2,11 @@ import type Database from "better-sqlite3";
 
 import type {
   TokenSummaryDto,
-  TokenTrendBucket,
   TokenTrendDto,
   TokenUsageListItemDto,
   TokenUsageListResponse,
 } from "../../../shared/src/query-dto.js";
+import type { TokenTrendBucket } from "../../../shared/src/enums.js";
 import { buildCursorPage, decodeDescendingCursor, resolveListLimit } from "../services/cursor-service.js";
 import {
   appendBooleanFilter,

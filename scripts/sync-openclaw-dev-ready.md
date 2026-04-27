@@ -3,23 +3,24 @@
 Use this wrapper when you want one command that:
 
 1. runs `verify-dev-sync.mjs`
-2. runs the existing sync script
-3. waits for the first Docker gateway restart to become ready
-4. verifies the legacy cron store under `/home/node/.openclaw/cron/jobs.json`
-5. syncs that cron store into `/home/node/.openclaw/docker-state/cron/jobs.json`
-6. restarts the gateway again so cron reloads the Docker state store
-7. prints a clear success callback
+2. builds shared/backend/frontend and packages the latest local-console outputs into `server/`
+3. runs the existing sync script
+4. waits for the first Docker gateway restart to become ready
+5. verifies the legacy cron store under `/home/node/.openclaw/cron/jobs.json`
+6. syncs that cron store into `/home/node/.openclaw/docker-state/cron/jobs.json`
+7. restarts the gateway again so cron reloads the Docker state store
+8. prints a clear success callback
 
 ## Command
 
 ```powershell
-.\scripts-dev\sync-openclaw-dev-ready.ps1 --logs 200
+.\scripts\sync-openclaw-dev-ready.ps1 --logs 200
 ```
 
 Or directly:
 
 ```powershell
-node .\scripts-dev\sync-openclaw-dev-ready.mjs --repo-root "C:\Users\24716\.openclaw\extensions\openclaw-lynx-guardian" --logs 200
+node .\scripts\sync-openclaw-dev-ready.mjs --repo-root "C:\Users\24716\.openclaw\extensions\openclaw-lynx-guardian" --logs 200
 ```
 
 ## Success Criteria

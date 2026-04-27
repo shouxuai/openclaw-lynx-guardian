@@ -3,9 +3,10 @@ import type { AuditEventDetailDto, AuditEventListItemDto, EnforcementAction, Ris
 
 import { getEventDetail, listEvents, type EventListQuery } from "../api/events";
 import { mockEvents } from "../data/mock-console";
-import { DetailPanel } from "../components/detail/DetailPanel";
+import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
+import { TablePagination } from "../components/tables/TablePagination";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import {
   formatActionText,
@@ -16,7 +17,8 @@ import {
   renderRiskBadge,
 } from "../utils/status";
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 interface EventFilters {
   q: string;
@@ -107,10 +109,10 @@ function eventMatchesQuery(event: AuditEventListItemDto, query: EventListQuery):
     .some((value) => String(value).toLowerCase().includes(keyword));
 }
 
-function pageMockEvents(query: EventListQuery, pageIndex: number): AuditEventListItemDto[] {
+function pageMockEvents(query: EventListQuery, pageIndex: number, pageSize: number): AuditEventListItemDto[] {
   return mockEvents
     .filter((event) => eventMatchesQuery(event, query))
-    .slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
+    .slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
 }
 
 function resolveEventExcerpt(event: AuditEventListItemDto): string {
@@ -131,6 +133,7 @@ export function EventsPage() {
   const [appliedQuery, setAppliedQuery] = useState<EventListQuery>({});
   const [pageCursors, setPageCursors] = useState<Array<string | undefined>>([undefined]);
   const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -152,7 +155,7 @@ export function EventsPage() {
       try {
         const response = await listEvents({
           ...appliedQuery,
-          limit: PAGE_SIZE,
+          limit: pageSize,
           cursor: currentCursor,
         });
         if (!active) {
@@ -171,7 +174,7 @@ export function EventsPage() {
         }
 
         startTransition(() => {
-          setItems(import.meta.env.DEV ? pageMockEvents(appliedQuery, pageIndex) : []);
+          setItems(import.meta.env.DEV ? pageMockEvents(appliedQuery, pageIndex, pageSize) : []);
           setNextCursor(undefined);
           setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
           setLoading(false);
@@ -183,7 +186,7 @@ export function EventsPage() {
     return () => {
       active = false;
     };
-  }, [appliedQuery, currentCursor, pageIndex, refreshKey]);
+  }, [appliedQuery, currentCursor, pageIndex, pageSize, refreshKey]);
 
   const pageSummary = useMemo(() => {
     const highRiskCount = items.filter((event) => event.riskLevel === "L3" || event.riskLevel === "L4").length;
@@ -242,6 +245,32 @@ export function EventsPage() {
     setPageIndex((current) => current + 1);
   }
 
+  function handlePageChange(nextPageIndex: number): void {
+    if (nextPageIndex === pageIndex) {
+      return;
+    }
+    if (nextPageIndex === pageCursors.length && nextCursor) {
+      handleNextPage();
+      return;
+    }
+    if (nextPageIndex >= 0 && nextPageIndex < pageCursors.length) {
+      setSelectedDetail(null);
+      setDetailError(null);
+      setPageIndex(nextPageIndex);
+    }
+  }
+
+  function handlePageSizeChange(nextPageSize: number): void {
+    setPageSize(nextPageSize);
+    resetPaging();
+  }
+
+  function handleCloseDetail(): void {
+    setSelectedDetail(null);
+    setDetailError(null);
+    setDetailLoadingId(null);
+  }
+
   async function handleOpenDetail(eventId: string): Promise<void> {
     setDetailLoadingId(eventId);
     setDetailError(null);
@@ -261,6 +290,8 @@ export function EventsPage() {
       setDetailLoadingId(null);
     }
   }
+
+  const isDetailDialogOpen = Boolean(selectedDetail || detailError);
 
   return (
     <div className="page-stack">
@@ -415,49 +446,57 @@ export function EventsPage() {
             ),
           }))}
         />
-        <div className="table-panel__footer">
-          <span>
-            第 {formatInteger(pageIndex + 1)} 页，显示 {formatInteger(items.length)} 条结果
-          </span>
-          <div className="pagination-controls" aria-label="审计日志分页">
-            <button
-              className="btn btn--compact"
-              disabled={pageIndex === 0 || loading}
-              type="button"
-              onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-            >
-              上一页
-            </button>
-            <button
-              className="btn btn--compact btn--primary"
-              disabled={!nextCursor || loading}
-              type="button"
-              onClick={handleNextPage}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
+        <TablePagination
+          hasNextPage={Boolean(nextCursor)}
+          itemCount={items.length}
+          loading={loading}
+          pageCount={pageCursors.length}
+          pageIndex={pageIndex}
+          pageSize={pageSize}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onNextPage={handleNextPage}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+          onPreviousPage={() => {
+            setSelectedDetail(null);
+            setDetailError(null);
+            setPageIndex((current) => Math.max(0, current - 1));
+          }}
+        />
       </section>
 
-      <DetailPanel
+      <ModalDialog
+        closeLabel="关闭详情"
+        open={isDetailDialogOpen}
         title={selectedDetail?.title ?? "事件详情"}
         subtitle={
           detailError
             ? `详情加载失败：${detailError}`
             : selectedDetail?.eventId ?? "点击表格中的“详情”查看完整记录。"
         }
-        fields={[
-          { label: "触发点", value: formatHookLabel(selectedDetail?.hookName) },
-          { label: "完整脱敏摘要", value: selectedDetail?.contentExcerpt ?? "暂无" },
-          { label: "处置建议", value: selectedDetail?.recommendation ?? selectedDetail?.summary ?? "暂无" },
-          { label: "模块", value: selectedDetail?.modules?.join(", ") || selectedDetail?.primaryModule || "暂无" },
-          { label: "内容类型", value: selectedDetail?.contentKind ?? "暂无" },
-          { label: "内容哈希", value: selectedDetail?.contentHash ?? "暂无" },
-          { label: "入库时间", value: selectedDetail ? formatTimestamp(selectedDetail.ingestedAtMs) : "暂无" },
-          { label: "Payload", value: <pre className="code-panel">{formatDetailJson(selectedDetail?.payloadJson)}</pre> },
-        ]}
-      />
+        onClose={handleCloseDetail}
+      >
+        <dl className="detail-panel__grid audit-detail-dialog__grid">
+          {[
+            { label: "触发点", value: formatHookLabel(selectedDetail?.hookName) },
+            { label: "完整脱敏摘要", value: selectedDetail?.contentExcerpt ?? "暂无" },
+            { label: "处置建议", value: selectedDetail?.recommendation ?? selectedDetail?.summary ?? "暂无" },
+            { label: "模块", value: selectedDetail?.modules?.join(", ") || selectedDetail?.primaryModule || "暂无" },
+            { label: "内容类型", value: selectedDetail?.contentKind ?? "暂无" },
+            { label: "内容哈希", value: selectedDetail?.contentHash ?? "暂无" },
+            { label: "入库时间", value: selectedDetail ? formatTimestamp(selectedDetail.ingestedAtMs) : "暂无" },
+            {
+              label: "Payload",
+              value: <pre className="code-panel">{formatDetailJson(selectedDetail?.payloadJson)}</pre>,
+            },
+          ].map((field) => (
+            <div key={field.label} className="detail-panel__field">
+              <dt>{field.label}</dt>
+              <dd>{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </ModalDialog>
     </div>
   );
 }

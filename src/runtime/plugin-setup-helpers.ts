@@ -50,6 +50,7 @@ import { persistGrantFromApproval } from "./tool-approval-runtime.js";
 import { buildParamSummary } from "./policy-runtime.js";
 import { hasManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
 import { appendLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";
+import { shouldSkipRoutineHeartbeatProbe } from "./local-console-heartbeat-filter.js";
 import { ensureParentDirectory } from "../discovery/pending-discovery-store.js";
 
 export function describeDeliveryTarget(ctx: any): string {
@@ -304,6 +305,9 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
 
   function appendLifecycleProbe(hookName: string, payload: unknown, ctx: unknown): void {
     try {
+      if (shouldSkipRoutineHeartbeatProbe(hookName, payload, ctx)) {
+        return;
+      }
       ensureParentDirectory(hookProbeLogPath);
       writeFileSync(
         hookProbeLogPath,

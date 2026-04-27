@@ -16,6 +16,13 @@ node_cache/
 # -------------------------- 前端构建产物 --------------------------
 # 通用构建目录
 dist/
+!/server/
+!/server/backend/
+!/server/backend/dist/
+!/server/backend/dist/**
+!/server/frontend/
+!/server/frontend/dist/
+!/server/frontend/dist/**
 build/
 out/
 # Vue 项目构建/开发产物
@@ -102,3 +109,4 @@ test-results/
 /notes
 /skills/openclaw-plugin-dev-workflow
 /DESIGN.md
+/.workplace/

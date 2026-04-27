@@ -817,17 +817,18 @@ button {
 }
 
 .table-wrap {
+  width: 100%;
   overflow-x: auto;
 }
 
 .data-table {
+  width: 100%;
   min-width: 760px;
 }
 
 .audit-events-table-panel .data-table {
   width: 100%;
-  min-width: 1280px;
-  max-width: 1440px;
+  min-width: max(1280px, 100%);
   table-layout: fixed;
 }
 
@@ -1025,6 +1026,54 @@ button {
   gap: 10px;
 }
 
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 32px;
+  border-top: 1px solid var(--line);
+  background: #f8f9fb;
+  color: var(--muted);
+}
+
+.table-pagination__summary {
+  color: var(--muted-strong);
+  font-size: 0.94rem;
+}
+
+.table-pagination__controls,
+.table-pagination__buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.table-pagination__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-strong);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.table-pagination__field select {
+  min-height: 38px;
+  border: 1px solid #cfe3ff;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text-soft);
+  font: inherit;
+  outline: 0;
+  padding: 0 34px 0 12px;
+}
+
+.table-pagination__field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(11, 99, 246, 0.12);
+}
+
 .filter-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1068,6 +1117,76 @@ button {
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(36, 48, 68, 0.34);
+}
+
+.modal-dialog {
+  width: min(860px, 100%);
+  max-height: min(760px, calc(100vh - 56px));
+  overflow: hidden;
+  border: 1px solid #dce8ff;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(37, 52, 84, 0.22);
+}
+
+.modal-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 26px 30px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfdff;
+}
+
+.modal-dialog__title {
+  font-size: 1.22rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.modal-dialog__subtitle {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.modal-dialog__close {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #cfe3ff;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.modal-dialog__close:hover,
+.modal-dialog__close:focus-visible {
+  background: var(--accent-soft);
+  outline: 2px solid transparent;
+}
+
+.modal-dialog__body {
+  max-height: calc(min(760px, 100vh - 56px) - 92px);
+  overflow: auto;
+  padding: 28px 30px 30px;
+}
+
+.audit-detail-dialog__grid .code-panel {
+  max-height: 260px;
+  overflow: auto;
 }
 
 .list-stack {
@@ -1538,7 +1657,40 @@ button {
 
   .table-panel__header,
   .table-panel__footer,
+  .table-pagination,
   .panel {
+    padding: 22px;
+  }
+
+  .table-pagination,
+  .table-pagination__controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-pagination__field,
+  .table-pagination__buttons {
+    width: 100%;
+  }
+
+  .table-pagination__field {
+    justify-content: space-between;
+  }
+
+  .table-pagination__field select,
+  .table-pagination__buttons .btn {
+    flex: 1;
+  }
+
+  .modal-backdrop {
+    padding: 14px;
+  }
+
+  .modal-dialog__header {
+    padding: 22px;
+  }
+
+  .modal-dialog__body {
     padding: 22px;
   }
 

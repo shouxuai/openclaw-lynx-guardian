@@ -33,6 +33,7 @@ export interface EventsListQuery extends CommonListQuery {
   requestId?: string;
   toolCallId?: string;
   approvalId?: string;
+  includeRoutineHeartbeat?: boolean;
 }
 
 interface AuditEventListRow {
@@ -96,6 +97,43 @@ export function mapAuditEventListRow(row: AuditEventListRow): AuditEventListItem
   };
 }
 
+function appendRoutineHeartbeatDefaultFilter(filters: string[], includeRoutineHeartbeat: boolean | undefined): void {
+  if (includeRoutineHeartbeat === true) {
+    return;
+  }
+
+  filters.push(`
+    NOT (
+      risk_level IS NULL
+      AND risk_score IS NULL
+      AND primary_module IS NULL
+      AND (modules_json IS NULL OR modules_json = '[]')
+      AND (policy_decision IS NULL OR policy_decision NOT IN ('deny', 'confirm', 'block', 'requireApproval', 'require_approval'))
+      AND enforcement_action NOT IN ('block', 'redact', 'require_approval')
+      AND (
+        lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%heartbeat_ok%'
+        OR (
+          lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%read heartbeat.md if it exists%'
+          AND lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%workspace context%'
+        )
+        OR (
+          lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%# heartbeat.md template%'
+          AND lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%skip heartbeat api calls%'
+        )
+        OR (
+          lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%enoent%'
+          AND lower(COALESCE(content_excerpt, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(payload_json, '')) LIKE '%heartbeat.md%'
+        )
+        OR (
+          hook_name IN ('before_tool_call', 'after_tool_call', 'tool_result_persist')
+          AND lower(COALESCE(payload_json, '')) LIKE '%"toolname":"read"%'
+          AND lower(COALESCE(payload_json, '')) LIKE '%heartbeat.md%'
+        )
+      )
+    )
+  `);
+}
+
 export class EventsRepository {
   constructor(private readonly database: Database.Database) {}
 
@@ -145,6 +183,7 @@ export class EventsRepository {
       "enforcement_action",
       query.enforcementAction?.map((value) => toDbEnforcementAction(value)),
     );
+    appendRoutineHeartbeatDefaultFilter(filters, query.includeRoutineHeartbeat);
     appendDescendingCursorFilter(filters, parameters, "occurred_at", "event_id", cursor);
 
     const rows = this.database

@@ -206,6 +206,10 @@ import {
   appendLocalConsoleWebviewFootnote,
   appendLocalConsoleWebviewFootnoteForL4Reply,
 } from "./src/runtime/local-console-webview-note.js";
+import {
+  buildVisibleInputGuardModelContext,
+  buildVisibleInputGuardWarning,
+} from "./src/runtime/visible-input-warning.js";
 import { resolvePluginRuntimeConfig } from "./src/runtime/plugin-runtime-config.js";
 import {
   buildDeliveryTargetSnapshot,
@@ -769,7 +773,12 @@ export default function setup(api: OpenClawPluginApi) {
           blockReason,
         } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
-        if (guardActionRequired && !approvedInputOverride) {
+        const visibleInputWarning = buildVisibleInputGuardWarning({
+          assessment: effectiveAssessment,
+          policyDecisionKind: policyResolution.finalDecision.kind,
+          warning: decision.warning,
+        });
+        if (guardActionRequired && !approvedInputOverride && !visibleInputWarning) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
           localConsoleHooks?.messageReceived({
@@ -829,13 +838,17 @@ export default function setup(api: OpenClawPluginApi) {
           await sendHookFeedback(ctx, userFacingBlockReason);
           return;
         }
+        if (visibleInputWarning) {
+          log.warn(`[lynx-guardian] Self-safety-guard visible warning: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
+          await sendHookFeedback(ctx, visibleInputWarning);
+        }
         if (decision.warning) {
           log.warn(`[lynx-guardian] Self-safety-guard warning: ${decision.warning}`);
         }
         localConsoleHooks?.messageReceived({
           occurredAtMs: localConsoleOccurredAtMs,
           sessionKey: normalizeString(ctx.sessionKey) || undefined,
-          summary: decision.warning ?? "Inbound message passed input guard evaluation.",
+          summary: visibleInputWarning ?? decision.warning ?? "Inbound message passed input guard evaluation.",
           contentExcerpt: text,
           contentKind: "text",
           primaryModule: effectiveAssessment.modules[0],
@@ -843,10 +856,11 @@ export default function setup(api: OpenClawPluginApi) {
           riskLevel: effectiveAssessment.level,
           riskScore: effectiveAssessment.score,
           policyDecision: policyResolution.finalDecision.kind,
-          enforcementAction: decision.warning ? "warn" : "allow",
+          enforcementAction: visibleInputWarning || decision.warning ? "warn" : "allow",
           payloadJson: {
             approvedInputOverride: Boolean(approvedInputOverride),
             warning: decision.warning,
+            visibleInputWarning,
             guardActionRequired,
           },
         });
@@ -1270,7 +1284,42 @@ export default function setup(api: OpenClawPluginApi) {
           effectiveAssessment,
           blockReason,
         } = resolveGuardPolicyState(decision);
-        if (guardActionRequired && !managedLynxCheckPreauthorized) {
+        const visibleInputWarning = buildVisibleInputGuardWarning({
+          assessment: effectiveAssessment,
+          policyDecisionKind: policyResolution.finalDecision.kind,
+          warning: decision.warning,
+        });
+        const visibleInputWarningContext = buildVisibleInputGuardModelContext({
+          assessment: effectiveAssessment,
+          policyDecisionKind: policyResolution.finalDecision.kind,
+          warning: decision.warning,
+        });
+        if (visibleInputWarningContext) {
+          prependContext += `${visibleInputWarningContext}\n`;
+          log.warn(`[lynx-guardian] Self-safety-guard visible agent-start warning: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
+          localConsoleHooks?.beforeAgentStart({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey,
+            runId: normalizeString(ctx.runId) || undefined,
+            promptText,
+            summary: visibleInputWarning ?? effectiveAssessment.description,
+            contentExcerpt: promptText,
+            contentKind: "text",
+            primaryModule: effectiveAssessment.modules[0],
+            modules: effectiveAssessment.modules,
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: policyResolution.finalDecision.kind,
+            enforcementAction: "warn",
+            lynxCheck: localConsoleLynxCheckSnapshot as any,
+            payloadJson: {
+              managedLynxCheckPreauthorized,
+              legacyRiskLevel: policyEvaluation.legacyRiskLevel,
+              visibleInputWarning,
+            },
+          });
+        }
+        if (guardActionRequired && !managedLynxCheckPreauthorized && !visibleInputWarningContext) {
           const shouldInjectForcedDenyContext = normalizeString(effectiveAssessment.level) === "L4";
           const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
           const denyPrependContext = shouldInjectForcedDenyContext
@@ -1332,7 +1381,7 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
         if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
-        } else if (guardActionRequired && !approvedAgentStartOverride) {
+        } else if (guardActionRequired && !approvedAgentStartOverride && !visibleInputWarningContext) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
@@ -1417,11 +1466,11 @@ export default function setup(api: OpenClawPluginApi) {
             blockReason: userFacingBlockReason,
           } as any;
         }
-        if (decision.warning) {
+        if (decision.warning && !visibleInputWarningContext) {
           prependContext += `${decision.warning}\n`;
         }
         // 弱信号预警注入：L1/L2 不阻断时，向模型注入安全上下文让模型参与防御
-        if (!guardActionRequired) {
+        if (!guardActionRequired || visibleInputWarningContext) {
           const lvl = effectiveAssessment.level;
           if ((lvl === "L1" || lvl === "L2") && effectiveAssessment.modules.length > 0) {
             const injection = buildSecurityAwarenessInjection(effectiveAssessment.modules);
