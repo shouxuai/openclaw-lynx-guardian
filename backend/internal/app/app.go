@@ -6,9 +6,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/openclaw/lynx-guardian/backend/internal/chain"
 	"github.com/openclaw/lynx-guardian/backend/internal/config"
 	"github.com/openclaw/lynx-guardian/backend/internal/db"
 	"github.com/openclaw/lynx-guardian/backend/internal/decision"
+	"github.com/openclaw/lynx-guardian/backend/internal/grants"
 	"github.com/openclaw/lynx-guardian/backend/internal/ingest"
 	"github.com/openclaw/lynx-guardian/backend/internal/middleware"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
@@ -42,7 +44,11 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	tokens := repo.NewTokensRepository(database)
 	dashboard := repo.NewDashboardRepository(database)
 	decisions := repo.NewDecisionRepository(database)
+	chains := repo.NewChainRepository(database)
+	approvalGrants := repo.NewGrantRepository(database)
 	decisionService := decision.NewService(decisions)
+	grantService := grants.NewService(approvalGrants)
+	chainService := chain.NewService(chains, grantService)
 	ingestService := ingest.NewService(repo.NewIngestRepository(database))
 
 	root := gin.New()
@@ -69,6 +75,8 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 
 	ingestGroup := query.Group("/internal/v1")
 	ingestGroup.Use(middleware.RequireIngestAuth(cfg.IngestToken))
+	routes.RegisterChains(query, ingestGroup, chainService, chains)
+	routes.RegisterGrants(query, ingestGroup, grantService, approvalGrants)
 	routes.RegisterIngest(ingestGroup, ingestService)
 	routes.RegisterDecisions(query, ingestGroup, decisionService, decisions)
 

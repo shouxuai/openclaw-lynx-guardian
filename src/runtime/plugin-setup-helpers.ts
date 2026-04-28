@@ -46,7 +46,10 @@ import {
 } from "./lynx-check-run-store.js";
 import { deliverLynxFeishuApprovalPromptDirectly } from "./lynx-feishu-direct-delivery.js";
 import { buildApprovalRequestFingerprint } from "./approval-request-fingerprint.js";
-import { persistGrantFromApproval } from "./tool-approval-runtime.js";
+import {
+  persistGrantFromApproval,
+  type GrantControlPlaneSync,
+} from "./tool-approval-runtime.js";
 import { buildParamSummary } from "./policy-runtime.js";
 import { hasManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
 import { appendLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";
@@ -259,6 +262,7 @@ export function buildOutboundDeliveryTarget(
 
 type CreatePluginSetupHelpersParams = {
   config: any;
+  grantControlPlane?: Pick<GrantControlPlaneSync, "baseUrl" | "getToken" | "fetchImpl">;
   hookProbeLogPath: string;
   localApprovalApproverOuIds: string[];
   log: {
@@ -274,6 +278,7 @@ type CreatePluginSetupHelpersParams = {
 export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams) {
   const {
     config,
+    grantControlPlane,
     hookProbeLogPath,
     localApprovalApproverOuIds,
     log,
@@ -1159,6 +1164,27 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
         module: params.module,
         riskLevel: params.riskLevel,
         grantWindowMs: params.grantWindowMs,
+        grantControlPlane: grantControlPlane
+          ? {
+            ...grantControlPlane,
+            chainId: normalizeString(params.ctx?.runId) || normalizeString(params.ctx?.sessionKey) || params.approvalId,
+            sessionKey: normalizeString(params.ctx?.sessionKey) || undefined,
+            requesterId: normalizeString(params.ctx?.userId ?? params.ctx?.senderId) || params.requesterOuId,
+            approverOuId: params.approverOuIds[0],
+            toolName: params.toolName,
+            targetKind: "tool",
+            targetHash: buildApprovalRequestFingerprint({
+              channelProfile: params.channelProfile,
+              accountId: params.accountId,
+              conversationId: params.conversationId,
+              requesterOuId: params.requesterOuId,
+              promptText: params.promptText,
+              toolName: params.toolName,
+              module: params.module,
+              protectedTargetSummary: params.protectedTargetSummary,
+            }),
+          }
+          : undefined,
       });
     };
 

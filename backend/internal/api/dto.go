@@ -139,3 +139,110 @@ type DecisionResponse struct {
 	Audit            DecisionAudit         `json:"audit"`
 	Degraded         *DecisionDegraded     `json:"degraded,omitempty"`
 }
+
+type ChainSummary struct {
+	ChainID          string   `json:"chainId"`
+	SessionKey       string   `json:"sessionKey"`
+	RecentIdentity   []string `json:"recentIdentity"`
+	RecentSensitive  []string `json:"recentSensitive"`
+	RecentDenials    []string `json:"recentDenials"`
+	RecentApprovals  []string `json:"recentApprovals"`
+	RecentTools      []string `json:"recentTools"`
+	RecentTaintReads []string `json:"recentTaintReads"`
+	RecentEvasions   []string `json:"recentEvasions"`
+	ActiveGrantID    string   `json:"activeGrantId"`
+	PendingApproval  string   `json:"pendingApproval"`
+}
+
+type ChainUpdateRequest struct {
+	ChainID        string         `json:"chainId"`
+	SessionKey     string         `json:"sessionKey"`
+	ChannelProfile string         `json:"channelProfile"`
+	ChannelID      string         `json:"channelId"`
+	ConversationID string         `json:"conversationId"`
+	RequesterID    string         `json:"requesterId"`
+	RequesterOuID  string         `json:"requesterOuId"`
+	EventType      string         `json:"eventType"`
+	Hook           string         `json:"hook"`
+	RiskLevel      string         `json:"riskLevel"`
+	Action         string         `json:"action"`
+	ToolName       string         `json:"toolName"`
+	TargetURI      string         `json:"targetUri"`
+	Content        string         `json:"content"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	CreatedAt      string         `json:"createdAt,omitempty"`
+}
+
+type Grant struct {
+	GrantID        string         `json:"grantId"`
+	ApprovalID     string         `json:"approvalId"`
+	ChainID        string         `json:"chainId"`
+	SessionKey     string         `json:"sessionKey"`
+	ChannelProfile string         `json:"channelProfile"`
+	ChannelID      string         `json:"channelId"`
+	ConversationID string         `json:"conversationId"`
+	RequesterID    string         `json:"requesterId"`
+	RequesterOuID  string         `json:"requesterOuId"`
+	ApproverID     string         `json:"approverId"`
+	ApproverOuID   string         `json:"approverOuId"`
+	RiskFamily     string         `json:"riskFamily"`
+	ToolName       string         `json:"toolName"`
+	TargetKind     string         `json:"targetKind"`
+	TargetHash     string         `json:"targetHash"`
+	ResourceScope  map[string]any `json:"resourceScope"`
+	CreatedAt      string         `json:"createdAt"`
+	ExpiresAt      string         `json:"expiresAt"`
+	RevokedAt      string         `json:"revokedAt,omitempty"`
+	RevokedReason  string         `json:"revokedReason,omitempty"`
+}
+
+type ApprovalResolveRequest struct {
+	ApprovalID     string         `json:"approvalId"`
+	Resolution     string         `json:"resolution"`
+	ChainID        string         `json:"chainId"`
+	SessionKey     string         `json:"sessionKey"`
+	ChannelProfile string         `json:"channelProfile"`
+	ChannelID      string         `json:"channelId"`
+	ConversationID string         `json:"conversationId"`
+	RequesterID    string         `json:"requesterId"`
+	RequesterOuID  string         `json:"requesterOuId"`
+	ApproverID     string         `json:"approverId"`
+	ApproverOuID   string         `json:"approverOuId"`
+	RiskFamily     string         `json:"riskFamily"`
+	RiskLevel      string         `json:"riskLevel"`
+	ToolName       string         `json:"toolName"`
+	TargetKind     string         `json:"targetKind"`
+	TargetHash     string         `json:"targetHash"`
+	ResourceScope  map[string]any `json:"resourceScope,omitempty"`
+	ExpiresAt      string         `json:"expiresAt,omitempty"`
+}
+
+type GrantCheckRequest struct {
+	ChainID        string `json:"chainId"`
+	SessionKey     string `json:"sessionKey"`
+	ChannelProfile string `json:"channelProfile"`
+	ChannelID      string `json:"channelId"`
+	ConversationID string `json:"conversationId"`
+	RequesterID    string `json:"requesterId"`
+	RequesterOuID  string `json:"requesterOuId"`
+	RiskFamily     string `json:"riskFamily"`
+	RiskLevel      string `json:"riskLevel"`
+	ToolName       string `json:"toolName"`
+	TargetKind     string `json:"targetKind"`
+	TargetHash     string `json:"targetHash"`
+	OperationKind  string `json:"operationKind"`
+}
+
+type GrantCheckResult struct {
+	Allowed       bool   `json:"allowed"`
+	GrantID       string `json:"grantId,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Revoked       bool   `json:"revoked,omitempty"`
+	RevokedReason string `json:"revokedReason,omitempty"`
+}
+
+type RevokeGrantRequest struct {
+	GrantID string `json:"grantId"`
+	ChainID string `json:"chainId"`
+	Reason  string `json:"reason"`
+}

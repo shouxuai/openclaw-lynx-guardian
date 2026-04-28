@@ -43,6 +43,21 @@ export function buildToolApprovalRequest(params: {
   };
 }
 
+export type GrantControlPlaneSync = {
+  baseUrl: string;
+  getToken?: () => string;
+  fetchImpl?: typeof fetch;
+  chainId: string;
+  sessionKey?: string;
+  requesterId?: string;
+  approverId?: string;
+  approverOuId?: string;
+  toolName: string;
+  targetKind: string;
+  targetHash: string;
+  resourceScope?: Record<string, unknown>;
+};
+
 export function persistGrantFromApproval(params: {
   decision: ToolApprovalResolution;
   approvalId: string;
@@ -54,7 +69,8 @@ export function persistGrantFromApproval(params: {
   module: string;
   riskLevel: ApprovalRiskLevel;
   grantWindowMs: number;
-}): void {
+  grantControlPlane?: GrantControlPlaneSync;
+}): Promise<void> | void {
   if (params.decision !== "allow-once" && params.decision !== "allow-always") {
     return;
   }
@@ -80,4 +96,68 @@ export function persistGrantFromApproval(params: {
     expiresAt: now + params.grantWindowMs,
     sourceApprovalId: params.approvalId,
   });
+
+  if (params.grantControlPlane) {
+    return syncGrantToControlPlane(params).catch(() => undefined);
+  }
+}
+
+async function syncGrantToControlPlane(params: {
+  decision: ToolApprovalResolution;
+  approvalId: string;
+  channelProfile?: ChannelProfile;
+  channelId?: string;
+  conversationId?: string;
+  requesterOuId?: string;
+  module: string;
+  riskLevel: ApprovalRiskLevel;
+  grantWindowMs: number;
+  grantControlPlane?: GrantControlPlaneSync;
+}): Promise<void> {
+  const sync = params.grantControlPlane;
+  if (!sync) {
+    return;
+  }
+  const token = sync.getToken?.().trim() ?? "";
+  const fetchImpl = sync.fetchImpl ?? globalThis.fetch;
+  if (!fetchImpl) {
+    return;
+  }
+  const response = await fetchImpl(buildApprovalResolveUrl(sync.baseUrl, params.approvalId), {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      approvalId: params.approvalId,
+      resolution: "allow-current-chain",
+      chainId: sync.chainId,
+      sessionKey: sync.sessionKey,
+      channelProfile: params.channelProfile,
+      channelId: params.channelId,
+      conversationId: params.conversationId,
+      requesterId: sync.requesterId,
+      requesterOuId: params.requesterOuId,
+      approverId: sync.approverId,
+      approverOuId: sync.approverOuId,
+      riskFamily: params.module,
+      riskLevel: params.riskLevel,
+      toolName: sync.toolName,
+      targetKind: sync.targetKind,
+      targetHash: sync.targetHash,
+      resourceScope: {
+        ...(sync.resourceScope ?? {}),
+        decision: params.decision,
+        grantWindowMs: params.grantWindowMs,
+      },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`grant control plane responded with HTTP ${response.status}`);
+  }
+}
+
+function buildApprovalResolveUrl(baseUrl: string, approvalId: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/lynx/internal/v1/approvals/${encodeURIComponent(approvalId)}/resolve`;
 }

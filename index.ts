@@ -371,6 +371,12 @@ export default function setup(api: OpenClawPluginApi) {
     tryResolveFeishuLocalToolApprovalReply,
   } = createPluginSetupHelpers({
     config,
+    grantControlPlane: localConsoleRuntime
+      ? {
+        baseUrl: localConsoleRuntime.config.baseUrl,
+        getToken: createLocalConsoleTokenProvider(localConsoleRuntime.config.paths.tokenPath),
+      }
+      : undefined,
     hookProbeLogPath: HOOK_PROBE_LOG_PATH,
     localApprovalApproverOuIds,
     log,
