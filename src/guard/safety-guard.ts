@@ -1318,6 +1318,25 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   // === 即时危险通道（early-return，直接 L4）===
 
   // M1: 高置信度提示注入 / indirect_injection
+  const earlyIdentityClaims = detectIdentityClaims(text);
+  const earlyProtectedAccess = detectProtectedFileAccess(text);
+  const earlySysprompt = detectSystemPromptExtraction(text);
+  if (earlySysprompt.detected) {
+    const instantModules = ["M2:system_prompt_extraction"];
+    if (earlyProtectedAccess.matchedFiles.length > 0) {
+      instantModules.push("M2:protected_file_access");
+    }
+    if (earlyIdentityClaims.detected && !verifiedOwner) {
+      instantModules.push("M0:identity_verification");
+    }
+    return finalizeInputDecision(
+      buildInstantDenyForModules(
+        instantModules,
+        `system prompt extraction: ${earlySysprompt.matchedPatterns.join(",")}`,
+      ),
+    );
+  }
+
   const injection = detectPromptInjection(text);
   if (injection.detected && (injection.confidence >= 0.85 || injection.category === "indirect_injection")) {
     return finalizeInputDecision(buildInstantDeny("M1:prompt_injection", "提示注入攻击（高置信度）"));
@@ -1335,7 +1354,12 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     if (identityClaims.detected && !verifiedOwner) {
       instantModules.push("M0:identity_verification");
     }
-    return finalizeInputDecision(buildInstantDenyForModules(instantModules, "system prompt extraction"));
+    return finalizeInputDecision(
+      buildInstantDenyForModules(
+        instantModules,
+        `system prompt extraction: ${sysprompt.matchedPatterns.join(",")}`,
+      ),
+    );
   }
 
   if (detectImmutableRuntimeConfigWrite(protectedAccess)) {

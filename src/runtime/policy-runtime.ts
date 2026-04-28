@@ -41,6 +41,41 @@ export interface GuardPolicyResolution {
   effectiveAssessment: RiskAssessment;
 }
 
+export interface GuardPolicyTrace {
+  stage: string;
+  shouldWarn: boolean;
+  raw: {
+    level: RiskAssessment["level"];
+    score: number;
+    modules: string[];
+    action: RiskAssessment["action"];
+    block: boolean;
+    description: string;
+  };
+  legacy: {
+    riskLevel: RiskLevelLabel;
+    decision: PolicyDecisionKind;
+    riskValue: 0 | 1 | 2 | 3 | 4;
+  };
+  evidence?: {
+    riskLevel: RiskLevelLabel;
+    decision: PolicyDecisionKind;
+    riskValue: 0 | 1 | 2 | 3 | 4;
+    compatibilityScore: number;
+    summaryHeat: EvidenceScoreResult["summaryHeat"];
+    dimensionScores: EvidenceScoreResult["dimensionScores"];
+    items: EvidenceScoreResult["evidenceItems"];
+  };
+  final: {
+    decision: PolicyDecisionKind;
+    level: RiskAssessment["level"];
+    score: number;
+    modules: string[];
+    action: RiskAssessment["action"];
+    description: string;
+  };
+}
+
 export interface CompatibilityRiskAssessment extends RiskAssessment {
   policyDecisionKind: PolicyDecisionKind;
 }
@@ -277,6 +312,62 @@ export function buildPolicyRecordContent(
   content: string,
 ): string {
   return `[policy:${evaluation.riskLevelLabel}/${evaluation.decision.kind}] ${content}`;
+}
+
+function assessmentBlocks(assessment: RiskAssessment): boolean {
+  return assessment.action === "block" || assessment.action === "deny";
+}
+
+export function buildGuardPolicyTrace(input: {
+  stage: string;
+  assessment: RiskAssessment;
+  resolution: GuardPolicyResolution;
+}): GuardPolicyTrace {
+  const evidenceItems = input.resolution.bundleEvaluation?.score.evidenceItems ?? [];
+  const final = input.resolution.effectiveAssessment;
+  const shouldWarn =
+    assessmentBlocks(input.assessment)
+    || input.assessment.modules.length > 0
+    || input.resolution.finalDecision.kind !== "allow"
+    || final.modules.length > 0
+    || evidenceItems.length > 0;
+
+  return {
+    stage: input.stage,
+    shouldWarn,
+    raw: {
+      level: input.assessment.level,
+      score: input.assessment.score,
+      modules: input.assessment.modules,
+      action: input.assessment.action,
+      block: assessmentBlocks(input.assessment),
+      description: input.assessment.description,
+    },
+    legacy: {
+      riskLevel: input.resolution.legacyEvaluation.riskLevelLabel,
+      decision: input.resolution.legacyEvaluation.decision.kind,
+      riskValue: input.resolution.legacyEvaluation.riskLevelValue,
+    },
+    evidence: input.resolution.bundleEvaluation
+      ? {
+          riskLevel: input.resolution.bundleEvaluation.riskLevelLabel,
+          decision: input.resolution.bundleEvaluation.decision.kind,
+          riskValue: input.resolution.bundleEvaluation.riskLevelValue,
+          compatibilityScore: input.resolution.bundleEvaluation.score.compatibilityScore,
+          summaryHeat: input.resolution.bundleEvaluation.score.summaryHeat,
+          dimensionScores: input.resolution.bundleEvaluation.score.dimensionScores,
+          items: evidenceItems,
+        }
+      : undefined,
+    final: {
+      decision: input.resolution.finalDecision.kind,
+      level: final.level,
+      score: final.score,
+      modules: final.modules,
+      action: final.action,
+      description: final.description,
+    },
+  };
 }
 
 export function buildApiRiskAssessment(

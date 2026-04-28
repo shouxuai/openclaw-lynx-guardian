@@ -120,6 +120,7 @@ import {
   savePendingOverrideFull,
 } from "./src/runtime/override-runtime.js";
 import {
+  buildGuardPolicyTrace,
   buildApiRiskAssessment,
   buildPolicyRecordContent,
   buildOverridePrompt,
@@ -220,6 +221,22 @@ import {
   resolveManagedLynxCheckSource,
   resolveToolApprovalProtectedTargetSummary,
 } from "./src/runtime/plugin-setup-helpers.js";
+
+function logGuardPolicyTrace(
+  log: { warn: (message: string) => void },
+  stage: string,
+  decision: GuardDecision,
+  policyResolution: ReturnType<typeof resolveGuardPolicyState>["policyResolution"],
+): void {
+  const trace = buildGuardPolicyTrace({
+    stage,
+    assessment: decision.riskAssessment,
+    resolution: policyResolution,
+  });
+  if (trace.shouldWarn) {
+    log.warn(`[lynx-guardian] Guard policy trace: ${JSON.stringify(trace)}`);
+  }
+}
 
 export default function setup(api: OpenClawPluginApi) {
   const log = api.logger;
@@ -773,6 +790,7 @@ export default function setup(api: OpenClawPluginApi) {
           blockReason,
         } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
+        logGuardPolicyTrace(log, "message_received", decision, policyResolution);
         const visibleInputWarning = buildVisibleInputGuardWarning({
           assessment: effectiveAssessment,
           policyDecisionKind: policyResolution.finalDecision.kind,
@@ -955,8 +973,9 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.inputGuard !== false) {
         const guardContext = buildGuardContext(config, event, ctx);
         const decision = guardInput(text, ctx.sessionKey, guardContext);
-        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
+        const { guardActionRequired, policyEvaluation, policyResolution, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
+        logGuardPolicyTrace(log, "legacy_message_received", decision, policyResolution);
         if (guardActionRequired && !approvedInputOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
@@ -1284,6 +1303,7 @@ export default function setup(api: OpenClawPluginApi) {
           effectiveAssessment,
           blockReason,
         } = resolveGuardPolicyState(decision);
+        logGuardPolicyTrace(log, "before_agent_start", decision, policyResolution);
         const visibleInputWarning = buildVisibleInputGuardWarning({
           assessment: effectiveAssessment,
           policyDecisionKind: policyResolution.finalDecision.kind,
@@ -1379,6 +1399,7 @@ export default function setup(api: OpenClawPluginApi) {
           } as any;
         }
         log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
+        logGuardPolicyTrace(log, "before_agent_start", decision, policyResolution);
         if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
         } else if (guardActionRequired && !approvedAgentStartOverride && !visibleInputWarningContext) {
@@ -1470,7 +1491,7 @@ export default function setup(api: OpenClawPluginApi) {
           prependContext += `${decision.warning}\n`;
         }
         // 弱信号预警注入：L1/L2 不阻断时，向模型注入安全上下文让模型参与防御
-        if (!guardActionRequired || visibleInputWarningContext) {
+        if (!guardActionRequired && !visibleInputWarningContext) {
           const lvl = effectiveAssessment.level;
           if ((lvl === "L1" || lvl === "L2") && effectiveAssessment.modules.length > 0) {
             const injection = buildSecurityAwarenessInjection(effectiveAssessment.modules);
@@ -1912,8 +1933,9 @@ export default function setup(api: OpenClawPluginApi) {
       if (selfSafetyGuardConfig.outputGuard !== false && output && !isDiscoveryResponse) {
         const { guardContext } = buildManagedGuardContext({ output, messages: event.messages }, ctx);
         const decision = guardOutput(output, ctx.sessionKey, guardContext);
-        const { guardActionRequired, policyEvaluation, effectiveAssessment } = resolveGuardPolicyState(decision);
+        const { guardActionRequired, policyEvaluation, policyResolution, effectiveAssessment } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian] Output risk detected: ${JSON.stringify(decision)}`);
+        logGuardPolicyTrace(log, "agent_end_output", decision, policyResolution);
         if (guardActionRequired) {
           const enforcement = enforceGuardDecisionText(
             output,
@@ -2455,8 +2477,9 @@ export default function setup(api: OpenClawPluginApi) {
         log.info(`[lynx-guardian] before_tool_call guardContext=${JSON.stringify(guardContext)}`);
         trustedManagedLynxCheckToolCall = guardContext.trustedManagedLynxCheckToolCall === true;
         const decision = guardToolCall(toolName, params, ctx.sessionKey, guardContext);
-        const { guardActionRequired, policyEvaluation, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
+        const { guardActionRequired, policyEvaluation, policyResolution, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
         log.info(`[lynx-guardian] before_tool_call decision=${JSON.stringify(decision)}`);
+        logGuardPolicyTrace(log, "before_tool_call", decision, policyResolution);
         execBlacklistContext = decision.contextHints;
         log.info(`[lynx-guardian] before_tool_call execBlacklistContext=${JSON.stringify(execBlacklistContext)}`);
         log.info(`[lynx-guardian] Tool call risk detected: ${JSON.stringify(decision)}`);
