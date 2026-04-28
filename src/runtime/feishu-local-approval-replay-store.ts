@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: Feishu local approval replay bridge.
+ * This remains a one-shot channel recovery store, not durable grant state.
+ */
 export type FeishuLocalApprovalReplay = {
   approvalToken: string;
   sessionKey?: string;

@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: Feishu local-chat approval bridge.
+ * Preserve until Go-backed channel delivery parity is proven in runtime logs.
+ */
 import type { ApprovalRiskLevel } from "./approval-grant-store.js";
 import type { ChannelProfile } from "./requester-provenance-store.js";
 

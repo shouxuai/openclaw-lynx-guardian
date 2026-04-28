@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: plugin delivery recovery bridge.
+ * Keep this local until Feishu/webchat delivery parity is proven by runtime logs.
+ */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import type { EventContext, Message } from "../types.js";

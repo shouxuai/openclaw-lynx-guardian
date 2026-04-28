@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: Feishu continuation bridge.
+ * This store is a short local window for channel approval replay only.
+ */
 import type { ApprovalRiskLevel } from "./approval-grant-store.js";
 import type { ChannelProfile } from "./requester-provenance-store.js";
 

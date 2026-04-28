@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: plugin-side approval bridge.
+ * This store holds ephemeral resolver callbacks that cannot live in Go.
+ */
 import type { ToolApprovalResolution } from "../types.js";
 import type { ApprovalRiskLevel } from "./approval-grant-store.js";
 import type { ChannelProfile } from "./requester-provenance-store.js";

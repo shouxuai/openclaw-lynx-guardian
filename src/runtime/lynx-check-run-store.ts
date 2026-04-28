@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: Go owns /lynx-check task state.
+ * Local intent/result files stay as runtime artifacts and delivery fallback.
+ */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, isAbsolute, join, resolve } from "path";
 import type { LynxReportDeliveryAttempt } from "../types.js";

@@ -28,15 +28,7 @@ import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
 import {
   getPendingOverride,
-  consumePendingOverride,
-  consumeMostRecentPendingOverride,
 } from "./src/runtime/pending-override-store.js";
-import {
-  grantWorkflowAuth,
-  getWorkflowAuth,
-  recordWorkflowOperation,
-  revokeWorkflowAuth,
-} from "./src/runtime/workflow-authorization-store.js";
 import {
   grantManagedLynxCheckAuthorization,
   hasManagedLynxCheckAuthorization,
@@ -133,14 +125,12 @@ import {
   buildParamSummary,
   evaluateGuardDecisionPolicy,
   evaluateRiskAssessment,
-  formatWorkflowAuthSummary,
   normalizePolicyConfig,
 } from "./src/runtime/policy-runtime.js";
 import {
   LOCAL_TOOL_APPROVAL_COMMAND,
   buildForcedAgentStartDenyContext,
   buildToolApprovalRoute,
-  isConfirmationPhrase,
   mergeApprovalContextSeed,
   normalizeFeishuConversationId,
   normalizeOuIdList,
@@ -949,151 +939,6 @@ export default function setup(api: OpenClawPluginApi) {
       // in the awaited before_agent_start hook so group chat messages do not
       // accidentally consume approval state.
       return;
-      if (false) {
-
-      const confirmLookupKey = resolveOverrideKey(ctx);
-      if (
-        confirmLookupKey
-        && isConfirmationPhrase(
-          text,
-          riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
-        )
-      ) {
-        const confirmedLookupKey = confirmLookupKey as string;
-        let pending = consumePendingOverride(confirmedLookupKey);
-
-        if (!pending) {
-          log.info("[lynx-guardian] Primary pending lookup miss，尝试 fallback scan");
-          pending = consumeMostRecentPendingOverride();
-        }
-
-        log.info(`[lynx-guardian] message_received pending: ${JSON.stringify(pending)}`);
-        if (!pending) {
-          await sendHookFeedback(ctx, "[Lynx Guardian] 当前没有待确认操作。");
-          return;
-          return {
-            block: true,
-            blockReason: "[Lynx Guardian] 当前没有可放行的待确认操作。",
-          };
-        }
-
-        const confirmedPending = pending!;
-        const allKeys = [...new Set([...resolveOverrideKeys(ctx), ...confirmedPending.sourceKeys])];
-        const windowMs = riskPolicyConfig.workflowAuthWindowMs;
-        grantWorkflowAuth(allKeys, confirmedPending.matchedModules, windowMs, /* scopeAll */ true);
-        const windowSec = Math.round(windowMs / 1000);
-        await sendHookFeedback(
-          ctx,
-          `[Lynx Guardian] 已开启工作流授权窗口（${windowSec}s）。相关操作会在窗口期内自动放行。`,
-        );
-        return;
-        return {
-          block: true,
-          blockReason: `[Lynx Guardian] 已确认，工作流授权已开启（时间窗口 ${windowSec}s）。此窗口内的相关操作将自动放行，工作流结束后会自动收回并汇总操作记录。`,
-        };
-      }
-
-      if (lynxCheckTrigger.kind === "native_passthrough") {
-        log.info(`[lynx-guardian] Native check command passthrough: ${text}`);
-        return;
-      }
-
-      if (lynxCheckTrigger.kind === "lynx_command") {
-        log.info(`[lynx-guardian] 收到手动 /lynx-check 指令，将在 before_agent_start 中直出预计算审计报告: ${text}`);
-        return;
-      }
-
-      const inputFingerprint = buildOperationFingerprint({
-        sessionKey: ctx.sessionKey,
-        actionType: "input",
-        payload: text,
-      });
-      const approvedInputOverride = consumeApprovedOverrideFull(ctx, inputFingerprint);
-      log.info(`[lynx-guardian] approvedInputOverride: ${JSON.stringify(approvedInputOverride)}`);
-      if (sensitiveDataBlocker.containsSensitiveData(text)) {
-        log.warn("[lynx-guardian] Sensitive data detected in message");
-        await pushRecordBestEffort(
-          {
-            id: userId,
-            content: text,
-            riskLevel: 1,
-          },
-          {
-            log,
-            context: "legacy message sensitive data",
-          },
-        );
-        await sendHookFeedback(ctx, "Sensitive data detected");
-        return;
-        return {
-          block: true,
-          blockReason: "Sensitive data detected",
-        };
-      }
-
-      if (selfSafetyGuardConfig.inputGuard !== false) {
-        const guardContext = buildGuardContext(config, event, ctx);
-        const decision = guardInput(text, ctx.sessionKey, guardContext);
-        const { guardActionRequired, policyEvaluation, policyResolution, effectiveAssessment, blockReason } = resolveGuardPolicyState(decision);
-        log.info(`[lynx-guardian] guardInput decision: ${JSON.stringify(decision)}`);
-        logGuardPolicyTrace(log, "legacy_message_received", decision, policyResolution);
-        if (guardActionRequired && !approvedInputOverride) {
-          const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
-          log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG] ${effectiveAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "legacy message guard block",
-            },
-          );
-          if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
-            savePendingOverrideFull(ctx, {
-              operationFingerprint: inputFingerprint,
-              createdAt: Date.now(),
-              expiresAt: Date.now() + riskPolicyConfig.overrideTtlMs,
-              actionType: "input",
-              replayPayload: { text },
-              riskScore: effectiveAssessment.score,
-              riskLevel: effectiveAssessment.level,
-              matchedModules: effectiveAssessment.modules,
-              sourceKeys: resolveOverrideKeys(ctx),
-            });
-            await sendHookFeedback(
-              ctx,
-              buildOverridePrompt(
-                blockReason,
-                policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
-              ),
-            );
-            return;
-            return {
-              block: true,
-              blockReason: buildOverridePrompt(
-                blockReason,
-                policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
-              ),
-            };
-          }
-          await sendHookFeedback(ctx, blockReason);
-          return;
-          return {
-            block: true,
-            blockReason,
-          };
-        }
-        if (decision.warning) {
-          log.warn(`[lynx-guardian] Self-safety-guard warning: ${decision.warning}`);
-        }
-      }
-      }
     } catch (err: any) {
       log.error(`[lynx-guardian] message_received handler failed: ${err.message}`);
     }
@@ -1742,21 +1587,6 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("agent_end", async (event, ctx) => {
     try {
       log.info(JSON.stringify(ctx));
-
-      const revokedAuth = revokeWorkflowAuth(resolveOverrideKeys(ctx));
-      if (revokedAuth) {
-        log.info(`[lynx-guardian] Workflow auth revoked; ${revokedAuth.auditLog.length} operation(s) recorded`);
-      if (ctx.sendMessage) {
-        try {
-          await ctx.sendMessage({
-            role: "assistant",
-            content: formatWorkflowAuthSummary(revokedAuth),
-            });
-          } catch (sendErr: any) {
-            log.error(`[lynx-guardian] Failed to send workflow auth summary: ${sendErr.message}`);
-          }
-        }
-      }
 
       if (!event.messages || event.messages.length === 0) return;
       const localConsoleOccurredAtMs = Date.now();
@@ -2948,22 +2778,6 @@ export default function setup(api: OpenClawPluginApi) {
         }
 
         if (guardActionRequired && !approvedToolOverride) {
-          const ctxKeys = resolveOverrideKeys(ctx);
-          const workflowAuth = getWorkflowAuth(ctxKeys, effectiveAssessment.modules);
-          if (workflowAuth) {
-            recordWorkflowOperation(ctxKeys, {
-              timestamp: Date.now(),
-              toolName,
-              paramSummary: buildParamSummary(toolName, params ?? {}),
-              triggeredModules: effectiveAssessment.modules,
-              riskScore: effectiveAssessment.score,
-              riskLevel: effectiveAssessment.level,
-            });
-            log.info(`[lynx-guardian] 已有待确认操作，本次操作${toolName}将在确认后一并放行。modules: ${effectiveAssessment.modules.join(",")})`);
-          }
-        }
-
-        if (guardActionRequired && !approvedToolOverride && !getWorkflowAuth(resolveOverrideKeys(ctx), effectiveAssessment.modules)) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${effectiveAssessment.description}`);
           await pushRecordBestEffort(
@@ -3160,29 +2974,6 @@ export default function setup(api: OpenClawPluginApi) {
 
     const detail = toolName === "exec" ? (params?.command ?? "") : (params?.file_path ?? params?.path ?? "");
     const blacklistModules = inferBlacklistModules(toolName, match.reason);
-    const ctxKeys = resolveOverrideKeys(ctx);
-    const blacklistWorkflowAuth = getWorkflowAuth(ctxKeys, blacklistModules);
-    if (blacklistWorkflowAuth) {
-      log.info(`[lynx-guardian] blacklist workflow auth hit=${JSON.stringify(blacklistWorkflowAuth)}`);
-      recordWorkflowOperation(ctxKeys, {
-        timestamp: Date.now(),
-        toolName,
-        paramSummary: buildParamSummary(toolName, params ?? {}),
-        triggeredModules: blacklistModules,
-        riskScore: match.level === "critical" ? 9 : 6,
-        riskLevel: match.level === "critical" ? "L4" : "L2",
-      });
-      log.info(`[lynx-guardian] Workflow auth reused for blacklist hit: ${toolName} (${match.reason})`);
-      recordBeforeToolCall({
-        summary: `Workflow authorization reused for blacklist hit: ${match.reason}`,
-        triggeredModules: blacklistModules,
-        primaryModule: blacklistModules[0],
-        riskLevel: match.level === "critical" ? "L4" : "L2",
-        riskScore: match.level === "critical" ? 9 : 6,
-        enforcementAction: "allow",
-      });
-      return;
-    }
     const contentToReport = toolName === "exec" ? `执行 ${detail} 命令` : `${toolName} ${detail}`;
 
     const riskLevel = match.level === "critical" ? 3 : 2;
@@ -3579,7 +3370,7 @@ export default function setup(api: OpenClawPluginApi) {
             riskScore: apiAssessment.score,
             riskLevel: apiAssessment.level,
             matchedModules: blacklistModules,
-            sourceKeys: ctxKeys,
+            sourceKeys: resolveOverrideKeys(ctx),
           });
           recordBeforeToolCall({
             summary: `[Lynx Guardian] ${riskLevel >= 3 ? "High-risk tool call blocked" : "Confirmation required"} (Risk Level ${riskLevel}): ${match.reason}`,

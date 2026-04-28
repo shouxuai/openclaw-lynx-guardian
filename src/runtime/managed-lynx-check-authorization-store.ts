@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: local managed-run boundary authorization.
+ * This is separate from Go task ownership and protects plugin-managed runs.
+ */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { assertManagedLynxAuditBoundary } from "./lynx-audit-runtime.js";

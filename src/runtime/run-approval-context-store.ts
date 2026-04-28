@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: short-lived approval context bridge.
+ * Go owns durable grants; this store only connects run context across hooks.
+ */
 import type {
   ApprovalTransportProfile,
   ChannelProfile,

@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: plugin-side pending approval bridge.
+ * This store keeps only in-flight Promise state for awaited tool hooks.
+ */
 import type { ToolApprovalResolution } from "../types.js";
 import type { ApprovalRiskLevel } from "./approval-grant-store.js";
 

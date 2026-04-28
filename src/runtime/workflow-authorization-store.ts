@@ -1,6 +1,9 @@
 /**
  * Workflow-level authorization store.
  *
+ * Task 11 ownership: frozen compatibility. `index.ts` no longer creates
+ * new workflow authorizations; Go grants are the durable approval model.
+ *
  * When the user confirms a blocked operation they grant permission for the
  * ENTIRE agent workflow (not just one tool call). The authorization covers
  * the module categories that triggered the original block and remains active

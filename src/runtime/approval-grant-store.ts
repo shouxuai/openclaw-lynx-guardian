@@ -1,3 +1,7 @@
+/**
+ * Task 11 ownership: Go owns durable allow-current-chain grant state.
+ * This in-memory cache remains a one-cycle compatibility read bridge.
+ */
 import type { ChannelProfile } from "./requester-provenance-store.js";
 
 export type ApprovalRiskLevel = "L2" | "L3";
