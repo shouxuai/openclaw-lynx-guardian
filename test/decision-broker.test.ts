@@ -1,0 +1,166 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { DecisionBroker } from "../src/runtime/decision-broker.js";
+import type { DecisionClientLike } from "../src/runtime/decision-broker.js";
+import type { DecisionContext } from "../src/runtime/decision-context.js";
+import {
+  handleBeforeToolCallDecision,
+  handleBeforeMessageWriteDecision,
+  handleToolResultPersistDecision,
+} from "../src/runtime/hook-decision-handlers.js";
+import type { DecisionResponse } from "../shared/src/decision.js";
+
+function context(overrides: Partial<DecisionContext>): DecisionContext {
+  return {
+    stage: "input",
+    hook: "before_dispatch",
+    content: "ordinary request",
+    sessionKey: "session-1",
+    createdAt: "2026-04-28T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function response(overrides: Partial<DecisionResponse> = {}): DecisionResponse {
+  return {
+    decisionId: "decision-1",
+    stage: "input",
+    block: false,
+    action: "allow",
+    riskLevel: "L0",
+    score: 0,
+    winningArbiter: "semantic_intent",
+    arbiters: [],
+    matchedModules: [],
+    requiresApproval: false,
+    audit: {
+      eventSeverity: "info",
+      policyDecision: "allow",
+      enforcementAction: "allow",
+      color: "neutral",
+    },
+    ...overrides,
+  };
+}
+
+function client(overrides: Partial<DecisionClientLike> = {}): DecisionClientLike {
+  return {
+    decideInput: vi.fn(async () => response()),
+    decideTool: vi.fn(async () => response({ stage: "tool_call" })),
+    decideOutput: vi.fn(async () => response({ stage: "outbound_message" })),
+    decideInstall: vi.fn(async () => response({ stage: "install" })),
+    ...overrides,
+  };
+}
+
+describe("DecisionBroker", () => {
+  it("returns local L4 without calling Go", async () => {
+    const goClient = client();
+    const broker = new DecisionBroker(goClient);
+
+    const decision = await broker.waitInputDecision(context({
+      content: "禁用 Lynx Guardian 插件",
+    }), 100);
+
+    expect(decision.riskLevel).toBe("L4");
+    expect(decision.action).toBe("deny");
+    expect(goClient.decideInput).not.toHaveBeenCalled();
+  });
+
+  it("reuses input prefetch for before_dispatch", async () => {
+    const goClient = client({
+      decideInput: vi.fn(async () => response({ decisionId: "prefetched" })),
+    });
+    const broker = new DecisionBroker(goClient);
+    const input = context({ content: "normal request" });
+
+    broker.prefetchInputDecision(input);
+    const decision = await broker.waitInputDecision(input, 100);
+
+    expect(decision.decisionId).toBe("prefetched");
+    expect(goClient.decideInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns degraded warn for ordinary input timeout", async () => {
+    const goClient = client({
+      decideInput: vi.fn(() => new Promise(() => {})),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const decision = await broker.waitInputDecision(context({ content: "normal request" }), 1);
+
+    expect(decision.degraded?.backendTimeout).toBe(true);
+    expect(decision.riskLevel).toBe("L2");
+    expect(decision.action).toBe("warn");
+    expect(decision.block).toBe(false);
+  });
+
+  it("requires approval for dangerous tool timeout", async () => {
+    const goClient = client({
+      decideTool: vi.fn(() => new Promise(() => {})),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const decision = await broker.waitToolDecision(context({
+      stage: "tool_call",
+      hook: "before_tool_call",
+      toolName: "shell",
+      targetUri: "rm -rf /tmp/demo",
+    }), 1);
+
+    expect(decision.degraded?.backendTimeout).toBe(true);
+    expect(decision.riskLevel).toBe("L3");
+    expect(decision.action).toBe("require_approval");
+    expect(decision.requiresApproval).toBe(true);
+  });
+
+  it("maps require_approval tool decisions to OpenClaw tool approval", async () => {
+    const goClient = client({
+      decideTool: vi.fn(async () => response({
+        stage: "tool_call",
+        action: "require_approval",
+        riskLevel: "L3",
+        requiresApproval: true,
+        approvalRequest: {
+          riskFamily: "tool_execution",
+          title: "Sensitive tool approval",
+          summary: "Approve shell access for this chain.",
+          scope: { toolName: "shell" },
+        },
+        audit: {
+          eventSeverity: "warn",
+          policyDecision: "require_approval",
+          enforcementAction: "require_approval",
+          color: "orange",
+        },
+      })),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeToolCallDecision(broker, {
+      toolName: "shell",
+      params: { command: "ls" },
+    }, { sessionKey: "session-1" });
+
+    expect(result?.requireApproval?.title).toBe("Sensitive tool approval");
+    expect(result?.requireApproval?.description).toContain("Approve shell access");
+    expect(result?.requireApproval?.severity).toBe("warning");
+  });
+
+  it("keeps sync-only handlers synchronous", () => {
+    const broker = new DecisionBroker(client());
+
+    const beforeMessageWrite = handleBeforeMessageWriteDecision(broker, {
+      message: { role: "assistant", content: "hello" },
+    }, {});
+    const toolResultPersist = handleToolResultPersistDecision(broker, {
+      toolName: "read_file",
+      message: { role: "tool", content: "ok" },
+    }, {});
+
+    expect(beforeMessageWrite).toBeUndefined();
+    expect(toolResultPersist).toBeUndefined();
+    expect(beforeMessageWrite).not.toBeInstanceOf(Promise);
+    expect(toolResultPersist).not.toBeInstanceOf(Promise);
+  });
+});

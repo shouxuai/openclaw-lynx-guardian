@@ -199,6 +199,18 @@ import {
 } from "./src/runtime/local-console-auth.js";
 import { createLocalConsoleIngestClient } from "./src/runtime/local-console-client.js";
 import { resolveLocalConsoleRuntimeConfig } from "./src/runtime/local-console-config.js";
+import { DecisionBroker } from "./src/runtime/decision-broker.js";
+import { DecisionClient } from "./src/runtime/decision-client.js";
+import {
+  handleBeforeAgentStartDecision,
+  handleBeforeDispatchDecision,
+  handleBeforeMessageWriteDecision,
+  handleBeforeToolCallDecision,
+  handleLlmOutputDecision,
+  handleMessageReceivedDecision,
+  handleMessageSendingDecision,
+  handleToolResultPersistDecision,
+} from "./src/runtime/hook-decision-handlers.js";
 import { createLocalConsoleGatewayRouteRegistrations } from "./src/runtime/local-console-gateway-routes.js";
 import { createLocalConsoleHookHandlers } from "./src/runtime/local-console-hook-handlers.js";
 import { buildLocalConsoleLynxCheckSnapshot } from "./src/runtime/local-console-lynx-check-snapshot.js";
@@ -287,6 +299,12 @@ export default function setup(api: OpenClawPluginApi) {
       client: localConsoleRuntime.client,
       logger: log,
     })
+    : null;
+  const decisionBroker = localConsoleRuntime
+    ? new DecisionBroker(new DecisionClient({
+      config: localConsoleRuntime.config,
+      getToken: createLocalConsoleTokenProvider(localConsoleRuntime.config.paths.tokenPath),
+    }))
     : null;
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const outputEnforcementMode = selfSafetyGuardConfig.outputEnforcementMode ?? "block";
@@ -537,6 +555,15 @@ export default function setup(api: OpenClawPluginApi) {
   });
 
   api.on("before_dispatch", async (event, ctx) => {
+    if (decisionBroker) {
+      const decisionResult = await handleBeforeDispatchDecision(decisionBroker, event, ctx);
+      if ((decisionResult as any)?.block) {
+        return {
+          handled: true,
+          text: (decisionResult as any).blockReason ?? "Blocked by Lynx Guardian decision control plane.",
+        };
+      }
+    }
     const text = normalizeString(event?.content) || "";
     const localApprovalReply = parseLocalToolApprovalReply(text);
     if (localApprovalReply) {
@@ -624,6 +651,9 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("message_received", async (event, ctx) => {
     try {
       if (!event.content || event.content.length === 0) return;
+      if (decisionBroker) {
+        handleMessageReceivedDecision(decisionBroker, event, ctx);
+      }
       rememberRecentActiveDeliveryTarget(ctx, { allowRouteOnly: true });
       log.info(`[lynx-guardian] message_received event: ${JSON.stringify(event)}`);
       log.info(`[lynx-guardian] message_received ctx: ${JSON.stringify(ctx)}`);
@@ -1042,6 +1072,12 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("before_agent_start", async (event, ctx) => {
     try {
       if (!event.prompt && !event.messages) return;
+      if (decisionBroker) {
+        const decisionResult = await handleBeforeAgentStartDecision(decisionBroker, event, ctx);
+        if (decisionResult?.block) {
+          return decisionResult;
+        }
+      }
       const sessionKey = normalizeString(ctx.sessionKey) || undefined;
       const channelId = normalizeString(ctx.channelId) || undefined;
       const promptText = resolveAgentStartPromptText(event);
@@ -2058,12 +2094,18 @@ export default function setup(api: OpenClawPluginApi) {
   if (localConsoleTokenHook) {
     api.on("llm_output", async (event, ctx) => {
       appendLifecycleProbe("llm_output", event, ctx);
+      if (decisionBroker) {
+        handleLlmOutputDecision(decisionBroker, event, ctx);
+      }
       localConsoleTokenHook.handle(event, ctx);
     });
   }
 
   api.on("before_message_write", (event, ctx) => {
     try {
+      if (decisionBroker) {
+        handleBeforeMessageWriteDecision(decisionBroker, event, ctx);
+      }
       const localConsoleOccurredAtMs = Date.now();
       const originalMessage = event?.message;
       if (!originalMessage) return;
@@ -2164,6 +2206,9 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("tool_result_persist", (event, ctx) => {
     appendLifecycleProbe("tool_result_persist", event, ctx);
+    if (decisionBroker) {
+      handleToolResultPersistDecision(decisionBroker, event, ctx);
+    }
     const localConsoleOccurredAtMs = Date.now();
     if (selfSafetyGuardConfig.resultGuard === false) return;
     const { guardContext } = buildManagedGuardContext(event, ctx);
@@ -2206,6 +2251,12 @@ export default function setup(api: OpenClawPluginApi) {
 
   api.on("message_sending", async (event, ctx) => {
     appendLifecycleProbe("message_sending", event, ctx);
+    if (decisionBroker) {
+      const decisionResult = await handleMessageSendingDecision(decisionBroker, event, ctx);
+      if (decisionResult?.cancel) {
+        return decisionResult;
+      }
+    }
     const localConsoleOccurredAtMs = Date.now();
     const localConsoleSessionKey = normalizeString(ctx.sessionKey) || undefined;
     const activeManagedLynxCheckRun = localConsoleSessionKey
@@ -2358,6 +2409,12 @@ export default function setup(api: OpenClawPluginApi) {
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
     log.info(`[lynx-guardian] before_tool_call tool=${JSON.stringify(toolName)} params=${JSON.stringify(params)}`);
+    if (decisionBroker) {
+      const decisionResult = await handleBeforeToolCallDecision(decisionBroker, event, ctx);
+      if (decisionResult?.block || decisionResult?.requireApproval) {
+        return decisionResult;
+      }
+    }
     const localConsoleOccurredAtMs = Date.now();
     const localConsoleSessionKey = normalizeString(ctx.sessionKey) || undefined;
     const localConsoleRunId = normalizeString((ctx as any).runId) || undefined;
