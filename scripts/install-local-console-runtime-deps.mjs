@@ -150,7 +150,7 @@ async function main() {
     "-lc",
     shellCommand,
   ]);
-  console.log("[lynx-runtime-deps] install finished");
+  console.log("[lynx-runtime-deps] check finished");
 }
 
 try {

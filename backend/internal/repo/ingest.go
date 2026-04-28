@@ -1,0 +1,492 @@
+package repo
+
+import (
+	"database/sql"
+	"fmt"
+)
+
+type PersistResult struct {
+	Status string
+}
+
+type IngestBase struct {
+	ItemID       string
+	OccurredAtMs int64
+}
+
+type SessionUpsertData struct {
+	SessionKey     string
+	ChannelProfile *string
+	ChannelID      *string
+	RequesterID    *string
+	RequesterOuID  *string
+	AccountID      *string
+	ConversationID *string
+	ThreadID       *string
+	IsGroup        *bool
+	FirstSeenAtMs  int64
+	LastSeenAtMs   int64
+	EndedAtMs      *int64
+	MetadataJSON   map[string]any
+}
+
+type SessionUpsertItem struct {
+	IngestBase
+	Data SessionUpsertData
+}
+
+type AuditEventData struct {
+	EventID           string
+	SessionKey        *string
+	RunID             *string
+	ToolCallID        *string
+	ApprovalID        *string
+	RequestID         *string
+	SourceKind        string
+	HookName          string
+	EventType         string
+	Category          string
+	SubCategory       *string
+	Direction         *string
+	ContentKind       *string
+	PrimaryModule     *string
+	Modules           []string
+	RiskLevel         *string
+	RiskScore         *int64
+	PolicyDecision    *string
+	EnforcementAction string
+	Title             string
+	Summary           *string
+	Recommendation    *string
+	ContentExcerpt    *string
+	ContentHash       *string
+	PayloadJSON       map[string]any
+}
+
+type AuditEventItem struct {
+	IngestBase
+	Data AuditEventData
+}
+
+type ToolCallUpsertData struct {
+	ToolCallID        string
+	SessionKey        *string
+	RunID             *string
+	ApprovalID        *string
+	ToolName          string
+	ParamSummary      *string
+	ParamHash         *string
+	TriggeredModules  []string
+	RiskLevel         *string
+	RiskScore         *int64
+	PolicyDecision    *string
+	EnforcementAction string
+	StartedAtMs       int64
+	FinishedAtMs      *int64
+	DurationMs        *int64
+	ResultStatus      *string
+	ResultExcerpt     *string
+	ErrorText         *string
+	MetadataJSON      map[string]any
+}
+
+type ToolCallUpsertItem struct {
+	IngestBase
+	Data ToolCallUpsertData
+}
+
+type ApprovalUpsertData struct {
+	ApprovalID             string
+	PendingID              *string
+	SessionKey             *string
+	RunID                  *string
+	Transport              *string
+	ChannelProfile         *string
+	ChannelID              *string
+	AccountID              *string
+	ConversationID         *string
+	RequesterOuID          *string
+	ApproverOuIDs          []string
+	ResolvedApproverOuID   *string
+	RequestFingerprintHash *string
+	Module                 string
+	RiskLevel              string
+	ToolName               *string
+	ScopeType              string
+	RequestedAtMs          int64
+	ExpiresAtMs            int64
+	ResolvedAtMs           *int64
+	Resolution             *string
+	PromptExcerpt          *string
+	AuditSummaryJSON       map[string]any
+	MetadataJSON           map[string]any
+}
+
+type ApprovalUpsertItem struct {
+	IngestBase
+	Data ApprovalUpsertData
+}
+
+type LynxCheckUpsertData struct {
+	RequestID            string
+	Source               string
+	Trigger              string
+	PreferredTargetKind  string
+	SessionKey           *string
+	TargetKey            *string
+	ChannelID            *string
+	MessageProvider      *string
+	Status               string
+	SendAttempted        *bool
+	SendSucceeded        *bool
+	Transport            *string
+	ReportPath           *string
+	ErrorMessage         *string
+	DeliveryAttemptsJSON []map[string]any
+	CreatedAtMs          int64
+	CompletedAtMs        *int64
+}
+
+type LynxCheckUpsertItem struct {
+	IngestBase
+	Data LynxCheckUpsertData
+}
+
+type TokenUsageData struct {
+	UsageEventID       string
+	SessionKey         *string
+	RunID              *string
+	AgentID            *string
+	Provider           string
+	Model              string
+	InputTokens        *int64
+	OutputTokens       *int64
+	CacheReadTokens    *int64
+	CacheWriteTokens   *int64
+	TotalTokens        int64
+	AssistantTextCount *int64
+	IsEstimated        *bool
+	PayloadJSON        map[string]any
+}
+
+type TokenUsageItem struct {
+	IngestBase
+	Data TokenUsageData
+}
+
+func (r *IngestRepository) WithTransaction(callback func(*sql.Tx) error) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := callback(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *IngestRepository) PersistSession(exec sqlExecer, item SessionUpsertItem) (PersistResult, error) {
+	result, err := exec.Exec(
+		`
+		INSERT INTO sessions (
+			session_key, channel_profile, channel_id, requester_id, requester_ou_id,
+			account_id, conversation_id, thread_id, is_group, first_seen_at, last_seen_at,
+			ended_at, metadata_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_key) DO UPDATE SET
+			channel_profile = COALESCE(sessions.channel_profile, excluded.channel_profile),
+			channel_id = COALESCE(sessions.channel_id, excluded.channel_id),
+			requester_id = COALESCE(sessions.requester_id, excluded.requester_id),
+			requester_ou_id = COALESCE(sessions.requester_ou_id, excluded.requester_ou_id),
+			account_id = COALESCE(sessions.account_id, excluded.account_id),
+			conversation_id = COALESCE(sessions.conversation_id, excluded.conversation_id),
+			thread_id = COALESCE(sessions.thread_id, excluded.thread_id),
+			is_group = CASE WHEN sessions.is_group = 1 OR excluded.is_group = 1 THEN 1 ELSE 0 END,
+			first_seen_at = MIN(sessions.first_seen_at, excluded.first_seen_at),
+			last_seen_at = MAX(sessions.last_seen_at, excluded.last_seen_at),
+			ended_at = COALESCE(excluded.ended_at, sessions.ended_at),
+			metadata_json = COALESCE(sessions.metadata_json, excluded.metadata_json)
+		`,
+		item.Data.SessionKey,
+		item.Data.ChannelProfile,
+		item.Data.ChannelID,
+		item.Data.RequesterID,
+		item.Data.RequesterOuID,
+		item.Data.AccountID,
+		item.Data.ConversationID,
+		item.Data.ThreadID,
+		toBoolInt(item.Data.IsGroup),
+		item.Data.FirstSeenAtMs,
+		item.Data.LastSeenAtMs,
+		item.Data.EndedAtMs,
+		toJSON(item.Data.MetadataJSON),
+	)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	return resultStatus(result)
+}
+
+func (r *IngestRepository) PersistAuditEvent(exec sqlExecer, item AuditEventItem, ingestedAtMs int64) (PersistResult, error) {
+	result, err := exec.Exec(
+		`
+		INSERT OR IGNORE INTO audit_events (
+			event_id, session_key, run_id, tool_call_id, approval_id, request_id,
+			source_kind, hook_name, event_type, category, sub_category, direction,
+			content_kind, primary_module, modules_json, risk_level, risk_score,
+			policy_decision, enforcement_action, title, summary, recommendation,
+			content_excerpt, content_hash, occurred_at, ingested_at, payload_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+		item.Data.EventID,
+		item.Data.SessionKey,
+		item.Data.RunID,
+		item.Data.ToolCallID,
+		item.Data.ApprovalID,
+		item.Data.RequestID,
+		item.Data.SourceKind,
+		item.Data.HookName,
+		item.Data.EventType,
+		item.Data.Category,
+		item.Data.SubCategory,
+		item.Data.Direction,
+		item.Data.ContentKind,
+		item.Data.PrimaryModule,
+		toJSON(item.Data.Modules),
+		item.Data.RiskLevel,
+		item.Data.RiskScore,
+		item.Data.PolicyDecision,
+		toDBEnforcementAction(item.Data.EnforcementAction),
+		item.Data.Title,
+		item.Data.Summary,
+		item.Data.Recommendation,
+		item.Data.ContentExcerpt,
+		item.Data.ContentHash,
+		item.OccurredAtMs,
+		ingestedAtMs,
+		toJSON(item.Data.PayloadJSON),
+	)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	return resultStatus(result)
+}
+
+func (r *IngestRepository) PersistToolCall(exec sqlExecer, item ToolCallUpsertItem) (PersistResult, error) {
+	result, err := exec.Exec(
+		`
+		INSERT INTO tool_calls (
+			tool_call_id, session_key, run_id, approval_id, tool_name, param_summary,
+			param_hash, triggered_modules_json, risk_level, risk_score, policy_decision,
+			enforcement_action, started_at, finished_at, duration_ms, result_status,
+			result_excerpt, error_text, metadata_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tool_call_id) DO UPDATE SET
+			session_key = COALESCE(tool_calls.session_key, excluded.session_key),
+			run_id = COALESCE(tool_calls.run_id, excluded.run_id),
+			approval_id = COALESCE(tool_calls.approval_id, excluded.approval_id),
+			tool_name = COALESCE(tool_calls.tool_name, excluded.tool_name),
+			param_summary = COALESCE(tool_calls.param_summary, excluded.param_summary),
+			param_hash = COALESCE(tool_calls.param_hash, excluded.param_hash),
+			triggered_modules_json = COALESCE(tool_calls.triggered_modules_json, excluded.triggered_modules_json),
+			risk_level = COALESCE(tool_calls.risk_level, excluded.risk_level),
+			risk_score = COALESCE(tool_calls.risk_score, excluded.risk_score),
+			policy_decision = COALESCE(tool_calls.policy_decision, excluded.policy_decision),
+			enforcement_action = COALESCE(excluded.enforcement_action, tool_calls.enforcement_action),
+			started_at = MIN(tool_calls.started_at, excluded.started_at),
+			finished_at = COALESCE(excluded.finished_at, tool_calls.finished_at),
+			duration_ms = COALESCE(excluded.duration_ms, tool_calls.duration_ms),
+			result_status = COALESCE(excluded.result_status, tool_calls.result_status),
+			result_excerpt = COALESCE(excluded.result_excerpt, tool_calls.result_excerpt),
+			error_text = COALESCE(excluded.error_text, tool_calls.error_text),
+			metadata_json = COALESCE(tool_calls.metadata_json, excluded.metadata_json)
+		`,
+		item.Data.ToolCallID,
+		item.Data.SessionKey,
+		item.Data.RunID,
+		item.Data.ApprovalID,
+		item.Data.ToolName,
+		item.Data.ParamSummary,
+		item.Data.ParamHash,
+		toJSON(item.Data.TriggeredModules),
+		item.Data.RiskLevel,
+		item.Data.RiskScore,
+		item.Data.PolicyDecision,
+		toDBEnforcementAction(item.Data.EnforcementAction),
+		item.Data.StartedAtMs,
+		item.Data.FinishedAtMs,
+		item.Data.DurationMs,
+		item.Data.ResultStatus,
+		item.Data.ResultExcerpt,
+		item.Data.ErrorText,
+		toJSON(item.Data.MetadataJSON),
+	)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	return resultStatus(result)
+}
+
+func (r *IngestRepository) PersistApproval(exec sqlExecer, item ApprovalUpsertItem) (PersistResult, error) {
+	result, err := exec.Exec(
+		`
+		INSERT INTO approvals (
+			approval_id, pending_id, session_key, run_id, transport, channel_profile,
+			channel_id, account_id, conversation_id, requester_ou_id, approver_ou_ids_json,
+			resolved_approver_ou_id, request_fingerprint_hash, module, risk_level, tool_name,
+			scope_type, requested_at, expires_at, resolved_at, resolution, prompt_excerpt,
+			audit_summary_json, metadata_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(approval_id) DO UPDATE SET
+			pending_id = COALESCE(approvals.pending_id, excluded.pending_id),
+			session_key = COALESCE(approvals.session_key, excluded.session_key),
+			run_id = COALESCE(approvals.run_id, excluded.run_id),
+			transport = COALESCE(approvals.transport, excluded.transport),
+			channel_profile = COALESCE(approvals.channel_profile, excluded.channel_profile),
+			channel_id = COALESCE(approvals.channel_id, excluded.channel_id),
+			account_id = COALESCE(approvals.account_id, excluded.account_id),
+			conversation_id = COALESCE(approvals.conversation_id, excluded.conversation_id),
+			requester_ou_id = COALESCE(approvals.requester_ou_id, excluded.requester_ou_id),
+			approver_ou_ids_json = COALESCE(approvals.approver_ou_ids_json, excluded.approver_ou_ids_json),
+			resolved_approver_ou_id = COALESCE(excluded.resolved_approver_ou_id, approvals.resolved_approver_ou_id),
+			request_fingerprint_hash = COALESCE(approvals.request_fingerprint_hash, excluded.request_fingerprint_hash),
+			module = COALESCE(approvals.module, excluded.module),
+			risk_level = COALESCE(approvals.risk_level, excluded.risk_level),
+			tool_name = COALESCE(approvals.tool_name, excluded.tool_name),
+			scope_type = COALESCE(approvals.scope_type, excluded.scope_type),
+			requested_at = MIN(approvals.requested_at, excluded.requested_at),
+			expires_at = MAX(approvals.expires_at, excluded.expires_at),
+			resolved_at = COALESCE(excluded.resolved_at, approvals.resolved_at),
+			resolution = COALESCE(excluded.resolution, approvals.resolution),
+			prompt_excerpt = COALESCE(excluded.prompt_excerpt, approvals.prompt_excerpt),
+			audit_summary_json = COALESCE(approvals.audit_summary_json, excluded.audit_summary_json),
+			metadata_json = COALESCE(approvals.metadata_json, excluded.metadata_json)
+		`,
+		item.Data.ApprovalID,
+		item.Data.PendingID,
+		item.Data.SessionKey,
+		item.Data.RunID,
+		item.Data.Transport,
+		item.Data.ChannelProfile,
+		item.Data.ChannelID,
+		item.Data.AccountID,
+		item.Data.ConversationID,
+		item.Data.RequesterOuID,
+		toJSON(item.Data.ApproverOuIDs),
+		item.Data.ResolvedApproverOuID,
+		item.Data.RequestFingerprintHash,
+		item.Data.Module,
+		item.Data.RiskLevel,
+		item.Data.ToolName,
+		toDBApprovalScopeType(item.Data.ScopeType),
+		item.Data.RequestedAtMs,
+		item.Data.ExpiresAtMs,
+		item.Data.ResolvedAtMs,
+		item.Data.Resolution,
+		item.Data.PromptExcerpt,
+		toJSON(item.Data.AuditSummaryJSON),
+		toJSON(item.Data.MetadataJSON),
+	)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	return resultStatus(result)
+}
+
+func (r *IngestRepository) PersistLynxCheck(exec sqlExecer, item LynxCheckUpsertItem) (PersistResult, error) {
+	result, err := exec.Exec(
+		`
+		INSERT INTO lynx_checks (
+			request_id, source, trigger, preferred_target_kind, session_key, target_key,
+			channel_id, message_provider, status, send_attempted, send_succeeded, transport,
+			report_path, error_message, delivery_attempts_json, created_at, completed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(request_id) DO UPDATE SET
+			source = COALESCE(lynx_checks.source, excluded.source),
+			trigger = COALESCE(lynx_checks.trigger, excluded.trigger),
+			preferred_target_kind = COALESCE(lynx_checks.preferred_target_kind, excluded.preferred_target_kind),
+			session_key = COALESCE(lynx_checks.session_key, excluded.session_key),
+			target_key = COALESCE(lynx_checks.target_key, excluded.target_key),
+			channel_id = COALESCE(lynx_checks.channel_id, excluded.channel_id),
+			message_provider = COALESCE(lynx_checks.message_provider, excluded.message_provider),
+			status = COALESCE(excluded.status, lynx_checks.status),
+			send_attempted = MAX(lynx_checks.send_attempted, excluded.send_attempted),
+			send_succeeded = MAX(lynx_checks.send_succeeded, excluded.send_succeeded),
+			transport = COALESCE(excluded.transport, lynx_checks.transport),
+			report_path = COALESCE(excluded.report_path, lynx_checks.report_path),
+			error_message = COALESCE(excluded.error_message, lynx_checks.error_message),
+			delivery_attempts_json = COALESCE(excluded.delivery_attempts_json, lynx_checks.delivery_attempts_json),
+			created_at = MIN(lynx_checks.created_at, excluded.created_at),
+			completed_at = COALESCE(excluded.completed_at, lynx_checks.completed_at)
+		`,
+		item.Data.RequestID,
+		item.Data.Source,
+		item.Data.Trigger,
+		item.Data.PreferredTargetKind,
+		item.Data.SessionKey,
+		item.Data.TargetKey,
+		item.Data.ChannelID,
+		item.Data.MessageProvider,
+		item.Data.Status,
+		toBoolInt(item.Data.SendAttempted),
+		toBoolInt(item.Data.SendSucceeded),
+		item.Data.Transport,
+		item.Data.ReportPath,
+		item.Data.ErrorMessage,
+		toJSON(item.Data.DeliveryAttemptsJSON),
+		item.Data.CreatedAtMs,
+		item.Data.CompletedAtMs,
+	)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	return resultStatus(result)
+}
+
+func (r *IngestRepository) PersistTokenUsage(exec sqlExecer, item TokenUsageItem, ingestedAtMs int64) (PersistResult, error) {
+	result, err := exec.Exec(
+		`
+		INSERT OR IGNORE INTO token_usage (
+			usage_event_id, session_key, run_id, agent_id, provider, model,
+			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+			total_tokens, assistant_text_count, is_estimated, occurred_at, ingested_at,
+			payload_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+		item.Data.UsageEventID,
+		item.Data.SessionKey,
+		item.Data.RunID,
+		item.Data.AgentID,
+		item.Data.Provider,
+		item.Data.Model,
+		zeroIfNil(item.Data.InputTokens),
+		zeroIfNil(item.Data.OutputTokens),
+		zeroIfNil(item.Data.CacheReadTokens),
+		zeroIfNil(item.Data.CacheWriteTokens),
+		item.Data.TotalTokens,
+		zeroIfNil(item.Data.AssistantTextCount),
+		toBoolInt(item.Data.IsEstimated),
+		item.OccurredAtMs,
+		ingestedAtMs,
+		toJSON(item.Data.PayloadJSON),
+	)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	return resultStatus(result)
+}
+
+func zeroIfNil(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func expectPersistedKind(result PersistResult) error {
+	if result.Status != "persisted" && result.Status != "duplicate" {
+		return fmt.Errorf("unknown persist status %q", result.Status)
+	}
+	return nil
+}

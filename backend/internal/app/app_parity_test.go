@@ -1,0 +1,566 @@
+package app
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/openclaw/lynx-guardian/backend/internal/config"
+)
+
+const parityBaseTimeMs int64 = 1776928800000
+
+func TestIngestPersistsValidItemsAndCountsDuplicates(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	first := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", fixtureBatch("batch-1"), true)
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected first ingest 200, got %d: %s", first.Code, first.Body.String())
+	}
+	firstBody := decodeObject(t, first)
+	expectNumber(t, firstBody, "acceptedCount", 11)
+	expectNumber(t, firstBody, "persistedCount", 11)
+	expectNumber(t, firstBody, "duplicateCount", 0)
+	expectNumber(t, firstBody, "rejectedCount", 0)
+
+	duplicate := map[string]any{
+		"schemaVersion": "lynx-server.ingest.v1",
+		"producer":      map[string]any{"pluginId": "openclaw-lynx-guardian"},
+		"sentAtMs":      parityBaseTimeMs,
+		"batchId":       "batch-duplicate",
+		"items":         []any{fixtureItems()[2]},
+	}
+	second := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", duplicate, true)
+	if second.Code != http.StatusOK {
+		t.Fatalf("expected duplicate ingest 200, got %d: %s", second.Code, second.Body.String())
+	}
+	secondBody := decodeObject(t, second)
+	expectNumber(t, secondBody, "acceptedCount", 1)
+	expectNumber(t, secondBody, "persistedCount", 0)
+	expectNumber(t, secondBody, "duplicateCount", 1)
+	expectNumber(t, secondBody, "rejectedCount", 0)
+}
+
+func TestIngestRejectsInvalidEnumValues(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	payload := map[string]any{
+		"schemaVersion": "lynx-server.ingest.v1",
+		"producer":      map[string]any{"pluginId": "openclaw-lynx-guardian"},
+		"sentAtMs":      parityBaseTimeMs,
+		"batchId":       "invalid-enum-batch",
+		"items": []any{
+			map[string]any{
+				"kind":         "auditEvent",
+				"itemId":       "invalid-source-kind-item",
+				"occurredAtMs": parityBaseTimeMs,
+				"data": map[string]any{
+					"eventId":           "invalid-source-kind-event",
+					"sourceKind":        "not_a_source",
+					"hookName":          "message_received",
+					"eventType":         "input_guard",
+					"category":          "input",
+					"enforcementAction": "allow",
+					"title":             "Invalid enum",
+				},
+			},
+		},
+	}
+
+	response := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", payload, true)
+	body := decodeObjectStatus(t, response, http.StatusOK)
+	expectNumber(t, body, "acceptedCount", 0)
+	expectNumber(t, body, "persistedCount", 0)
+	expectNumber(t, body, "rejectedCount", 1)
+}
+
+func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	seed := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", fixtureBatch("fixture-batch"), true)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("expected seed ingest 200, got %d: %s", seed.Code, seed.Body.String())
+	}
+
+	events := doJSON(t, handler, http.MethodGet, "/lynx/events?limit=1", nil, false)
+	eventItems := expectItems(t, events, http.StatusOK)
+	expectString(t, eventItems[0], "eventId", "event-approval")
+	expectString(t, eventItems[0], "enforcementAction", "requireApproval")
+	expectString(t, eventItems[0], "recommendation", "Review requester identity before approving exec.")
+	if _, ok := decodeObject(t, events)["nextCursor"].(string); !ok {
+		t.Fatalf("expected events nextCursor string")
+	}
+
+	eventDetail := doJSON(t, handler, http.MethodGet, "/lynx/events/event-approval", nil, false)
+	eventDetailBody := decodeObjectStatus(t, eventDetail, http.StatusOK)
+	expectString(t, eventDetailBody, "eventId", "event-approval")
+	expectString(t, eventDetailBody, "enforcementAction", "requireApproval")
+	expectStringSlice(t, eventDetailBody, "modules", []string{"M2:protected_file_access"})
+
+	toolCalls := doJSON(t, handler, http.MethodGet, "/lynx/tool-calls?limit=5&toolName=exec&approvalId=approval-alpha", nil, false)
+	toolItems := expectItems(t, toolCalls, http.StatusOK)
+	expectString(t, toolItems[0], "toolCallId", "tool-call-approval")
+	expectString(t, toolItems[0], "enforcementAction", "requireApproval")
+
+	toolDetail := doJSON(t, handler, http.MethodGet, "/lynx/tool-calls/tool-call-approval", nil, false)
+	toolDetailBody := decodeObjectStatus(t, toolDetail, http.StatusOK)
+	expectStringSlice(t, toolDetailBody, "triggeredModules", []string{"M2:protected_file_access"})
+
+	approvals := doJSON(t, handler, http.MethodGet, "/lynx/approvals?limit=5&module=M2:protected_file_access&scopeType=singleTool&requesterOuId=ou_alpha", nil, false)
+	approvalItems := expectItems(t, approvals, http.StatusOK)
+	expectString(t, approvalItems[0], "approvalId", "approval-alpha")
+	expectString(t, approvalItems[0], "scopeType", "singleTool")
+
+	checks := doJSON(t, handler, http.MethodGet, "/lynx/lynx-checks?limit=5&source=manual&trigger=lynx_command&status=completed&messageProvider=feishu", nil, false)
+	checkItems := expectItems(t, checks, http.StatusOK)
+	expectString(t, checkItems[0], "requestId", "lynx-check-alpha")
+	expectBool(t, checkItems[0], "sendAttempted", true)
+
+	sessions := doJSON(t, handler, http.MethodGet, "/lynx/sessions?limit=5&channelProfile=feishu&requesterOuId=ou_alpha&isGroup=false", nil, false)
+	sessionItems := expectItems(t, sessions, http.StatusOK)
+	expectString(t, sessionItems[0], "sessionKey", "session-alpha")
+	expectNumber(t, sessionItems[0], "eventCount", 2)
+	expectNumber(t, sessionItems[0], "toolCallCount", 1)
+
+	sessionDetail := doJSON(t, handler, http.MethodGet, "/lynx/sessions/session-alpha", nil, false)
+	sessionDetailBody := decodeObjectStatus(t, sessionDetail, http.StatusOK)
+	expectString(t, sessionDetailBody, "sessionKey", "session-alpha")
+	if _, ok := sessionDetailBody["tokenSummary"].(map[string]any); !ok {
+		t.Fatalf("expected session tokenSummary")
+	}
+
+	dashboardPath := fmt.Sprintf("/lynx/dashboard/overview?fromMs=%d&toMs=%d", parityBaseTimeMs-10000, parityBaseTimeMs)
+	dashboard := doJSON(t, handler, http.MethodGet, dashboardPath, nil, false)
+	dashboardBody := decodeObjectStatus(t, dashboard, http.StatusOK)
+	totals, ok := dashboardBody["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected dashboard totals object")
+	}
+	expectNumber(t, totals, "eventCount", 3)
+	expectNumber(t, totals, "highRiskEventCount", 1)
+	expectNumber(t, totals, "toolCallCount", 2)
+	expectNumber(t, totals, "approvalCount", 1)
+	expectNumber(t, totals, "lynxCheckCount", 1)
+	expectNumber(t, totals, "totalTokens", 435)
+
+	tokenUsage := doJSON(t, handler, http.MethodGet, "/lynx/tokens/usage?limit=5&provider=openai&isEstimated=true", nil, false)
+	tokenItems := expectItems(t, tokenUsage, http.StatusOK)
+	expectString(t, tokenItems[0], "usageEventId", "usage-secondary")
+	expectBool(t, tokenItems[0], "isEstimated", true)
+
+	tokenSummary := doJSON(t, handler, http.MethodGet, "/lynx/tokens/summary?provider=openai", nil, false)
+	tokenSummaryBody := decodeObjectStatus(t, tokenSummary, http.StatusOK)
+	expectNumber(t, tokenSummaryBody, "totalTokens", 435)
+	expectNumber(t, tokenSummaryBody, "estimatedCount", 1)
+
+	tokenTrend := doJSON(t, handler, http.MethodGet, "/lynx/tokens/trend?bucket=hour&provider=openai", nil, false)
+	tokenTrendBody := decodeObjectStatus(t, tokenTrend, http.StatusOK)
+	expectString(t, tokenTrendBody, "bucket", "hour")
+}
+
+func buildParityHandler(t *testing.T) (http.Handler, Closer) {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	cfg := &config.Config{
+		Host:              "127.0.0.1",
+		ListenHost:        "127.0.0.1",
+		Port:              "31789",
+		DataDir:           tempDir,
+		DatabasePath:      tempDir + "/lynx.db",
+		IngestToken:       "test-token",
+		TokenPath:         tempDir + "/console.token",
+		FrontendDistPath:  tempDir,
+		TokenUsageEnabled: true,
+		TrustedProxyIPs:   nil,
+	}
+
+	handler, closer, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	return handler, closer
+}
+
+func doJSON(t *testing.T, handler http.Handler, method, path string, payload any, authorized bool) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var body *bytes.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		body = bytes.NewReader(data)
+	} else {
+		body = bytes.NewReader(nil)
+	}
+
+	request := httptest.NewRequest(method, path, body)
+	request.RemoteAddr = "127.0.0.1:12345"
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if authorized {
+		request.Header.Set("Authorization", "Bearer test-token")
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func decodeObjectStatus(t *testing.T, response *httptest.ResponseRecorder, status int) map[string]any {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("expected status %d, got %d: %s", status, response.Code, response.Body.String())
+	}
+	return decodeObject(t, response)
+}
+
+func decodeObject(t *testing.T, response *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response JSON: %v: %s", err, response.Body.String())
+	}
+	return payload
+}
+
+func expectItems(t *testing.T, response *httptest.ResponseRecorder, status int) []map[string]any {
+	t.Helper()
+	payload := decodeObjectStatus(t, response, status)
+	rawItems, ok := payload["items"].([]any)
+	if !ok {
+		t.Fatalf("expected items array in %v", payload)
+	}
+	items := make([]map[string]any, 0, len(rawItems))
+	for _, raw := range rawItems {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected item object, got %T", raw)
+		}
+		items = append(items, item)
+	}
+	if len(items) == 0 {
+		t.Fatalf("expected at least one item")
+	}
+	return items
+}
+
+func expectString(t *testing.T, payload map[string]any, key, want string) {
+	t.Helper()
+	if got, _ := payload[key].(string); got != want {
+		t.Fatalf("expected %s=%q, got %#v in %#v", key, want, payload[key], payload)
+	}
+}
+
+func expectBool(t *testing.T, payload map[string]any, key string, want bool) {
+	t.Helper()
+	if got, _ := payload[key].(bool); got != want {
+		t.Fatalf("expected %s=%v, got %#v in %#v", key, want, payload[key], payload)
+	}
+}
+
+func expectNumber(t *testing.T, payload map[string]any, key string, want int) {
+	t.Helper()
+	got, ok := payload[key].(float64)
+	if !ok || int(got) != want {
+		t.Fatalf("expected %s=%d, got %#v in %#v", key, want, payload[key], payload)
+	}
+}
+
+func expectStringSlice(t *testing.T, payload map[string]any, key string, want []string) {
+	t.Helper()
+	raw, ok := payload[key].([]any)
+	if !ok {
+		t.Fatalf("expected %s array, got %#v", key, payload[key])
+	}
+	if len(raw) != len(want) {
+		t.Fatalf("expected %s length %d, got %d", key, len(want), len(raw))
+	}
+	for i := range want {
+		if got, _ := raw[i].(string); got != want[i] {
+			t.Fatalf("expected %s[%d]=%q, got %#v", key, i, want[i], raw[i])
+		}
+	}
+}
+
+func fixtureBatch(batchID string) map[string]any {
+	return map[string]any{
+		"schemaVersion": "lynx-server.ingest.v1",
+		"producer":      map[string]any{"pluginId": "openclaw-lynx-guardian"},
+		"sentAtMs":      parityBaseTimeMs,
+		"batchId":       batchID,
+		"items":         fixtureItems(),
+	}
+}
+
+func fixtureItems() []any {
+	return []any{
+		map[string]any{
+			"kind":         "sessionUpsert",
+			"itemId":       "session-alpha-upsert",
+			"occurredAtMs": parityBaseTimeMs - 5000,
+			"data": map[string]any{
+				"sessionKey":     "session-alpha",
+				"channelProfile": "feishu",
+				"channelId":      "feishu",
+				"requesterId":    "user-alpha",
+				"requesterOuId":  "ou_alpha",
+				"accountId":      "account-alpha",
+				"conversationId": "conv-alpha",
+				"threadId":       "thread-alpha",
+				"isGroup":        false,
+				"firstSeenAtMs":  parityBaseTimeMs - 5000,
+				"lastSeenAtMs":   parityBaseTimeMs - 1000,
+				"metadataJson":   map[string]any{"source": "fixture"},
+			},
+		},
+		map[string]any{
+			"kind":         "sessionUpsert",
+			"itemId":       "session-beta-upsert",
+			"occurredAtMs": parityBaseTimeMs - 4000,
+			"data": map[string]any{
+				"sessionKey":     "session-beta",
+				"channelProfile": "feishu",
+				"channelId":      "group-chat",
+				"requesterId":    "user-beta",
+				"requesterOuId":  "ou_beta",
+				"accountId":      "account-beta",
+				"conversationId": "conv-beta",
+				"threadId":       "thread-beta",
+				"isGroup":        true,
+				"firstSeenAtMs":  parityBaseTimeMs - 4000,
+				"lastSeenAtMs":   parityBaseTimeMs - 2000,
+			},
+		},
+		map[string]any{
+			"kind":         "auditEvent",
+			"itemId":       "event-allow-item",
+			"occurredAtMs": parityBaseTimeMs - 4200,
+			"data": map[string]any{
+				"eventId":           "event-allow",
+				"sessionKey":        "session-alpha",
+				"runId":             "run-alpha",
+				"sourceKind":        "plugin_hook",
+				"hookName":          "message_received",
+				"eventType":         "input_guard",
+				"category":          "input",
+				"direction":         "input",
+				"enforcementAction": "allow",
+				"title":             "Inbound message received",
+				"summary":           "The input was allowed.",
+			},
+		},
+		map[string]any{
+			"kind":         "auditEvent",
+			"itemId":       "event-approval-item",
+			"occurredAtMs": parityBaseTimeMs - 1000,
+			"data": map[string]any{
+				"eventId":           "event-approval",
+				"sessionKey":        "session-alpha",
+				"runId":             "run-alpha",
+				"toolCallId":        "tool-call-approval",
+				"approvalId":        "approval-alpha",
+				"sourceKind":        "plugin_hook",
+				"hookName":          "before_tool_call",
+				"eventType":         "tool_call_evaluated",
+				"category":          "tool",
+				"subCategory":       "approval",
+				"direction":         "internal",
+				"primaryModule":     "M2:protected_file_access",
+				"modules":           []string{"M2:protected_file_access"},
+				"riskLevel":         "L3",
+				"riskScore":         8,
+				"policyDecision":    "confirm",
+				"enforcementAction": "requireApproval",
+				"title":             "Tool call evaluated",
+				"summary":           "Approval is required before running exec.",
+				"recommendation":    "Review requester identity before approving exec.",
+				"contentExcerpt":    "exec command requires approval",
+				"payloadJson":       map[string]any{"toolName": "exec"},
+			},
+		},
+		map[string]any{
+			"kind":         "auditEvent",
+			"itemId":       "event-beta-item",
+			"occurredAtMs": parityBaseTimeMs - 2000,
+			"data": map[string]any{
+				"eventId":           "event-beta",
+				"sessionKey":        "session-beta",
+				"runId":             "run-beta",
+				"requestId":         "lynx-check-alpha",
+				"sourceKind":        "plugin_hook",
+				"hookName":          "before_agent_start",
+				"eventType":         "agent_start_evaluated",
+				"category":          "agent",
+				"direction":         "input",
+				"riskLevel":         "L2",
+				"riskScore":         6,
+				"policyDecision":    "allow",
+				"enforcementAction": "warn",
+				"title":             "Agent start evaluated",
+				"summary":           "Managed lynx check started.",
+			},
+		},
+		map[string]any{
+			"kind":         "toolCallUpsert",
+			"itemId":       "tool-call-approval-item",
+			"occurredAtMs": parityBaseTimeMs - 1000,
+			"data": map[string]any{
+				"toolCallId":        "tool-call-approval",
+				"sessionKey":        "session-alpha",
+				"runId":             "run-alpha",
+				"approvalId":        "approval-alpha",
+				"toolName":          "exec",
+				"paramSummary":      "command=git status",
+				"paramHash":         "hash-exec",
+				"triggeredModules":  []string{"M2:protected_file_access"},
+				"riskLevel":         "L3",
+				"riskScore":         8,
+				"policyDecision":    "confirm",
+				"enforcementAction": "requireApproval",
+				"startedAtMs":       parityBaseTimeMs - 1000,
+				"finishedAtMs":      parityBaseTimeMs - 900,
+				"durationMs":        100,
+				"resultStatus":      "approved",
+				"resultExcerpt":     "git status",
+				"metadataJson":      map[string]any{"phase": "before"},
+			},
+		},
+		map[string]any{
+			"kind":         "toolCallUpsert",
+			"itemId":       "tool-call-read-item",
+			"occurredAtMs": parityBaseTimeMs - 2500,
+			"data": map[string]any{
+				"toolCallId":        "tool-call-read",
+				"sessionKey":        "session-beta",
+				"runId":             "run-beta",
+				"toolName":          "read",
+				"paramSummary":      "path=/tmp/report.md",
+				"paramHash":         "hash-read",
+				"triggeredModules":  []string{"M1:normal_read"},
+				"riskLevel":         "L1",
+				"riskScore":         2,
+				"policyDecision":    "allow",
+				"enforcementAction": "allow",
+				"startedAtMs":       parityBaseTimeMs - 2500,
+				"finishedAtMs":      parityBaseTimeMs - 2350,
+				"durationMs":        150,
+				"resultStatus":      "completed",
+				"resultExcerpt":     "report body",
+			},
+		},
+		map[string]any{
+			"kind":         "approvalUpsert",
+			"itemId":       "approval-item",
+			"occurredAtMs": parityBaseTimeMs - 1100,
+			"data": map[string]any{
+				"approvalId":             "approval-alpha",
+				"pendingId":              "approval-alpha",
+				"sessionKey":             "session-alpha",
+				"runId":                  "run-alpha",
+				"transport":              "local-chat",
+				"channelProfile":         "feishu",
+				"channelId":              "feishu",
+				"accountId":              "account-alpha",
+				"conversationId":         "conv-alpha",
+				"requesterOuId":          "ou_alpha",
+				"approverOuIds":          []string{"ou_owner"},
+				"resolvedApproverOuId":   "ou_owner",
+				"requestFingerprintHash": "fingerprint-alpha",
+				"module":                 "M2:protected_file_access",
+				"riskLevel":              "L3",
+				"toolName":               "exec",
+				"scopeType":              "singleTool",
+				"requestedAtMs":          parityBaseTimeMs - 1100,
+				"expiresAtMs":            parityBaseTimeMs + 60000,
+				"resolvedAtMs":           parityBaseTimeMs - 950,
+				"resolution":             "allow-once",
+				"promptExcerpt":          "Need approval before exec.",
+				"auditSummaryJson":       map[string]any{"reason": "protected file access"},
+				"metadataJson":           map[string]any{"source": "fixture"},
+			},
+		},
+		map[string]any{
+			"kind":         "lynxCheckUpsert",
+			"itemId":       "lynx-check-item",
+			"occurredAtMs": parityBaseTimeMs - 1800,
+			"data": map[string]any{
+				"requestId":           "lynx-check-alpha",
+				"source":              "manual",
+				"trigger":             "lynx_command",
+				"preferredTargetKind": "current",
+				"sessionKey":          "session-beta",
+				"targetKey":           "feishu:group-chat:conv-beta",
+				"channelId":           "group-chat",
+				"messageProvider":     "feishu",
+				"status":              "completed",
+				"sendAttempted":       true,
+				"sendSucceeded":       true,
+				"transport":           "feishu",
+				"reportPath":          "/tmp/report.md",
+				"createdAtMs":         parityBaseTimeMs - 2000,
+				"completedAtMs":       parityBaseTimeMs - 1800,
+			},
+		},
+		map[string]any{
+			"kind":         "tokenUsage",
+			"itemId":       "token-usage-primary-item",
+			"occurredAtMs": parityBaseTimeMs - 800,
+			"data": map[string]any{
+				"usageEventId":       "usage-primary",
+				"sessionKey":         "session-alpha",
+				"runId":              "run-alpha",
+				"agentId":            "agent-main",
+				"provider":           "openai",
+				"model":              "openclaw/main",
+				"inputTokens":        200,
+				"outputTokens":       100,
+				"cacheReadTokens":    10,
+				"cacheWriteTokens":   5,
+				"totalTokens":        315,
+				"assistantTextCount": 1,
+			},
+		},
+		map[string]any{
+			"kind":         "tokenUsage",
+			"itemId":       "token-usage-secondary-item",
+			"occurredAtMs": parityBaseTimeMs - 600,
+			"data": map[string]any{
+				"usageEventId":       "usage-secondary",
+				"sessionKey":         "session-beta",
+				"runId":              "run-beta",
+				"agentId":            "agent-main",
+				"provider":           "openai",
+				"model":              "openclaw/default",
+				"inputTokens":        80,
+				"outputTokens":       40,
+				"cacheReadTokens":    0,
+				"cacheWriteTokens":   0,
+				"totalTokens":        120,
+				"assistantTextCount": 1,
+				"isEstimated":        true,
+			},
+		},
+	}
+}

@@ -257,7 +257,7 @@ function copyPluginIntoContainer(plan, stagePluginPath) {
 }
 
 function installLocalConsoleRuntimeDeps(plan, { dryRun = false } = {}) {
-  const backendContainerPath = buildContainerSubprojectPath(plan.containerPluginPath, "backend");
+  const backendContainerPath = buildContainerSubprojectPath(plan.containerPluginPath, "server/backend");
   const shellCommand = buildInstallLocalConsoleRuntimeDepsShellCommand({
     containerPluginPath: plan.containerPluginPath,
   });
@@ -269,7 +269,7 @@ function installLocalConsoleRuntimeDeps(plan, { dryRun = false } = {}) {
     return;
   }
 
-  console.log(`[lynx-dev-sync] installing local-console backend runtime deps in ${backendContainerPath}`);
+  console.log(`[lynx-dev-sync] checking lynx-server backend runtime at ${backendContainerPath}`);
   runCommand("docker", [
     "exec",
     "-u",
@@ -314,7 +314,7 @@ function logPlan(plan, options) {
   console.log(`  hostHooksPath: ${plan.hostHooksPath}`);
   console.log(`  hostSkillsPath: ${plan.hostSkillsPath}`);
   console.log(`  containerPluginPath: ${plan.containerPluginPath}`);
-  console.log(`  localConsoleBackendPath: ${buildContainerSubprojectPath(plan.containerPluginPath, "backend")}`);
+  console.log(`  localConsoleBackendPath: ${buildContainerSubprojectPath(plan.containerPluginPath, "server/backend")}`);
   console.log(`  dryRun: ${options.dryRun}`);
   console.log(`  skipRestart: ${options.skipRestart}`);
 }

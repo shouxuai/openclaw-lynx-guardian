@@ -13,14 +13,29 @@ export interface LocalConsoleLaunchPlan {
   entryPath: string;
 }
 
-export function resolveLocalConsoleBackendEntryPath(baseUrl = import.meta.url): string {
+export function buildLynxServerExecutableName(
+  platform = process.platform,
+  arch = process.arch,
+): string {
+  return `lynx-server-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+export function resolveLocalConsoleBackendEntryPath(
+  baseUrl = import.meta.url,
+  runtime: { platform?: NodeJS.Platform; arch?: NodeJS.Architecture } = {},
+): string {
+  const executableName = buildLynxServerExecutableName(runtime.platform, runtime.arch);
   const relativeCandidates = [
-    "./server/backend/dist/main.js",
-    "../server/backend/dist/main.js",
-    "../../server/backend/dist/main.js",
-    "./backend/dist/main.js",
-    "../backend/dist/main.js",
-    "../../backend/dist/main.js",
+    `./server/backend/${executableName}`,
+    `../server/backend/${executableName}`,
+    `../../server/backend/${executableName}`,
+    `./backend/dist/${executableName}`,
+    `../backend/dist/${executableName}`,
+    `../../backend/dist/${executableName}`,
   ];
 
   const candidates = relativeCandidates.map((relativePath) => fileURLToPath(new URL(relativePath, baseUrl)));
@@ -34,9 +49,14 @@ export function buildLocalConsoleLaunchPlan(config: LocalConsoleRuntimeConfig): 
   }
 
   const cwd = dirname(entryPath);
+  const command = process.platform === "win32" ? entryPath : "sh";
+  const args = process.platform === "win32"
+    ? []
+    : ["-lc", `chmod +x ${shellQuote(entryPath)} 2>/dev/null || true; exec ${shellQuote(entryPath)}`];
+
   return {
-    command: process.execPath,
-    args: [entryPath],
+    command,
+    args,
     cwd,
     entryPath,
     env: {

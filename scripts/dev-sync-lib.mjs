@@ -13,6 +13,7 @@ const DEFAULT_TOP_LEVEL_STAGE_EXCLUDES = new Set([
 
 const DEFAULT_ANY_LEVEL_STAGE_EXCLUDES = new Set([
   "node_modules",
+  "vendor",
   ".vite",
   "coverage",
   "test-temp",
@@ -45,6 +46,10 @@ export function shouldStagePath(relativePath) {
   }
 
   if (DEFAULT_TOP_LEVEL_STAGE_EXCLUDES.has(segments[0])) {
+    return false;
+  }
+
+  if (segments[0] === "backend" && segments[1] === "dist") {
     return false;
   }
 
@@ -137,18 +142,14 @@ export function buildContainerSubprojectPath(containerPluginPath, relativeSubpro
 
 export function buildInstallLocalConsoleRuntimeDepsShellCommand({
   containerPluginPath,
-  backendRelativePath = "backend",
 } = {}) {
-  const backendPath = buildContainerSubprojectPath(containerPluginPath, backendRelativePath);
-  const backendPackageJsonPath = `${backendPath}/package.json`;
-  const backendLockfilePath = `${backendPath}/package-lock.json`;
+  const goBackendPath = buildContainerSubprojectPath(containerPluginPath, "server/backend");
 
   return [
     "set -eu",
-    `if [ ! -f ${shellQuote(backendPackageJsonPath)} ]; then echo "local-console backend missing; skip runtime dependency install"; exit 0; fi`,
-    `if [ ! -f ${shellQuote(backendLockfilePath)} ]; then echo "local-console backend lockfile missing: ${backendLockfilePath}" >&2; exit 1; fi`,
-    `cd ${shellQuote(backendPath)}`,
-    "(npm ci --omit=dev || { echo 'local-console backend npm ci failed; removing node_modules and retrying once' >&2; rm -rf node_modules; npm ci --omit=dev; })",
+    `if find ${shellQuote(goBackendPath)} -maxdepth 1 -type f -name 'lynx-server-*' 2>/dev/null | grep -q .; then echo "lynx-server backend present; skip runtime dependency install"; exit 0; fi`,
+    `echo "lynx-server backend missing: ${goBackendPath}/lynx-server-*" >&2`,
+    "exit 1",
   ].join(" && ");
 }
 

@@ -1,4 +1,4 @@
-export const LOCAL_CONSOLE_INGEST_SCHEMA_VERSION = "lynx-console.ingest.v1";
+export const LOCAL_CONSOLE_INGEST_SCHEMA_VERSION = "lynx-server.ingest.v1";
 export const LOCAL_CONSOLE_QUERY_API_VERSION = "v1";
 export const LOCAL_CONSOLE_API_BASE_PATH = "/lynx";
 export const RISK_LEVELS = ["L0", "L1", "L2", "L3", "L4"];

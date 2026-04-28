@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 
 function ensureFileExists(filePath, description) {
@@ -17,25 +17,34 @@ function copyDirectory(sourcePath, targetPath) {
   cpSync(sourcePath, targetPath, { recursive: true, force: true });
 }
 
+function copyLynxServerExecutables(sourceDir, targetDir) {
+  const executableNames = readdirSync(sourceDir)
+    .filter((entry) => /^lynx-server-(linux|win32|darwin)-/.test(entry))
+    .sort();
+
+  mkdirSync(targetDir, { recursive: true });
+  for (const executableName of executableNames) {
+    copyFile(join(sourceDir, executableName), join(targetDir, executableName));
+  }
+}
+
 function buildServerReadme() {
   return [
-    "# Lynx Local Console Server Package",
+    "# Lynx Server Package",
     "",
-    "This directory contains the compiled local-console backend and frontend deliverables only.",
+    "This directory contains the compiled Lynx backend and frontend deliverables only.",
     "",
     "## Backend runtime setup",
     "",
-    "Install backend production dependencies on the target machine before starting the server:",
+    "The backend is a self-contained Go executable:",
     "",
     "```bash",
     "cd backend",
-    "npm ci --omit=dev",
-    "node dist/main.js",
+    "./lynx-server-linux-x64",
     "```",
     "",
     "The backend will serve the frontend from `../frontend/dist` automatically when this layout is preserved.",
-    "When this package is bundled under the Lynx plugin `server/` directory, the plugin will also try to install",
-    "the backend production dependencies automatically on first startup if they are missing.",
+    "No Node production dependencies are required for the backend.",
     "",
     "Useful runtime environment variables:",
     "",
@@ -45,7 +54,7 @@ function buildServerReadme() {
     "- `LYNX_LOCAL_CONSOLE_DB_PATH`",
     "- `LYNX_LOCAL_CONSOLE_FRONTEND_DIST_PATH`",
     "",
-    "If you are packaging for Linux, do not reuse Windows-built `node_modules`; install dependencies on the target platform.",
+    "The package normally includes `lynx-server-linux-x64` for the OpenClaw Docker gateway and a current-host binary for local use.",
     "",
   ].join("\n");
 }
@@ -54,27 +63,18 @@ export function packageLocalConsoleServer(options = {}) {
   const repoRoot = resolve(options.repoRoot ?? process.cwd());
   const outputDir = resolve(options.outputDir ?? join(repoRoot, "server"));
 
-  const backendDistDir = join(repoRoot, "backend", "dist");
-  const backendEntryPath = join(backendDistDir, "main.js");
-  const backendMigrationsDir = join(backendDistDir, "migrations");
-  const backendPackageJsonPath = join(repoRoot, "backend", "package.json");
-  const backendLockfilePath = join(repoRoot, "backend", "package-lock.json");
+  const backendGoDistDir = join(repoRoot, "backend", "dist");
+  const backendGoLinuxEntryPath = join(backendGoDistDir, "lynx-server-linux-x64");
   const frontendDistDir = join(repoRoot, "frontend", "dist");
   const frontendIndexPath = join(frontendDistDir, "index.html");
 
-  ensureFileExists(backendEntryPath, "backend/dist/main.js");
-  ensureFileExists(join(backendMigrationsDir, "001_init.sql"), "backend/dist/migrations/001_init.sql");
-  ensureFileExists(backendPackageJsonPath, "backend/package.json");
-  ensureFileExists(backendLockfilePath, "backend/package-lock.json");
+  ensureFileExists(backendGoLinuxEntryPath, "backend/dist/lynx-server-linux-x64");
   ensureFileExists(frontendIndexPath, "frontend/dist/index.html");
 
   rmSync(outputDir, { recursive: true, force: true });
   mkdirSync(outputDir, { recursive: true });
 
-  copyFile(backendEntryPath, join(outputDir, "backend", "dist", "main.js"));
-  copyDirectory(backendMigrationsDir, join(outputDir, "backend", "dist", "migrations"));
-  copyFile(backendPackageJsonPath, join(outputDir, "backend", "package.json"));
-  copyFile(backendLockfilePath, join(outputDir, "backend", "package-lock.json"));
+  copyLynxServerExecutables(backendGoDistDir, join(outputDir, "backend"));
   copyDirectory(frontendDistDir, join(outputDir, "frontend", "dist"));
   writeFileSync(join(outputDir, "README.md"), buildServerReadme(), "utf8");
 

@@ -1,53 +1,29 @@
-import { spawnSync } from "child_process";
-import { existsSync } from "fs";
-import { dirname, join, resolve } from "path";
+import { readdirSync } from "fs";
+import { basename, dirname, resolve } from "path";
 
 import type { Logger } from "../types.js";
 
-const REQUIRED_RUNTIME_PACKAGES = [
-  "@fastify/static",
-  "better-sqlite3",
-  "fastify",
-  "zod",
-];
-
-function packagePathSegments(packageName: string): string[] {
-  return packageName.split("/");
-}
-
-function hasInstalledPackage(backendRoot: string, packageName: string): boolean {
-  return existsSync(
-    join(backendRoot, "node_modules", ...packagePathSegments(packageName), "package.json"),
-  );
+function hasGoBackendExecutable(backendRoot: string): boolean {
+  try {
+    return readdirSync(backendRoot).some((entry) => /^lynx-server-(linux|win32|darwin)-/.test(entry));
+  } catch {
+    return false;
+  }
 }
 
 function defaultInstallRunner(backendRoot: string): void {
-  const packageJsonPath = join(backendRoot, "package.json");
-  const packageLockPath = join(backendRoot, "package-lock.json");
-  if (!existsSync(packageJsonPath)) {
-    throw new Error(`local console backend package.json is missing: ${packageJsonPath}`);
-  }
-  if (!existsSync(packageLockPath)) {
-    throw new Error(`local console backend package-lock.json is missing: ${packageLockPath}`);
-  }
-
-  const result = spawnSync("npm", ["ci", "--omit=dev"], {
-    cwd: backendRoot,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-
-  if ((result.status ?? 1) !== 0) {
-    throw new Error(`npm ci --omit=dev failed in ${backendRoot}`);
-  }
+  throw new Error(`lynx-server backend executable is missing in ${backendRoot}`);
 }
 
 export function resolveLocalConsoleBackendRoot(entryPath: string): string {
-  return resolve(dirname(entryPath), "..");
+  if (/^lynx-server-(linux|win32|darwin)-/.test(basename(entryPath))) {
+    return resolve(dirname(entryPath));
+  }
+  return resolve(dirname(entryPath));
 }
 
 export function hasLocalConsoleBackendRuntimeDeps(backendRoot: string): boolean {
-  return REQUIRED_RUNTIME_PACKAGES.every((packageName) => hasInstalledPackage(backendRoot, packageName));
+  return hasGoBackendExecutable(backendRoot);
 }
 
 export async function ensureLocalConsoleBackendRuntimeDeps(options: {
@@ -60,7 +36,7 @@ export async function ensureLocalConsoleBackendRuntimeDeps(options: {
   }
 
   options.logger.info(
-    `[lynx-guardian] installing local console backend runtime dependencies in ${options.backendRoot}`,
+    `[lynx-guardian] checking lynx-server backend runtime in ${options.backendRoot}`,
   );
 
   const installRunner = options.installRunner ?? defaultInstallRunner;

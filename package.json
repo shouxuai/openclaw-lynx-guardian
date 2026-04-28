@@ -8,9 +8,12 @@
   "scripts": {
     "test": "vitest",
     "build": "node scripts/build.js",
-    "build:local-console": "node scripts/build-local-console.mjs",
-    "package:local-console-server": "node scripts/package-local-console-server.mjs",
-    "dev:local-console": "node scripts/start-local-console-dev.mjs",
+    "build:lynx-server": "node scripts/build-local-console.mjs",
+    "package:lynx-server": "node scripts/package-local-console-server.mjs",
+    "dev:lynx-server": "node scripts/start-local-console-dev.mjs",
+    "build:local-console": "npm run build:lynx-server",
+    "package:local-console-server": "npm run package:lynx-server",
+    "dev:local-console": "npm run dev:lynx-server",
     "verify:local-console": "node scripts/verify-local-console.mjs"
   },
   "main": "index.ts",

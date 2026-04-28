@@ -1,21 +1,36 @@
 #!/usr/bin/env node
 
-import { existsSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 
 const rootDir = process.cwd();
+
+function withWindowsComSpec(env = process.env) {
+  if (process.platform !== "win32" || env.ComSpec) {
+    return env;
+  }
+  return {
+    ...env,
+    ComSpec: "C:\\Windows\\System32\\cmd.exe",
+  };
+}
 
 function run(command, args) {
   const result = spawnSync(command, args, {
     cwd: rootDir,
     stdio: "inherit",
     shell: process.platform === "win32",
+    env: withWindowsComSpec(),
   });
 
   if ((result.status ?? 1) !== 0) {
     process.exit(result.status ?? 1);
   }
+}
+
+function resolveNpmCommand() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
 function buildIfPresent(relativePackageDir) {
@@ -26,9 +41,83 @@ function buildIfPresent(relativePackageDir) {
   }
 
   console.log(`[build-local-console] build ${relativePackageDir}`);
-  run("npm", ["--prefix", relativePackageDir, "run", "build"]);
+  run(resolveNpmCommand(), ["--prefix", relativePackageDir, "run", "build"]);
 }
 
 buildIfPresent("shared");
-buildIfPresent("backend");
+buildGoBackendIfPresent();
 buildIfPresent("frontend");
+
+function resolveGoCommand() {
+  const windowsGo = "C:\\Program Files\\Go\\bin\\go.exe";
+  if (process.platform === "win32" && existsSync(windowsGo)) {
+    return windowsGo;
+  }
+  return "go";
+}
+
+function toGoOS(platform) {
+  if (platform === "win32") {
+    return "windows";
+  }
+  return platform;
+}
+
+function toGoArch(arch) {
+  if (arch === "x64") {
+    return "amd64";
+  }
+  return arch;
+}
+
+function executableName(platform, arch) {
+  return `lynx-server-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
+}
+
+function buildGoTarget(platform, arch) {
+  const backendGoDir = path.join(rootDir, "backend");
+  const outputDir = path.join(backendGoDir, "dist");
+  mkdirSync(outputDir, { recursive: true });
+
+  console.log(`[build-local-console] build backend ${platform}/${arch}`);
+  const result = spawnSync(resolveGoCommand(), [
+    "build",
+    "-mod=vendor",
+    "-trimpath",
+    "-ldflags",
+    "-s -w",
+    "-o",
+    path.join(outputDir, executableName(platform, arch)),
+    "./cmd/lynx-server",
+  ], {
+    cwd: backendGoDir,
+    stdio: "inherit",
+    shell: false,
+    env: {
+      ...process.env,
+      CGO_ENABLED: "0",
+      GOOS: toGoOS(platform),
+      GOARCH: toGoArch(arch),
+    },
+  });
+
+  if ((result.status ?? 1) !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
+function buildGoBackendIfPresent() {
+  const goModPath = path.join(rootDir, "backend", "go.mod");
+  if (!existsSync(goModPath)) {
+    console.log("[build-local-console] skip backend (go.mod missing)");
+    return;
+  }
+
+  const targets = new Map();
+  targets.set("linux/x64", ["linux", "x64"]);
+  targets.set(`${process.platform}/${process.arch}`, [process.platform, process.arch]);
+
+  for (const [platform, arch] of targets.values()) {
+    buildGoTarget(platform, arch);
+  }
+}

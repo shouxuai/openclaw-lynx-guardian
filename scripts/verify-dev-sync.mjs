@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   DEFAULT_GATEWAY_CONTAINER,
@@ -19,6 +21,8 @@ import {
   hasGatewayReadyMarkers,
   resolveCronStoreSyncPaths,
 } from "./ready-sync-lib.mjs";
+import { packageLocalConsoleServer } from "./package-local-console-server-lib.mjs";
+import { LOCAL_CONSOLE_INGEST_SCHEMA_VERSION } from "../shared/src/enums.js";
 
 assert.equal(resolveOpenClawHome({
   platform: "win32",
@@ -34,11 +38,14 @@ assert.equal(resolveOpenClawHome({
 assert.equal(shouldStagePath(".git\\config"), false);
 assert.equal(shouldStagePath("node_modules\\vitest\\index.js"), false);
 assert.equal(shouldStagePath("backend\\node_modules\\better-sqlite3\\package.json"), false);
+assert.equal(shouldStagePath("backend\\vendor\\modules.txt"), false);
+assert.equal(shouldStagePath("backend\\dist\\lynx-server-linux-x64"), false);
 assert.equal(shouldStagePath("frontend\\.vite\\deps\\chunk.js"), false);
 assert.equal(shouldStagePath("backend\\test-temp\\smoke\\stdout.log"), false);
 assert.equal(shouldStagePath(".worktrees\\output-result-intercept"), false);
 assert.equal(shouldStagePath("dist\\index.js"), false);
-assert.equal(shouldStagePath("backend\\dist\\main.js"), true);
+assert.equal(shouldStagePath("backend\\dist\\main.js"), false);
+assert.equal(shouldStagePath("server\\backend\\lynx-server-linux-x64"), true);
 assert.equal(shouldStagePath("src\\utils.ts"), true);
 assert.equal(shouldStagePath("skills\\lynx-guardian-lesson\\SKILL.md"), true);
 assert.deepEqual(
@@ -70,7 +77,7 @@ assert.match(
   buildInstallLocalConsoleRuntimeDepsShellCommand({
     containerPluginPath: plan.containerPluginPath,
   }),
-  /cd '\/app\/extensions\/openclaw-lynx-guardian\/backend' && \(npm ci --omit=dev \|\|/,
+  /\/app\/extensions\/openclaw-lynx-guardian\/server\/backend/,
 );
 
 assert.equal(assessGatewayLogs([
@@ -115,6 +122,28 @@ assert.deepEqual(
     "C:\\repo",
   ],
 );
+
+assert.equal(LOCAL_CONSOLE_INGEST_SCHEMA_VERSION, "lynx-server.ingest.v1");
+
+const packageFixtureRoot = mkdtempSync(path.join(tmpdir(), "lynx-server-package-"));
+try {
+  const backendDist = path.join(packageFixtureRoot, "backend", "dist");
+  const frontendDist = path.join(packageFixtureRoot, "frontend", "dist");
+  mkdirSync(backendDist, { recursive: true });
+  mkdirSync(frontendDist, { recursive: true });
+  writeFileSync(path.join(backendDist, "lynx-server-linux-x64"), "", "utf8");
+  writeFileSync(path.join(backendDist, "lynx-server-win32-x64.exe"), "", "utf8");
+  writeFileSync(path.join(backendDist, "lynx-console-linux-x64"), "", "utf8");
+  writeFileSync(path.join(frontendDist, "index.html"), "<!doctype html>", "utf8");
+
+  const packageResult = packageLocalConsoleServer({ repoRoot: packageFixtureRoot });
+  assert.deepEqual(
+    readdirSync(packageResult.backendDir).sort(),
+    ["lynx-server-linux-x64", "lynx-server-win32-x64.exe"],
+  );
+} finally {
+  rmSync(packageFixtureRoot, { recursive: true, force: true });
+}
 
 const cronStorePaths = resolveCronStoreSyncPaths();
 assert.equal(cronStorePaths.sourceStorePath, "/home/node/.openclaw/cron/jobs.json");

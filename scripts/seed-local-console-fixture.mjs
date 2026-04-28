@@ -16,7 +16,7 @@ if (!token) {
 
 const now = Date.now();
 const payload = {
-  schemaVersion: "lynx-console.ingest.v1",
+  schemaVersion: "lynx-server.ingest.v1",
   producer: {
     pluginId: "openclaw-lynx-guardian",
     pluginVersion: "fixture",

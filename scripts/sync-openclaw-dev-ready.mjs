@@ -121,7 +121,7 @@ Usage:
 Wrapper behavior:
   1. Runs verify-dev-sync.mjs
   2. Builds shared/backend/frontend and packages server/
-  3. Runs sync-openclaw-dev.mjs (including local-console backend runtime deps install)
+  3. Runs sync-openclaw-dev.mjs (including lynx-server backend runtime check)
   4. Waits for the gateway container to become healthy
   5. Waits for Lynx Guardian startup markers
   6. Verifies and syncs the scheduled cron store
@@ -331,7 +331,7 @@ async function main() {
     runCommand(process.execPath, [verifyScriptPath], { capture: false });
   }
 
-  console.log("[lynx-dev-ready] step 2/7: build and package latest local-console frontend/backend");
+  console.log("[lynx-dev-ready] step 2/7: build and package latest Lynx server frontend/backend");
   const packageArgs = buildPackageLocalConsoleServerArgs({
     packageScriptPath,
     repoRoot: options.repoRoot,
@@ -342,7 +342,7 @@ async function main() {
     runCommand(process.execPath, packageArgs, { capture: false });
   }
 
-  console.log("[lynx-dev-ready] step 3/7: sync plugin files, install backend runtime deps, and restart gateway");
+  console.log("[lynx-dev-ready] step 3/7: sync plugin files, check backend runtime deps, and restart gateway");
   runCommand(process.execPath, [syncScriptPath, ...options.forwardArgs], { capture: false });
 
   if (options.dryRun) {

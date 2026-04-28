@@ -1,20 +1,18 @@
-# Lynx Local Console Server Package
+# Lynx Server Package
 
-This directory contains the compiled local-console backend and frontend deliverables only.
+This directory contains the compiled Lynx backend and frontend deliverables only.
 
 ## Backend runtime setup
 
-Install backend production dependencies on the target machine before starting the server:
+The backend is a self-contained Go executable:
 
 ```bash
 cd backend
-npm ci --omit=dev
-node dist/main.js
+./lynx-server-linux-x64
 ```
 
 The backend will serve the frontend from `../frontend/dist` automatically when this layout is preserved.
-When this package is bundled under the Lynx plugin `server/` directory, the plugin will also try to install
-the backend production dependencies automatically on first startup if they are missing.
+No Node production dependencies are required for the backend.
 
 Useful runtime environment variables:
 
@@ -24,4 +22,4 @@ Useful runtime environment variables:
 - `LYNX_LOCAL_CONSOLE_DB_PATH`
 - `LYNX_LOCAL_CONSOLE_FRONTEND_DIST_PATH`
 
-If you are packaging for Linux, do not reuse Windows-built `node_modules`; install dependencies on the target platform.
+The package normally includes `lynx-server-linux-x64` for the OpenClaw Docker gateway and a current-host binary for local use.

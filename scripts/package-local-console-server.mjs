@@ -5,6 +5,16 @@ import { spawnSync } from "child_process";
 
 import { packageLocalConsoleServer } from "./package-local-console-server-lib.mjs";
 
+function withWindowsComSpec(env = process.env) {
+  if (process.platform !== "win32" || env.ComSpec) {
+    return env;
+  }
+  return {
+    ...env,
+    ComSpec: "C:\\Windows\\System32\\cmd.exe",
+  };
+}
+
 function parseArgs(argv) {
   const options = {
     outputDir: "",
@@ -45,17 +55,18 @@ Usage:
   node scripts/package-local-console-server.mjs [options]
 
 Options:
-  --repo-root <path>   Override the local-console repo root
+  --repo-root <path>   Override the repo root
   --output-dir <path>  Override the generated server directory
   --skip-build         Reuse existing backend/frontend build outputs
 `);
 }
 
 function runBuild(repoRoot) {
-  const result = spawnSync("npm", ["run", "build:local-console"], {
+  const result = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build:lynx-server"], {
     cwd: repoRoot,
     stdio: "inherit",
     shell: process.platform === "win32",
+    env: withWindowsComSpec(),
   });
 
   if ((result.status ?? 1) !== 0) {
@@ -67,9 +78,7 @@ function logResult(repoRoot, outputDir) {
   const displayOutputDir = relative(repoRoot, outputDir) || ".";
   console.log(`[package-local-console-server] output: ${displayOutputDir}`);
   console.log("[package-local-console-server] includes:");
-  console.log("  - backend/dist");
-  console.log("  - backend/package.json");
-  console.log("  - backend/package-lock.json");
+  console.log("  - backend");
   console.log("  - frontend/dist");
   console.log("  - README.md");
 }
