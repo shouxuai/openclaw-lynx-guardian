@@ -3,23 +3,32 @@ package db
 import (
 	"database/sql"
 	"embed"
+	"io/fs"
+	"sort"
 	"time"
 )
 
-//go:embed migrations/001_init.sql
+//go:embed migrations/*.sql
 var migrationsFS embed.FS
 
 const InitialSchemaVersion = "001_init"
 
 // Migrate mirrors backend/src/db/migrate.ts.
 func Migrate(database *sql.DB) error {
-	sqlBytes, err := migrationsFS.ReadFile("migrations/001_init.sql")
+	migrations, err := fs.Glob(migrationsFS, "migrations/*.sql")
 	if err != nil {
 		return err
 	}
+	sort.Strings(migrations)
 
-	if _, err := database.Exec(string(sqlBytes)); err != nil {
-		return err
+	for _, migration := range migrations {
+		sqlBytes, err := migrationsFS.ReadFile(migration)
+		if err != nil {
+			return err
+		}
+		if _, err := database.Exec(string(sqlBytes)); err != nil {
+			return err
+		}
 	}
 
 	_, err = database.Exec(
