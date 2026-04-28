@@ -3,8 +3,15 @@ import { SensitiveDataBlocker } from "./sensitive.js";
 import { createReplacementMessage, extractMessageText } from "../runtime/plugin-runtime-helpers.js";
 
 export type OutputEnforcementMode = "warn" | "redact" | "block";
+export type OutputSink =
+  | "llm_output"
+  | "agent_end"
+  | "before_message_write"
+  | "tool_result_persist"
+  | "message_sending";
 
 export interface ResultGuardOptions {
+  sink?: OutputSink;
   trustedManagedLynxCheckPersistence?: boolean;
   trustedManagedLynxCheckOutput?: boolean;
   enforcementMode?: OutputEnforcementMode;
@@ -169,6 +176,43 @@ function applyDirectResultEnforcement(
   };
 }
 
+function applyHighConfidenceRedactions(
+  text: string,
+  subject: string,
+  options?: ResultGuardOptions,
+  extra?: {
+    toolName?: string;
+  },
+): TextGuardDecision | undefined {
+  const redaction = sensitiveDataBlocker.redactSensitiveData(text, {
+    includePersonalFinancial: true,
+  });
+  if (!redaction.changed) {
+    return undefined;
+  }
+
+  const modules = Array.from(new Set(redaction.matches.map((match) =>
+    match.type === "cn_resident_id" || match.type === "bank_card"
+      ? "M5:pii_in_output"
+      : "M5:secrets_in_output",
+  )));
+  const diagnostic = buildDiagnosticMessage({
+    subject,
+    enforcementMode: resolveOutputEnforcementMode(options),
+    modules,
+    level: "L3",
+    score: 6,
+    reason: modules.join(","),
+    toolName: extra?.toolName,
+  });
+
+  return {
+    changed: true,
+    content: redaction.text,
+    warning: diagnostic,
+  };
+}
+
 export function guardOutputText(
   text: string,
   sessionKey?: string,
@@ -232,10 +276,6 @@ export function guardToolResultPersistence(
   message: any,
   options?: ResultGuardOptions,
 ): ResultGuardDecision {
-  if (options?.trustedManagedLynxCheckPersistence === true) {
-    return { block: false, message };
-  }
-
   const text = extractMessageText(message);
   if (!text) {
     return { block: false, message };
@@ -257,6 +297,24 @@ export function guardToolResultPersistence(
     };
   }
 
+  const localRedaction = applyHighConfidenceRedactions(
+    text,
+    "tool result",
+    options,
+    { toolName: toolName ?? "tool" },
+  );
+  if (localRedaction) {
+    return {
+      block: true,
+      message: createReplacementMessage(message, localRedaction.content),
+      warning: localRedaction.warning,
+    };
+  }
+
+  if (options?.trustedManagedLynxCheckPersistence === true) {
+    return { block: false, message };
+  }
+
   const enforcement = guardOutputText(text, undefined, options, {
     subject: "tool result",
     toolName: toolName ?? "tool",
@@ -273,12 +331,40 @@ export function guardAssistantPersistence(
   message: any,
   options?: ResultGuardOptions,
 ): ResultGuardDecision {
-  if (options?.trustedManagedLynxCheckPersistence === true) {
+  const text = extractMessageText(message);
+  if (!text) {
     return { block: false, message };
   }
 
-  const text = extractMessageText(message);
-  if (!text) {
+  const directMatches = detectDirectProtectedResults(text);
+  if (directMatches.length > 0) {
+    const enforcement = applyDirectResultEnforcement(
+      text,
+      directMatches,
+      "assistant output",
+      options,
+    );
+    return {
+      block: enforcement.changed,
+      message: enforcement.changed ? createReplacementMessage(message, enforcement.content) : message,
+      warning: enforcement.warning,
+    };
+  }
+
+  const localRedaction = applyHighConfidenceRedactions(
+    text,
+    "assistant output",
+    options,
+  );
+  if (localRedaction) {
+    return {
+      block: true,
+      message: createReplacementMessage(message, localRedaction.content),
+      warning: localRedaction.warning,
+    };
+  }
+
+  if (options?.trustedManagedLynxCheckPersistence === true) {
     return { block: false, message };
   }
 
