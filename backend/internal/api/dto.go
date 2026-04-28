@@ -246,3 +246,64 @@ type RevokeGrantRequest struct {
 	ChainID string `json:"chainId"`
 	Reason  string `json:"reason"`
 }
+
+type LynxCheckTask struct {
+	RequestID           string         `json:"requestId"`
+	Trigger             string         `json:"trigger"`
+	Source              string         `json:"source"`
+	RequesterID         string         `json:"requesterId,omitempty"`
+	SessionKey          string         `json:"sessionKey,omitempty"`
+	TargetKey           string         `json:"targetKey,omitempty"`
+	PreferredTargetKind string         `json:"preferredTargetKind,omitempty"`
+	Status              string         `json:"status"`
+	Facts               map[string]any `json:"facts,omitempty"`
+	EvidenceBundle      map[string]any `json:"evidenceBundle,omitempty"`
+	ReportSkeleton      string         `json:"reportSkeleton,omitempty"`
+	DeliveryChannel     string         `json:"deliveryChannel,omitempty"`
+	DeliveryTarget      string         `json:"deliveryTarget,omitempty"`
+	DeliveryStatus      string         `json:"deliveryStatus,omitempty"`
+	DeliveryError       string         `json:"deliveryError,omitempty"`
+	ErrorMessage        string         `json:"errorMessage,omitempty"`
+	SendAttempted       bool           `json:"sendAttempted"`
+	SendSucceeded       bool           `json:"sendSucceeded"`
+	Transport           string         `json:"transport,omitempty"`
+	ReportPath          string         `json:"reportPath,omitempty"`
+	CreatedAt           string         `json:"createdAt"`
+	UpdatedAt           string         `json:"updatedAt"`
+	DeliveredAt         string         `json:"deliveredAt,omitempty"`
+	CompletedAt         string         `json:"completedAt,omitempty"`
+	CreatedAtMs         int64          `json:"createdAtMs"`
+	CompletedAtMs       int64          `json:"completedAtMs,omitempty"`
+}
+
+type LynxCheckTaskStartRequest struct {
+	RequestID      string         `json:"requestId"`
+	Trigger        string         `json:"trigger"`
+	Source         string         `json:"source"`
+	RequesterID    string         `json:"requesterId"`
+	SessionKey     string         `json:"sessionKey"`
+	TargetKey      string         `json:"targetKey"`
+	Facts          map[string]any `json:"facts,omitempty"`
+	EvidenceBundle map[string]any `json:"evidenceBundle,omitempty"`
+	ReportSkeleton string         `json:"reportSkeleton,omitempty"`
+}
+
+type LynxCheckTaskEventRequest struct {
+	Status          string                  `json:"status"`
+	EventType       string                  `json:"eventType,omitempty"`
+	Facts           map[string]any          `json:"facts,omitempty"`
+	EvidenceBundle  map[string]any          `json:"evidenceBundle,omitempty"`
+	ReportSkeleton  string                  `json:"reportSkeleton,omitempty"`
+	DeliveryChannel string                  `json:"deliveryChannel,omitempty"`
+	DeliveryTarget  string                  `json:"deliveryTarget,omitempty"`
+	DeliveryStatus  string                  `json:"deliveryStatus,omitempty"`
+	DeliveryError   string                  `json:"deliveryError,omitempty"`
+	ErrorMessage    string                  `json:"errorMessage,omitempty"`
+	Evidence        []LynxCheckEvidenceItem `json:"evidence,omitempty"`
+}
+
+type LynxCheckEvidenceItem struct {
+	Module   string         `json:"module"`
+	Severity string         `json:"severity"`
+	Evidence map[string]any `json:"evidence,omitempty"`
+}

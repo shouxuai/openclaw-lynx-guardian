@@ -16,6 +16,7 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
 	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	"github.com/openclaw/lynx-guardian/backend/internal/service"
+	"github.com/openclaw/lynx-guardian/backend/internal/tasks"
 )
 
 // LOCAL_CONSOLE_API_BASE_PATH mirrors shared/src/enums.ts.
@@ -40,7 +41,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	events := repo.NewEventsRepository(database)
 	toolCalls := repo.NewToolCallsRepository(database)
 	sessions := repo.NewSessionsRepository(database)
-	lynxChecks := repo.NewLynxChecksRepository(database)
+	lynxCheckTasks := repo.NewLynxCheckTaskRepository(database)
 	tokens := repo.NewTokensRepository(database)
 	dashboard := repo.NewDashboardRepository(database)
 	decisions := repo.NewDecisionRepository(database)
@@ -49,6 +50,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	decisionService := decision.NewService(decisions)
 	grantService := grants.NewService(approvalGrants)
 	chainService := chain.NewService(chains, grantService)
+	lynxCheckService := tasks.NewLynxCheckService(lynxCheckTasks)
 	ingestService := ingest.NewService(repo.NewIngestRepository(database))
 
 	root := gin.New()
@@ -59,6 +61,9 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	root.GET("/webview/*filepath", webviewHandler)
 
 	query := root.Group(apiBasePath)
+	ingestGroup := query.Group("/internal/v1")
+	ingestGroup.Use(middleware.RequireIngestAuth(cfg.IngestToken))
+
 	routes.RegisterDocs(query)
 	routes.RegisterHealth(query)
 	routes.RegisterMeta(query, routes.MetaCapabilities{
@@ -68,13 +73,11 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	routes.RegisterEvents(query, events)
 	routes.RegisterToolCalls(query, toolCalls)
 	routes.RegisterApprovals(query, approvals)
-	routes.RegisterLynxChecks(query, lynxChecks)
+	routes.RegisterLynxCheckTasks(query, ingestGroup, lynxCheckService, lynxCheckTasks)
 	routes.RegisterSessions(query, sessions)
 	routes.RegisterDashboard(query, dashboard)
 	routes.RegisterTokens(query, tokens)
 
-	ingestGroup := query.Group("/internal/v1")
-	ingestGroup.Use(middleware.RequireIngestAuth(cfg.IngestToken))
 	routes.RegisterChains(query, ingestGroup, chainService, chains)
 	routes.RegisterGrants(query, ingestGroup, grantService, approvalGrants)
 	routes.RegisterIngest(ingestGroup, ingestService)

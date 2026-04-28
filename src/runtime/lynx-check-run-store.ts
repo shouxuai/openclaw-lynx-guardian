@@ -36,6 +36,13 @@ interface WaitForLynxCheckRunResultOptions extends LynxCheckRunStoreOptions {
   pollIntervalMs?: number;
 }
 
+export interface LynxCheckTaskControlPlaneConfig {
+  baseUrl: string;
+  getToken?: () => string;
+  fetchImpl?: typeof fetch;
+  logger?: Pick<Console, "warn">;
+}
+
 type CreateLynxCheckRunIntentInput = Omit<LynxCheckRunIntent, "requestId" | "createdAtMs" | "status"> & {
   requestId?: string;
   createdAtMs?: number;
@@ -44,6 +51,12 @@ type CreateLynxCheckRunIntentInput = Omit<LynxCheckRunIntent, "requestId" | "cre
 type WriteLynxCheckRunResultInput = Omit<LynxCheckRunResult, "requestId" | "completedAtMs"> & {
   completedAtMs?: number;
 };
+
+let taskControlPlaneConfig: LynxCheckTaskControlPlaneConfig | null = null;
+
+export function configureLynxCheckTaskControlPlane(config?: LynxCheckTaskControlPlaneConfig | null): void {
+  taskControlPlaneConfig = config?.baseUrl ? config : null;
+}
 
 function resolveRootDir(customRootDir?: string): string {
   const trimmed = normalizeString(customRootDir);
@@ -290,6 +303,120 @@ function writeIntent(intent: LynxCheckRunIntent, options?: LynxCheckRunStoreOpti
   return intent;
 }
 
+function buildLynxCheckTaskUrl(path: string): string | null {
+  const baseUrl = normalizeString(taskControlPlaneConfig?.baseUrl);
+  if (!baseUrl) {
+    return null;
+  }
+  return `${baseUrl.replace(/\/+$/, "")}${path}`;
+}
+
+function startTaskTrigger(intent: LynxCheckRunIntent): "manual" | "scheduled" {
+  return intent.source === "scheduled" || intent.trigger === "scheduled_lynx_check"
+    ? "scheduled"
+    : "manual";
+}
+
+function mapIntentStatusToTaskStatus(status: LynxCheckRunIntent["status"]): string {
+  switch (status) {
+    case "running":
+      return "collecting";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "pending":
+    default:
+      return "created";
+  }
+}
+
+function mapResultStatusToTaskStatus(status: LynxCheckRunResult["status"]): string | null {
+  switch (status) {
+    case "running":
+      return "collecting";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "not_started":
+    default:
+      return null;
+  }
+}
+
+function sendTaskControlPlanePayload(path: string, body: Record<string, unknown>): void {
+  const config = taskControlPlaneConfig;
+  const url = buildLynxCheckTaskUrl(path);
+  const fetchImpl = config?.fetchImpl ?? globalThis.fetch;
+  if (!config || !url || !fetchImpl) {
+    return;
+  }
+
+  const token = normalizeString(config.getToken?.());
+  void fetchImpl(url, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`lynx check task control plane responded with HTTP ${response.status}`);
+    }
+  }).catch((error) => {
+    config.logger?.warn?.(
+      `[lynx-guardian] Failed to sync /lynx-check task state to Go: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
+function syncTaskStart(intent: LynxCheckRunIntent): void {
+  sendTaskControlPlanePayload("/lynx/internal/v1/tasks/lynx-check/start", {
+    requestId: intent.requestId,
+    trigger: startTaskTrigger(intent),
+    source: intent.trigger,
+    sessionKey: intent.sessionKey,
+    targetKey: intent.routeHint?.targetKey ?? intent.preferredTargetKind,
+    requesterId: intent.routeHint?.senderId,
+    facts: {
+      preferredTargetKind: intent.preferredTargetKind,
+      routeHint: intent.routeHint,
+      createdAtMs: intent.createdAtMs,
+    },
+  });
+}
+
+function syncTaskIntentStatus(intent: LynxCheckRunIntent): void {
+  sendTaskControlPlanePayload(`/lynx/internal/v1/tasks/lynx-check/${encodeURIComponent(intent.requestId)}/event`, {
+    status: mapIntentStatusToTaskStatus(intent.status),
+  });
+}
+
+function syncTaskRunResult(result: LynxCheckRunResult): void {
+  const status = mapResultStatusToTaskStatus(result.status);
+  if (!status) {
+    return;
+  }
+
+  const deliveredAttempt = result.deliveryAttempts?.find((attempt) => attempt.delivered);
+  sendTaskControlPlanePayload(`/lynx/internal/v1/tasks/lynx-check/${encodeURIComponent(result.requestId)}/event`, {
+    status,
+    deliveryChannel: result.transport !== "pending" ? result.transport : undefined,
+    deliveryTarget: deliveredAttempt?.targetKey ?? result.deliveryAttempts?.[0]?.targetKey,
+    deliveryStatus: result.sendAttempted
+      ? result.sendSucceeded ? "sent" : "failed"
+      : undefined,
+    errorMessage: result.errorMessage,
+    evidenceBundle: {
+      deliveryAttempts: result.deliveryAttempts ?? [],
+      reportPath: result.reportPath,
+      completedAtMs: result.completedAtMs,
+    },
+  });
+}
+
 export function createLynxCheckRunIntent(
   input: CreateLynxCheckRunIntentInput,
   options?: LynxCheckRunStoreOptions,
@@ -317,6 +444,7 @@ export function createLynxCheckRunIntent(
     transport: "pending",
     reportPath: getLynxCheckRunReportPath(requestId, options),
   }, options);
+  syncTaskStart(intent);
   return intent;
 }
 
@@ -346,13 +474,15 @@ export function updateLynxCheckRunIntentStatus(
     return null;
   }
 
-  return writeIntent(
+  const updated = writeIntent(
     {
       ...existing,
       status,
     },
     options,
   );
+  syncTaskIntentStatus(updated);
+  return updated;
 }
 
 export function markLynxCheckRunCompleted(
@@ -404,6 +534,7 @@ export function writeLynxCheckRunResult(
   }
 
   writeJson(buildResultPath(requestId, options), result);
+  syncTaskRunResult(result);
   return result;
 }
 

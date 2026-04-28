@@ -174,6 +174,7 @@ import { getHookCapabilityReport, getOpenClawRuntimeVersion } from "./src/runtim
 import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from "./src/runtime/recent-active-delivery.js";
 import { deliverLynxReport, shapeMessageForProvider, shapeTextForProvider } from "./src/runtime/lynx-message-delivery.js";
 import {
+  configureLynxCheckTaskControlPlane,
   createLynxCheckRunIntent,
   getLynxCheckRunReportPath,
   markLynxCheckRunCompleted,
@@ -300,6 +301,13 @@ export default function setup(api: OpenClawPluginApi) {
       logger: log,
     })
     : null;
+  configureLynxCheckTaskControlPlane(localConsoleRuntime
+    ? {
+      baseUrl: localConsoleRuntime.config.baseUrl,
+      getToken: createLocalConsoleTokenProvider(localConsoleRuntime.config.paths.tokenPath),
+      logger: log,
+    }
+    : undefined);
   const decisionBroker = localConsoleRuntime
     ? new DecisionBroker(new DecisionClient({
       config: localConsoleRuntime.config,
