@@ -17,6 +17,7 @@ type TokenUsageListQuery struct {
 	Model       *string
 	AgentID     *string
 	IsEstimated *bool
+	SourceType  *string
 }
 
 type TokenSummaryQuery struct {
@@ -40,6 +41,7 @@ type tokenUsageRow struct {
 	AgentID            sql.NullString
 	Provider           string
 	Model              string
+	SourceType         string
 	InputTokens        int64
 	OutputTokens       int64
 	CacheReadTokens    int64
@@ -63,13 +65,14 @@ func (r *TokensRepository) List(query TokenUsageListQuery) (service.CursorPage[m
 	})
 	filter.AppendEquals("agent_id", query.AgentID)
 	filter.AppendBool("is_estimated", query.IsEstimated)
+	filter.AppendEquals("source_type", query.SourceType)
 	filter.AppendDescendingCursor("occurred_at", "usage_event_id", cursor)
 
 	rows, err := r.db.Query(
 		`
 		SELECT
 			usage_event_id, session_key, run_id, agent_id, provider, model,
-			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+			source_type, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			total_tokens, assistant_text_count, is_estimated, occurred_at
 		FROM token_usage `+filter.Where()+`
 		ORDER BY occurred_at DESC, usage_event_id DESC
@@ -86,7 +89,7 @@ func (r *TokensRepository) List(query TokenUsageListQuery) (service.CursorPage[m
 		var row tokenUsageRow
 		if err := rows.Scan(
 			&row.UsageEventID, &row.SessionKey, &row.RunID, &row.AgentID,
-			&row.Provider, &row.Model, &row.InputTokens, &row.OutputTokens,
+			&row.Provider, &row.Model, &row.SourceType, &row.InputTokens, &row.OutputTokens,
 			&row.CacheReadTokens, &row.CacheWriteTokens, &row.TotalTokens,
 			&row.AssistantTextCount, &row.IsEstimated, &row.OccurredAt,
 		); err != nil {
@@ -110,30 +113,34 @@ func (r *TokensRepository) List(query TokenUsageListQuery) (service.CursorPage[m
 
 func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, error) {
 	filter := tokenCommonFilter(query)
-	var totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, estimatedCount int64
+	var totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, estimatedCount, unavailableCount int64
 	if err := r.db.QueryRow(
 		`
 		SELECT
-			COALESCE(SUM(total_tokens), 0),
-			COALESCE(SUM(input_tokens), 0),
-			COALESCE(SUM(output_tokens), 0),
-			COALESCE(SUM(cache_read_tokens), 0),
-			COALESCE(SUM(cache_write_tokens), 0),
-			COALESCE(SUM(CASE WHEN is_estimated = 1 THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN total_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN input_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN output_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN cache_read_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN cache_write_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'estimated' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'unavailable' THEN 1 ELSE 0 END), 0)
 		FROM token_usage `+filter.Where(),
 		filter.Params()...,
-	).Scan(&totalTokens, &inputTokens, &outputTokens, &cacheReadTokens, &cacheWriteTokens, &estimatedCount); err != nil {
+	).Scan(&totalTokens, &inputTokens, &outputTokens, &cacheReadTokens, &cacheWriteTokens, &estimatedCount, &unavailableCount); err != nil {
 		return nil, err
 	}
 
+	actualFilter := tokenCommonFilter(query)
+	actualSource := "actual"
+	actualFilter.AppendEquals("source_type", &actualSource)
 	rows, err := r.db.Query(
 		`
 		SELECT model, COALESCE(SUM(total_tokens), 0)
-		FROM token_usage `+filter.Where()+`
+		FROM token_usage `+actualFilter.Where()+`
 		GROUP BY model
 		ORDER BY 2 DESC, model ASC
 		LIMIT 5`,
-		filter.Params()...,
+		actualFilter.Params()...,
 	)
 	if err != nil {
 		return nil, err
@@ -163,6 +170,7 @@ func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, 
 		"cacheReadTokens":  cacheReadTokens,
 		"cacheWriteTokens": cacheWriteTokens,
 		"estimatedCount":   estimatedCount,
+		"unavailableCount": unavailableCount,
 		"topModels":        topModels,
 	}, nil
 }
@@ -177,6 +185,8 @@ func (r *TokensRepository) GetTrend(query TokenTrendQuery) (map[string]any, erro
 		bucketSizeMs = 86400000
 	}
 	filter := tokenCommonFilter(query.TokenSummaryQuery)
+	actualSource := "actual"
+	filter.AppendEquals("source_type", &actualSource)
 
 	rows, err := r.db.Query(
 		`
@@ -233,6 +243,7 @@ func mapTokenUsageRow(row tokenUsageRow) map[string]any {
 		"usageEventId":       row.UsageEventID,
 		"provider":           row.Provider,
 		"model":              row.Model,
+		"sourceType":         row.SourceType,
 		"inputTokens":        row.InputTokens,
 		"outputTokens":       row.OutputTokens,
 		"cacheReadTokens":    row.CacheReadTokens,

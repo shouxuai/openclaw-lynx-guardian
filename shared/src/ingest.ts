@@ -199,6 +199,7 @@ export interface TokenUsageData {
   agentId?: string;
   provider: string;
   model: string;
+  sourceType?: "actual" | "estimated" | "unavailable";
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;

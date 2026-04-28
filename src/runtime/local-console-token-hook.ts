@@ -12,6 +12,7 @@ export interface EstimatedTokenUsage {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   totalTokens: number;
+  estimateMethod?: string;
   payloadJson?: Record<string, unknown>;
 }
 
@@ -211,6 +212,7 @@ function buildEstimatedTokenUsageItem(
       agentId: typeof ctx.agentId === "string" ? ctx.agentId : undefined,
       provider: event.provider,
       model: event.model,
+      sourceType: "estimated",
       inputTokens: estimatedUsage.inputTokens,
       outputTokens: estimatedUsage.outputTokens,
       cacheReadTokens: estimatedUsage.cacheReadTokens,
@@ -219,6 +221,7 @@ function buildEstimatedTokenUsageItem(
       assistantTextCount: event.assistantTexts.length,
       isEstimated: true,
       payloadJson: cleanRecord({
+        estimateMethod: estimatedUsage.estimateMethod,
         ...(estimatedUsage.payloadJson ?? {}),
         sessionId: event.sessionId,
         lastAssistant: event.lastAssistant,
@@ -269,16 +272,55 @@ function buildTokenUsageItem(
       agentId: typeof ctx.agentId === "string" ? ctx.agentId : undefined,
       provider: event.provider,
       model: event.model,
+      sourceType: "actual",
       inputTokens,
       outputTokens,
       cacheReadTokens,
       cacheWriteTokens,
       totalTokens,
       assistantTextCount: event.assistantTexts.length,
-      isEstimated: usage?.total === undefined && derivedTotal > 0,
+      isEstimated: false,
       payloadJson: cleanRecord({
         sessionId: event.sessionId,
         lastAssistant: event.lastAssistant,
+      }),
+    },
+  };
+}
+
+function buildUnavailableTokenUsageItem(event: LlmOutputEvent, ctx: EventContext): TokenUsageItem | null {
+  if (event.assistantTexts.length === 0) {
+    return null;
+  }
+
+  const occurredAtMs = normalizeOccurredAtMs();
+  const usageEventId = buildStableId("token-usage", [
+    event.runId,
+    event.model,
+    occurredAtMs,
+    event.assistantTexts.join("|"),
+    "unavailable",
+  ]);
+
+  return {
+    kind: "tokenUsage",
+    itemId: usageEventId,
+    occurredAtMs,
+    data: {
+      usageEventId,
+      sessionKey: typeof ctx.sessionKey === "string" ? ctx.sessionKey : undefined,
+      runId: event.runId,
+      agentId: typeof ctx.agentId === "string" ? ctx.agentId : undefined,
+      provider: event.provider,
+      model: event.model,
+      sourceType: "unavailable",
+      totalTokens: 0,
+      assistantTextCount: event.assistantTexts.length,
+      isEstimated: false,
+      payloadJson: cleanRecord({
+        sessionId: event.sessionId,
+        lastAssistant: event.lastAssistant,
+        usage: event.usage,
       }),
     },
   };
@@ -335,8 +377,16 @@ function buildTokenHookItems(
     return [tokenUsageItem];
   }
 
+  const unavailableUsageItem = buildUnavailableTokenUsageItem(event, ctx);
   const auditItem = buildUsageUnavailableAuditItem(event, ctx);
-  return auditItem ? [auditItem] : [];
+  const items: IngestItemV1[] = [];
+  if (unavailableUsageItem) {
+    items.push(unavailableUsageItem);
+  }
+  if (auditItem) {
+    items.push(auditItem);
+  }
+  return items;
 }
 
 export function createLocalConsoleTokenHook(options: LocalConsoleTokenHookOptions): LocalConsoleTokenHook {

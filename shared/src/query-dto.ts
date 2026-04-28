@@ -212,6 +212,7 @@ export interface TokenUsageListItemDto {
   agentId?: string;
   provider: string;
   model: string;
+  sourceType: "actual" | "estimated" | "unavailable";
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -231,6 +232,7 @@ export interface TokenSummaryDto {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   estimatedCount: number;
+  unavailableCount: number;
   topModels: Array<{
     model: string;
     totalTokens: number;

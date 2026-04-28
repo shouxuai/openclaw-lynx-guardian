@@ -1,8 +1,8 @@
 import type {
   AgentStartEvent,
   BeforeDispatchEvent,
-  BeforeMessageWriteEvent,
   BeforeToolCallResult,
+  BeforeMessageWriteEvent,
   EventContext,
   LlmOutputEvent,
   MessageReceivedEvent,
@@ -148,6 +148,41 @@ export async function handleBeforeInstallDecision(
   return broker.waitInstallDecision({ ...context, stage: "install" }, timeoutMs);
 }
 
+export async function handleBeforeInstallEventDecision(
+  broker: DecisionBroker,
+  event: Record<string, unknown>,
+  ctx: EventContext,
+  timeoutMs = 3000,
+): Promise<void | BeforeToolCallResult> {
+  const source = extractInstallSource(event);
+  const name = extractInstallName(event);
+  const decision = await handleBeforeInstallDecision(broker, nowDecisionContext({
+    stage: "install",
+    hook: "before_install",
+    sessionKey: ctx.sessionKey,
+    channelId: ctx.channelId,
+    requesterId: ctx.userId ?? ctx.senderId,
+    content: JSON.stringify(event ?? {}),
+    toolName: "skill_install",
+    toolArgs: event,
+    targetUri: source ?? name,
+  }), timeoutMs);
+  if (decision.block) {
+    return { block: true, blockReason: decision.userMessage ?? "Blocked by Lynx Guardian install decision." };
+  }
+  if (decision.requiresApproval || decision.action === "require_approval") {
+    return {
+      requireApproval: {
+        title: decision.approvalRequest?.title ?? "Lynx Guardian install approval required",
+        description: decision.approvalRequest?.summary ?? decision.userMessage ?? "This install requires approval.",
+        severity: decision.audit.eventSeverity === "critical" || decision.riskLevel === "L4" ? "critical" : "warning",
+        timeoutBehavior: "deny",
+      },
+    };
+  }
+  return undefined;
+}
+
 function inputContext(hook: string, content: string, ctx: EventContext): DecisionContext {
   return nowDecisionContext({
     stage: "input",
@@ -177,4 +212,14 @@ function extractAgentPrompt(event: AgentStartEvent): string {
     return event.messages.map((message) => extractContent(message.content as any)).join(" ");
   }
   return JSON.stringify(event.prompt ?? "");
+}
+
+function extractInstallSource(event: Record<string, unknown>): string | undefined {
+  const value = event.source ?? event.url ?? event.installSource ?? event.registry;
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function extractInstallName(event: Record<string, unknown>): string | undefined {
+  const value = event.name ?? event.skillName ?? event.id;
+  return typeof value === "string" && value.trim() ? value : undefined;
 }

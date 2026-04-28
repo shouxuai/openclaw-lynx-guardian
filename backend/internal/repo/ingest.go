@@ -159,6 +159,7 @@ type TokenUsageData struct {
 	AgentID            *string
 	Provider           string
 	Model              string
+	SourceType         *string
 	InputTokens        *int64
 	OutputTokens       *int64
 	CacheReadTokens    *int64
@@ -454,10 +455,10 @@ func (r *IngestRepository) PersistTokenUsage(exec sqlExecer, item TokenUsageItem
 		`
 		INSERT OR IGNORE INTO token_usage (
 			usage_event_id, session_key, run_id, agent_id, provider, model,
-			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+			source_type, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			total_tokens, assistant_text_count, is_estimated, occurred_at, ingested_at,
 			payload_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 		item.Data.UsageEventID,
 		item.Data.SessionKey,
@@ -465,6 +466,7 @@ func (r *IngestRepository) PersistTokenUsage(exec sqlExecer, item TokenUsageItem
 		item.Data.AgentID,
 		item.Data.Provider,
 		item.Data.Model,
+		normalizeTokenSourceType(item.Data.SourceType, item.Data.IsEstimated),
 		zeroIfNil(item.Data.InputTokens),
 		zeroIfNil(item.Data.OutputTokens),
 		zeroIfNil(item.Data.CacheReadTokens),
@@ -480,6 +482,19 @@ func (r *IngestRepository) PersistTokenUsage(exec sqlExecer, item TokenUsageItem
 		return PersistResult{}, err
 	}
 	return resultStatus(result)
+}
+
+func normalizeTokenSourceType(sourceType *string, isEstimated *bool) string {
+	if sourceType != nil {
+		switch *sourceType {
+		case "actual", "estimated", "unavailable":
+			return *sourceType
+		}
+	}
+	if isEstimated != nil && *isEstimated {
+		return "estimated"
+	}
+	return "actual"
 }
 
 func zeroIfNil(value *int64) int64 {

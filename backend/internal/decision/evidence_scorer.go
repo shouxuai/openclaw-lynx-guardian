@@ -112,6 +112,8 @@ func (r evidenceRule) scoreBreakdown() api.ScoreBreakdown {
 func evidenceRulesFor(req api.DecisionRequest) []evidenceRule {
 	rules := make([]evidenceRule, 0, len(inputEvidenceRules)+len(toolEvidenceRules)+len(outputEvidenceRules)+1)
 	switch req.Stage {
+	case "install":
+		rules = append(rules, installEvidenceRules...)
 	case "tool_call":
 		rules = append(rules, toolEvidenceRules...)
 	case "tool_result", "assistant_output", "outbound_message":

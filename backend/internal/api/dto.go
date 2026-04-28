@@ -307,3 +307,44 @@ type LynxCheckEvidenceItem struct {
 	Severity string         `json:"severity"`
 	Evidence map[string]any `json:"evidence,omitempty"`
 }
+
+type SkillInventoryItem struct {
+	SkillID       string         `json:"skillId"`
+	Name          string         `json:"name"`
+	Source        string         `json:"source"`
+	InstallPath   string         `json:"installPath"`
+	ManifestPath  string         `json:"manifestPath"`
+	HashAlgorithm string         `json:"hashAlgorithm"`
+	BaselineHash  string         `json:"baselineHash"`
+	CurrentHash   string         `json:"currentHash"`
+	TrustState    string         `json:"trustState"`
+	LastSeenAt    string         `json:"lastSeenAt"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+}
+
+type SkillFinding struct {
+	FindingID string         `json:"findingId"`
+	SkillID   string         `json:"skillId"`
+	Severity  string         `json:"severity"`
+	RuleID    string         `json:"ruleId"`
+	Message   string         `json:"message"`
+	Evidence  map[string]any `json:"evidence,omitempty"`
+	CreatedAt string         `json:"createdAt"`
+}
+
+type SkillInventorySyncRequest struct {
+	Items []SkillInventoryItem `json:"items"`
+}
+
+type SkillInventorySyncResponse struct {
+	OK            bool                 `json:"ok"`
+	AcceptedCount int                  `json:"acceptedCount"`
+	FindingsCount int                  `json:"findingsCount"`
+	Items         []SkillInventoryItem `json:"items"`
+	Findings      []SkillFinding       `json:"findings"`
+}
+
+type SkillDetail struct {
+	SkillInventoryItem
+	Findings []SkillFinding `json:"findings"`
+}

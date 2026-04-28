@@ -5,6 +5,7 @@ import (
 	"embed"
 	"io/fs"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -31,9 +32,51 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	if err := ensureTokenUsageSourceTypeColumn(database); err != nil {
+		return err
+	}
+
 	_, err = database.Exec(
 		`INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
 		InitialSchemaVersion, time.Now().UnixMilli(),
 	)
+	return err
+}
+
+func ensureTokenUsageSourceTypeColumn(database *sql.DB) error {
+	rows, err := database.Query(`PRAGMA table_info(token_usage)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasSourceType := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if strings.EqualFold(name, "source_type") {
+			hasSourceType = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasSourceType {
+		return nil
+	}
+	if _, err := database.Exec(`ALTER TABLE token_usage ADD COLUMN source_type TEXT NOT NULL DEFAULT 'actual'`); err != nil {
+		return err
+	}
+	_, err = database.Exec(`
+		UPDATE token_usage
+		SET source_type = CASE WHEN is_estimated = 1 THEN 'estimated' ELSE 'actual' END
+		WHERE source_type = 'actual'
+	`)
 	return err
 }

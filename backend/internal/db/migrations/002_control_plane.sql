@@ -222,6 +222,7 @@ CREATE INDEX IF NOT EXISTS idx_chains_lookup ON chains(session_key, channel_prof
 CREATE INDEX IF NOT EXISTS idx_approval_grants_chain ON approval_grants(chain_id, revoked_at, expires_at);
 CREATE INDEX IF NOT EXISTS idx_lynx_check_tasks_status ON lynx_check_tasks(created_at, trigger, status);
 CREATE INDEX IF NOT EXISTS idx_skill_inventory_last_seen ON skill_inventory(skill_id, last_seen_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_inventory_skill_id ON skill_inventory(skill_id);
 
 INSERT OR IGNORE INTO schema_migrations (version, applied_at)
 VALUES ('002_control_plane', CAST(strftime('%s', 'now') AS INTEGER));

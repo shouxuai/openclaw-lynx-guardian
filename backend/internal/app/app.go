@@ -16,6 +16,7 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
 	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	"github.com/openclaw/lynx-guardian/backend/internal/service"
+	"github.com/openclaw/lynx-guardian/backend/internal/skills"
 	"github.com/openclaw/lynx-guardian/backend/internal/tasks"
 )
 
@@ -42,6 +43,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	toolCalls := repo.NewToolCallsRepository(database)
 	sessions := repo.NewSessionsRepository(database)
 	lynxCheckTasks := repo.NewLynxCheckTaskRepository(database)
+	skillRepository := repo.NewSkillRepository(database)
 	tokens := repo.NewTokensRepository(database)
 	dashboard := repo.NewDashboardRepository(database)
 	decisions := repo.NewDecisionRepository(database)
@@ -51,6 +53,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	grantService := grants.NewService(approvalGrants)
 	chainService := chain.NewService(chains, grantService)
 	lynxCheckService := tasks.NewLynxCheckService(lynxCheckTasks)
+	skillService := skills.NewService(skillRepository)
 	ingestService := ingest.NewService(repo.NewIngestRepository(database))
 
 	root := gin.New()
@@ -74,6 +77,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	routes.RegisterToolCalls(query, toolCalls)
 	routes.RegisterApprovals(query, approvals)
 	routes.RegisterLynxCheckTasks(query, ingestGroup, lynxCheckService, lynxCheckTasks)
+	routes.RegisterSkills(query, ingestGroup, skillService, skillRepository)
 	routes.RegisterSessions(query, sessions)
 	routes.RegisterDashboard(query, dashboard)
 	routes.RegisterTokens(query, tokens)

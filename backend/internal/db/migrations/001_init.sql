@@ -154,6 +154,9 @@ CREATE TABLE IF NOT EXISTS token_usage (
   agent_id TEXT,
   provider TEXT NOT NULL,
   model TEXT NOT NULL,
+  source_type TEXT NOT NULL DEFAULT 'actual' CHECK (
+    source_type IN ('actual', 'estimated', 'unavailable')
+  ),
   input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
   output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
   cache_read_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),

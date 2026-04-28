@@ -78,7 +78,13 @@ import {
   saveFeishuRunContinuation,
 } from "./src/runtime/feishu-run-continuation-store.js";
 import { deliverLynxFeishuApprovalPromptDirectly } from "./src/runtime/lynx-feishu-direct-delivery.js";
-import { detectSkillInstall, assessSkillRisk, verifyAllInstalledSkills, quickBlacklistCheck } from "./src/skills/skill-guard.js";
+import {
+  assessSkillRisk,
+  configureSkillInventoryControlPlane,
+  detectSkillInstall,
+  quickBlacklistCheck,
+  verifyAllInstalledSkills,
+} from "./src/skills/skill-guard.js";
 import { quarantineSkill } from "./src/skills/skill-cleanup.js";
 import type { MaliciousSkillEntry } from "./src/skills/skill-blacklist-data.js";
 import {
@@ -205,6 +211,7 @@ import { DecisionClient } from "./src/runtime/decision-client.js";
 import {
   handleBeforeAgentStartDecision,
   handleBeforeDispatchDecision,
+  handleBeforeInstallEventDecision,
   handleBeforeMessageWriteDecision,
   handleBeforeToolCallDecision,
   handleLlmOutputDecision,
@@ -314,6 +321,15 @@ export default function setup(api: OpenClawPluginApi) {
       getToken: createLocalConsoleTokenProvider(localConsoleRuntime.config.paths.tokenPath),
     }))
     : null;
+  if (localConsoleRuntime) {
+    configureSkillInventoryControlPlane({
+      baseUrl: localConsoleRuntime.config.baseUrl,
+      getToken: createLocalConsoleTokenProvider(localConsoleRuntime.config.paths.tokenPath),
+      logger: log,
+    });
+  } else {
+    configureSkillInventoryControlPlane(null);
+  }
   const selfSafetyGuardConfig = config.selfSafetyGuard ?? {};
   const outputEnforcementMode = selfSafetyGuardConfig.outputEnforcementMode ?? "block";
   const riskPolicyConfig = normalizePolicyConfig((selfSafetyGuardConfig as any).policy ?? {});
@@ -2418,6 +2434,16 @@ export default function setup(api: OpenClawPluginApi) {
       lynxCheck: managedLynxCheckSnapshot as any,
     });
     return shapedContent ? { content: shapedContent } : undefined;
+  });
+
+  (api.on as any)("before_install", async (event: any, ctx: any) => {
+    if (!decisionBroker) {
+      return;
+    }
+    const decisionResult = await handleBeforeInstallEventDecision(decisionBroker, event, ctx);
+    if (decisionResult?.block || decisionResult?.requireApproval) {
+      return decisionResult;
+    }
   });
 
   api.on("before_tool_call", async (event, ctx) => {

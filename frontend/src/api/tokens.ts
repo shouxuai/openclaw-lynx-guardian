@@ -17,6 +17,7 @@ export interface TokenUsageListQuery extends CommonListQuery {
   isEstimated?: boolean;
   model?: string;
   provider?: string;
+  sourceType?: "actual" | "estimated" | "unavailable";
 }
 
 export function getTokenUsage(query: TokenUsageListQuery = {}): Promise<TokenUsageListResponse> {

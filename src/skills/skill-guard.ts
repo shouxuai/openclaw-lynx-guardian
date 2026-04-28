@@ -14,7 +14,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "fs";
 import { join, basename, resolve, normalize } from "path";
 import { homedir } from "os";
-import { computeSkillHash, computeFileHash } from "./skill-hash.js";
+import { SKILL_HASH_ALGORITHM, computeSkillHash, computeFileHash } from "./skill-hash.js";
 import {
   MALICIOUS_SKILL_BLACKLIST,
   MALICIOUS_SKILL_CONTENT_PATTERNS,
@@ -58,6 +58,27 @@ export interface SkillIntegrityResult {
   reason?: string;
 }
 
+export interface SkillInventoryRecord {
+  skillId: string;
+  name: string;
+  source: string;
+  installPath: string;
+  manifestPath: string;
+  hashAlgorithm: typeof SKILL_HASH_ALGORITHM;
+  baselineHash: string;
+  currentHash: string;
+  trustState: "trusted" | "first_seen" | "hash_mismatch" | "unreadable";
+  lastSeenAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface SkillInventoryControlPlaneConfig {
+  baseUrl: string;
+  getToken?: () => string;
+  logger?: Pick<Console, "warn"> & Partial<Pick<Console, "debug">>;
+  fetchImpl?: typeof fetch;
+}
+
 // ── Blacklist Cache (local + remote merge with TTL) ─────────────────
 
 interface BlacklistCache {
@@ -67,9 +88,14 @@ interface BlacklistCache {
 
 const BLACKLIST_TTL_MS = 60 * 60 * 1000; // 1 hour
 let blacklistCache: BlacklistCache | null = null;
+let inventoryControlPlaneConfig: SkillInventoryControlPlaneConfig | null = null;
 
 function getBlacklistDiskPath(): string {
   return join(homedir(), CONFIG.CACHE_DIR, "skill-blacklist-cache.json");
+}
+
+export function configureSkillInventoryControlPlane(config?: SkillInventoryControlPlaneConfig | null): void {
+  inventoryControlPlaneConfig = config?.baseUrl ? config : null;
 }
 
 /**
@@ -535,7 +561,68 @@ export function verifyAllInstalledSkills(
     // Skills directory not readable
   }
 
+  publishSkillInventory(results);
   return results;
+}
+
+function publishSkillInventory(results: SkillIntegrityResult[]): void {
+  if (!inventoryControlPlaneConfig || results.length === 0) {
+    return;
+  }
+  const fetchImpl = inventoryControlPlaneConfig.fetchImpl ?? globalThis.fetch;
+  if (!fetchImpl) {
+    inventoryControlPlaneConfig.logger?.warn?.("[lynx-guardian] Skill inventory sync skipped: fetch is unavailable.");
+    return;
+  }
+
+  const items = results.map(skillResultToInventoryRecord);
+  const token = inventoryControlPlaneConfig.getToken?.().trim();
+  const url = `${inventoryControlPlaneConfig.baseUrl.replace(/\/+$/, "")}/lynx/internal/v1/skills/inventory/sync`;
+  void fetchImpl(url, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ items }),
+  }).then((response) => {
+    if (!response.ok) {
+      inventoryControlPlaneConfig?.logger?.warn?.(
+        `[lynx-guardian] Skill inventory sync responded with HTTP ${response.status}`,
+      );
+      return;
+    }
+    inventoryControlPlaneConfig?.logger?.debug?.(
+      `[lynx-guardian] Skill inventory sync queued ${items.length} item(s).`,
+    );
+  }).catch((error) => {
+    inventoryControlPlaneConfig?.logger?.warn?.(
+      `[lynx-guardian] Skill inventory sync failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
+function skillResultToInventoryRecord(result: SkillIntegrityResult): SkillInventoryRecord {
+  const manifestPath = join(result.path, "SKILL.md");
+  const trustState: SkillInventoryRecord["trustState"] = result.valid
+    ? result.expectedHash ? "trusted" : "first_seen"
+    : result.currentHash ? "hash_mismatch" : "unreadable";
+  return {
+    skillId: result.skillName,
+    name: result.skillName,
+    source: "local",
+    installPath: result.path,
+    manifestPath: existsSync(manifestPath) ? manifestPath : "",
+    hashAlgorithm: SKILL_HASH_ALGORITHM,
+    baselineHash: result.expectedHash ?? "",
+    currentHash: result.currentHash,
+    trustState,
+    lastSeenAt: new Date().toISOString(),
+    metadata: {
+      reason: result.reason,
+      valid: result.valid,
+    },
+  };
 }
 
 /**

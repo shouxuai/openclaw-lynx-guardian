@@ -180,6 +180,7 @@ func RegisterTokens(router gin.IRoutes, repository *repo.TokensRepository) {
 			Model:       httpserver.ReadString(values, "model"),
 			AgentID:     httpserver.ReadString(values, "agentId"),
 			IsEstimated: httpserver.ReadBool(values, "isEstimated"),
+			SourceType:  httpserver.ReadString(values, "sourceType"),
 		})
 		if err != nil {
 			c.JSON(500, gin.H{"ok": false, "message": err.Error()})
