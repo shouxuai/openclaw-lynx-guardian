@@ -1,4 +1,4 @@
-package app
+package backend_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	backendapp "github.com/openclaw/lynx-guardian/backend/internal/app"
 	"github.com/openclaw/lynx-guardian/backend/internal/config"
 )
 
@@ -38,7 +39,7 @@ func TestMetaCapabilitiesMatchesSharedQueryVersion(t *testing.T) {
 	}
 }
 
-func buildTestHandler(t *testing.T) (http.Handler, Closer) {
+func buildTestHandler(t *testing.T) (http.Handler, backendapp.Closer) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -54,7 +55,7 @@ func buildTestHandler(t *testing.T) (http.Handler, Closer) {
 		TrustedProxyIPs:   nil,
 	}
 
-	handler, closer, err := Build(cfg)
+	handler, closer, err := backendapp.Build(cfg)
 	if err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}

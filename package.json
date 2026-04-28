@@ -2,7 +2,7 @@
   "name": "@shouxuai/openclaw-lynx-guardian",
   "version": "1.3.12",
   "private": false,
-  "description": "Lynx – known for its keen vision, symbolizing \"high-resolution perception\" of risks, multidimensionally identifying threats to intelligent agents, and reshaping the security boundaries of agents.",
+  "description": "Lynx Guardian for OpenClaw, providing local audit logging and safety guardrails for agent workflows.",
   "license": "MIT",
   "type": "module",
   "scripts": {

@@ -1,4 +1,4 @@
-package app
+package backend_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	backendapp "github.com/openclaw/lynx-guardian/backend/internal/app"
 	"github.com/openclaw/lynx-guardian/backend/internal/config"
 )
 
@@ -176,7 +177,7 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 	expectString(t, tokenTrendBody, "bucket", "hour")
 }
 
-func buildParityHandler(t *testing.T) (http.Handler, Closer) {
+func buildParityHandler(t *testing.T) (http.Handler, backendapp.Closer) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -193,7 +194,7 @@ func buildParityHandler(t *testing.T) (http.Handler, Closer) {
 		TrustedProxyIPs:   nil,
 	}
 
-	handler, closer, err := Build(cfg)
+	handler, closer, err := backendapp.Build(cfg)
 	if err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}

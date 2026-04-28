@@ -50,6 +50,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	root.GET("/webview/*filepath", webviewHandler)
 
 	query := root.Group(apiBasePath)
+	routes.RegisterDocs(query)
 	routes.RegisterHealth(query)
 	routes.RegisterMeta(query, routes.MetaCapabilities{
 		TokenUsageEnabled:      cfg.TokenUsageEnabled,

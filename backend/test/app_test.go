@@ -1,10 +1,11 @@
-package app
+package backend_test
 
 import (
 	"fmt"
 	"strings"
 	"testing"
 
+	backendapp "github.com/openclaw/lynx-guardian/backend/internal/app"
 	"github.com/openclaw/lynx-guardian/backend/internal/config"
 )
 
@@ -22,7 +23,7 @@ func TestBuildReturnsGinEngine(t *testing.T) {
 		TrustedProxyIPs:   nil,
 	}
 
-	handler, closer, err := Build(cfg)
+	handler, closer, err := backendapp.Build(cfg)
 	if err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
