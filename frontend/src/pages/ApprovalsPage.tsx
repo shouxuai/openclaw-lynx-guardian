@@ -1,51 +1,21 @@
-import { startTransition, useEffect, useState } from "react";
 import type { ApprovalListItemDto } from "@lynx/local-console-shared";
 
-import { listApprovals } from "../api/approvals";
+import { listApprovals, type ApprovalListQuery } from "../api/approvals";
 import { mockApprovals } from "../data/mock-console";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
-import { formatTimestamp } from "../utils/format";
+import { TablePagination } from "../components/tables/TablePagination";
+import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
 import { renderRiskBadge, renderStateBadge } from "../utils/status";
 
 export function ApprovalsPage() {
-  const [items, setItems] = useState<ApprovalListItemDto[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadApprovals() {
-      try {
-        const response = await listApprovals({ limit: 20 });
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(response.items);
-          setError(null);
-          setLoading(false);
-        });
-      } catch (loadError) {
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(import.meta.env.DEV ? mockApprovals : []);
-          setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
-          setLoading(false);
-        });
-      }
-    }
-
-    void loadApprovals();
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { items, loading, error, paginationProps } = useCursorListResource<ApprovalListItemDto, ApprovalListQuery>({
+    fallbackPage: import.meta.env.DEV
+      ? (_query, pageIndex, pageSize) => paginateMockItems(mockApprovals, pageIndex, pageSize)
+      : undefined,
+    loadPage: listApprovals,
+    query: {},
+  });
 
   const pendingCount = items.filter((item) => item.resolution === "pending" || !item.resolution).length;
   const approvedCount = items.filter((item) => item.resolution === "approved" || item.resolution === "completed").length;
@@ -92,13 +62,13 @@ export function ApprovalsPage() {
         </div>
         <DataTable
           columns={[
-            { key: "approvalId", label: "审批 ID" },
-            { key: "requester", label: "申请人" },
-            { key: "risk", label: "风险权重" },
-            { key: "scope", label: "范围类型" },
-            { key: "summary", label: "请求摘要" },
-            { key: "status", label: "状态" },
-            { key: "action", label: "操作" },
+            { key: "approvalId", label: "审批 ID", maxWidth: 220, minWidth: 170, width: 190 },
+            { key: "requester", label: "申请人", maxWidth: 220, minWidth: 160, width: 180 },
+            { key: "risk", label: "风险权重", maxWidth: 150, minWidth: 112, width: 128 },
+            { key: "scope", label: "范围类型", maxWidth: 190, minWidth: 140, width: 160 },
+            { key: "summary", label: "请求摘要", maxWidth: 360, minWidth: 260, width: 320 },
+            { key: "status", label: "状态", maxWidth: 150, minWidth: 112, width: 128 },
+            { key: "action", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
           ]}
           rows={items.map((approval) => ({
             id: approval.approvalId,
@@ -111,10 +81,7 @@ export function ApprovalsPage() {
             action: <a className="inline-link" href={`/approvals#${approval.approvalId}`}>查看详情</a>,
           }))}
         />
-        <div className="table-panel__footer">
-          <span>显示 1-{items.length} 条，共 {items.length || pendingCount} 条待审核申请</span>
-          <span>1 · 2 · 3</span>
-        </div>
+        <TablePagination {...paginationProps} />
       </section>
 
       <section className="panel">

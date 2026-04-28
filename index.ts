@@ -201,6 +201,7 @@ import { createLocalConsoleIngestClient } from "./src/runtime/local-console-clie
 import { resolveLocalConsoleRuntimeConfig } from "./src/runtime/local-console-config.js";
 import { createLocalConsoleGatewayRouteRegistrations } from "./src/runtime/local-console-gateway-routes.js";
 import { createLocalConsoleHookHandlers } from "./src/runtime/local-console-hook-handlers.js";
+import { buildLocalConsoleLynxCheckSnapshot } from "./src/runtime/local-console-lynx-check-snapshot.js";
 import { createLocalConsoleSupervisor } from "./src/runtime/local-console-supervisor.js";
 import { createLocalConsoleTokenHook } from "./src/runtime/local-console-token-hook.js";
 import {
@@ -1769,7 +1770,7 @@ export default function setup(api: OpenClawPluginApi) {
             deliveredAttempts.map((attempt) => attempt.transport),
           )];
 
-          writeLynxCheckRunResult(activeRunIntent.requestId, {
+          const completedRunResult = writeLynxCheckRunResult(activeRunIntent.requestId, {
             status: "completed",
             sendAttempted: true,
             sendSucceeded: deliveredAttempts.length > 0,
@@ -1788,6 +1789,7 @@ export default function setup(api: OpenClawPluginApi) {
             contentExcerpt: inlineOutput,
             contentKind: "assistant_message",
             enforcementAction: "allow",
+            lynxCheck: buildLocalConsoleLynxCheckSnapshot(activeRunIntent, completedRunResult),
             payloadJson: {
               deliveryAttempts: deliveryAttempts.length,
               deliveredTransports,
@@ -1796,6 +1798,7 @@ export default function setup(api: OpenClawPluginApi) {
           return;
         }
 
+        let finalRunResult = runResult;
         if (runResult?.status === "completed" && runResult.sendSucceeded) {
           markLynxCheckRunCompleted(activeRunIntent.requestId);
         } else {
@@ -1815,7 +1818,7 @@ export default function setup(api: OpenClawPluginApi) {
             },
           });
 
-          writeLynxCheckRunResult(activeRunIntent.requestId, {
+          const fallbackRunResult = writeLynxCheckRunResult(activeRunIntent.requestId, {
             status: sendResult.delivered ? "completed" : "failed",
             sendAttempted: true,
             sendSucceeded: sendResult.delivered,
@@ -1826,6 +1829,7 @@ export default function setup(api: OpenClawPluginApi) {
               ? undefined
               : `Fallback delivery failed (transport=${sendResult.transport})`,
           });
+          finalRunResult = fallbackRunResult;
 
           if (sendResult.delivered) {
             markLynxCheckRunCompleted(activeRunIntent.requestId);
@@ -1845,12 +1849,15 @@ export default function setup(api: OpenClawPluginApi) {
           outputText: inlineOutput,
           contentExcerpt: inlineOutput,
           contentKind: "assistant_message",
-          enforcementAction: (runResult?.status === "failed" || runResult?.sendSucceeded === false) ? "warn" : "allow",
+          enforcementAction: (finalRunResult?.status === "failed" || finalRunResult?.sendSucceeded === false) ? "warn" : "allow",
+          lynxCheck: finalRunResult
+            ? buildLocalConsoleLynxCheckSnapshot(activeRunIntent, finalRunResult)
+            : undefined,
           payloadJson: {
             requestId: activeRunIntent.requestId,
-            runResultStatus: runResult?.status,
-            sendSucceeded: runResult?.sendSucceeded,
-            transport: runResult?.transport,
+            runResultStatus: finalRunResult?.status,
+            sendSucceeded: finalRunResult?.sendSucceeded,
+            transport: finalRunResult?.transport,
           },
         });
         return;

@@ -69,6 +69,18 @@ func NewService(repository *repo.IngestRepository) *Service {
 }
 
 func (s *Service) ProcessBatch(payload []byte) (BatchResult, error) {
+	return s.processBatch(payload, nil)
+}
+
+func (s *Service) ProcessBatchForKinds(payload []byte, allowedKinds ...string) (BatchResult, error) {
+	kinds := make(map[string]struct{}, len(allowedKinds))
+	for _, kind := range allowedKinds {
+		kinds[kind] = struct{}{}
+	}
+	return s.processBatch(payload, kinds)
+}
+
+func (s *Service) processBatch(payload []byte, allowedKinds map[string]struct{}) (BatchResult, error) {
 	var batch rawBatch
 	if err := json.Unmarshal(payload, &batch); err != nil {
 		return BatchResult{}, err
@@ -101,6 +113,17 @@ func (s *Service) ProcessBatch(payload []byte) (BatchResult, error) {
 				Message:   err.Error(),
 			})
 			continue
+		}
+		if len(allowedKinds) > 0 {
+			if _, ok := allowedKinds[item.kind]; !ok {
+				rejected = append(rejected, RejectedItem{
+					ItemIndex: index,
+					Kind:      item.kind,
+					Code:      "invalid_item_kind",
+					Message:   fmt.Sprintf("kind %q is not accepted by this ingest endpoint", item.kind),
+				})
+				continue
+			}
 		}
 		validItems = append(validItems, item)
 	}

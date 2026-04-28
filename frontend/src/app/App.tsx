@@ -1,4 +1,6 @@
 import { BrowserRouter } from "react-router-dom";
+import { ConfigProvider } from "antd";
+import zhCN from "antd/locale/zh_CN";
 
 import { ConsoleLayout } from "../components/layout/ConsoleLayout";
 import { normalizeWebviewLocation, WEBVIEW_BASE_PATH } from "./route-paths";
@@ -17,10 +19,21 @@ export function App() {
   ensureWebviewLocation();
 
   return (
-    <BrowserRouter basename={WEBVIEW_BASE_PATH}>
-      <ConsoleLayout>
-        <AppRoutes />
-      </ConsoleLayout>
-    </BrowserRouter>
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token: {
+          borderRadius: 12,
+          colorPrimary: "#0b63f6",
+          fontFamily: "inherit",
+        },
+      }}
+    >
+      <BrowserRouter basename={WEBVIEW_BASE_PATH}>
+        <ConsoleLayout>
+          <AppRoutes />
+        </ConsoleLayout>
+      </BrowserRouter>
+    </ConfigProvider>
   );
 }

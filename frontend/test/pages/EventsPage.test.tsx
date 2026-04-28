@@ -1,7 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ConfigProvider } from "antd";
+import zhCN from "antd/locale/zh_CN";
+import dayjs from "dayjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EventsPage } from "./EventsPage";
+import { EventsPage, buildDateRangeQuery } from "../../src/pages/EventsPage";
 
 function createJsonResponse(data: unknown): Response {
   return {
@@ -44,6 +47,20 @@ function createEventDetail(eventId: string, title: string) {
   };
 }
 
+function renderEventsPage() {
+  return render(
+    <ConfigProvider locale={zhCN}>
+      <EventsPage />
+    </ConfigProvider>,
+  );
+}
+
+async function chooseSelectOption(name: string, optionText: string) {
+  fireEvent.mouseDown(screen.getByRole("combobox", { name }));
+  const matches = await screen.findAllByText(optionText);
+  fireEvent.click(matches.at(-1)!);
+}
+
 describe("EventsPage", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -65,9 +82,11 @@ describe("EventsPage", () => {
       }))
       .mockResolvedValueOnce(createJsonResponse(createEventDetail("EVT-001", "初始审计事件")));
 
-    render(<EventsPage />);
+    const { container } = renderEventsPage();
 
     await screen.findByText("EVT-001");
+    expect(container.querySelectorAll(".audit-filter-form .ant-select")).toHaveLength(3);
+    expect(container.querySelector(".audit-filter-form .ant-picker")).not.toBeNull();
     expect(screen.getByTestId("audit-events-table-panel")).toHaveClass("audit-events-table-panel");
     expect(screen.getByText("脱敏摘要")).toBeInTheDocument();
     expect(screen.getAllByText("处置建议").length).toBeGreaterThan(0);
@@ -108,26 +127,23 @@ describe("EventsPage", () => {
         items: [createEvent("EVT-SEARCH", "搜索命中的审计事件")],
       }));
 
-    render(<EventsPage />);
+    renderEventsPage();
 
     await screen.findByText("EVT-001");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?limit=10");
 
-    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    fireEvent.click(screen.getByTitle(/Next Page|下一页/));
 
     await screen.findByText("EVT-002");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/events?limit=10&cursor=cursor-page-2");
 
-    fireEvent.change(screen.getByLabelText("当前页"), {
-      target: { value: "0" },
-    });
+    fireEvent.click(screen.getByTitle("1"));
 
     await screen.findByText("EVT-001");
     expect(fetchMock.mock.calls[2]?.[0]).toBe("/lynx/events?limit=10");
 
-    fireEvent.change(screen.getByLabelText("每页行数"), {
-      target: { value: "25" },
-    });
+    fireEvent.mouseDown(screen.getAllByRole("combobox").at(-1)!);
+    fireEvent.click(await screen.findByText(/25/));
 
     await screen.findByText("EVT-PAGE-SIZE");
     expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/events?limit=25");
@@ -135,12 +151,8 @@ describe("EventsPage", () => {
     fireEvent.change(screen.getByLabelText("关键词"), {
       target: { value: "exec" },
     });
-    fireEvent.change(screen.getByLabelText("风险等级"), {
-      target: { value: "L3" },
-    });
-    fireEvent.change(screen.getByLabelText("策略判定"), {
-      target: { value: "requireApproval" },
-    });
+    await chooseSelectOption("风险等级", "L3 高危");
+    await chooseSelectOption("策略判定", "需审批");
     fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
 
     await screen.findByText("EVT-SEARCH");
@@ -150,5 +162,17 @@ describe("EventsPage", () => {
     expect(fetchMock.mock.calls[4]?.[0]).toBe(
       "/lynx/events?q=exec&riskLevel=L3&enforcementAction=requireApproval&limit=25",
     );
+  });
+
+  it("converts the component-library date range into list query bounds", () => {
+    const query = buildDateRangeQuery([
+      dayjs("2026-04-01"),
+      dayjs("2026-04-03"),
+    ]);
+
+    expect(query).toEqual({
+      fromMs: new Date(2026, 3, 1).getTime(),
+      toMs: new Date(2026, 3, 3, 23, 59, 59, 999).getTime(),
+    });
   });
 });

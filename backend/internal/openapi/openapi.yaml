@@ -412,11 +412,132 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
         "500":
           $ref: "#/components/responses/ErrorResponse"
+  /lynx/internal/v1/ingest/audit-events:
+    post:
+      tags: [ingest]
+      operationId: ingestAuditEvents
+      summary: Ingest audit event items.
+      description: Accepts the same ingest batch envelope as /lynx/internal/v1/ingest/batch, but only auditEvent items are accepted.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/IngestBatchRequestBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestBatchResult"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /lynx/internal/v1/ingest/sessions:
+    post:
+      tags: [ingest]
+      operationId: ingestSessions
+      summary: Ingest session upsert items.
+      description: Accepts the same ingest batch envelope as /lynx/internal/v1/ingest/batch, but only sessionUpsert items are accepted.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/IngestBatchRequestBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestBatchResult"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /lynx/internal/v1/ingest/tool-calls:
+    post:
+      tags: [ingest]
+      operationId: ingestToolCalls
+      summary: Ingest tool call upsert items.
+      description: Accepts the same ingest batch envelope as /lynx/internal/v1/ingest/batch, but only toolCallUpsert items are accepted.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/IngestBatchRequestBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestBatchResult"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /lynx/internal/v1/ingest/approvals:
+    post:
+      tags: [ingest]
+      operationId: ingestApprovals
+      summary: Ingest approval upsert items.
+      description: Accepts the same ingest batch envelope as /lynx/internal/v1/ingest/batch, but only approvalUpsert items are accepted.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/IngestBatchRequestBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestBatchResult"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /lynx/internal/v1/ingest/lynx-checks:
+    post:
+      tags: [ingest]
+      operationId: ingestLynxChecks
+      summary: Ingest Lynx check upsert items.
+      description: Accepts the same ingest batch envelope as /lynx/internal/v1/ingest/batch, but only lynxCheckUpsert items are accepted.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/IngestBatchRequestBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestBatchResult"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /lynx/internal/v1/ingest/token-usage:
+    post:
+      tags: [ingest]
+      operationId: ingestTokenUsage
+      summary: Ingest token usage items.
+      description: Accepts the same ingest batch envelope as /lynx/internal/v1/ingest/batch, but only tokenUsage items are accepted.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/IngestBatchRequestBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestBatchResult"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
+  requestBodies:
+    IngestBatchRequestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/IngestBatchRequest"
   parameters:
     Q:
       name: q
@@ -526,6 +647,12 @@ components:
       schema:
         type: string
   responses:
+    IngestBatchResult:
+      description: Batch ingest result.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/IngestBatchResponse"
     PageResponse:
       description: Cursor-paginated result page.
       content:

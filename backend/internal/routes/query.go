@@ -244,13 +244,39 @@ func RegisterDashboard(router gin.IRoutes, repository *repo.DashboardRepository)
 
 // RegisterIngest mirrors registerIngestRoutes.
 func RegisterIngest(router gin.IRoutes, service *ingest.Service) {
-	router.POST("/ingest/batch", func(c *gin.Context) {
+	registerIngestBatchRoute(router, "/ingest/batch", service.ProcessBatch)
+	registerIngestBatchRoute(router, "/ingest/audit-events", func(payload []byte) (ingest.BatchResult, error) {
+		return service.ProcessBatchForKinds(payload, "auditEvent")
+	})
+	registerIngestBatchRoute(router, "/ingest/sessions", func(payload []byte) (ingest.BatchResult, error) {
+		return service.ProcessBatchForKinds(payload, "sessionUpsert")
+	})
+	registerIngestBatchRoute(router, "/ingest/tool-calls", func(payload []byte) (ingest.BatchResult, error) {
+		return service.ProcessBatchForKinds(payload, "toolCallUpsert")
+	})
+	registerIngestBatchRoute(router, "/ingest/approvals", func(payload []byte) (ingest.BatchResult, error) {
+		return service.ProcessBatchForKinds(payload, "approvalUpsert")
+	})
+	registerIngestBatchRoute(router, "/ingest/lynx-checks", func(payload []byte) (ingest.BatchResult, error) {
+		return service.ProcessBatchForKinds(payload, "lynxCheckUpsert")
+	})
+	registerIngestBatchRoute(router, "/ingest/token-usage", func(payload []byte) (ingest.BatchResult, error) {
+		return service.ProcessBatchForKinds(payload, "tokenUsage")
+	})
+}
+
+func registerIngestBatchRoute(
+	router gin.IRoutes,
+	path string,
+	process func([]byte) (ingest.BatchResult, error),
+) {
+	router.POST(path, func(c *gin.Context) {
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			c.JSON(400, gin.H{"ok": false, "message": err.Error()})
 			return
 		}
-		result, err := service.ProcessBatch(body)
+		result, err := process(body)
 		if err != nil {
 			c.JSON(500, gin.H{"ok": false, "message": err.Error()})
 			return

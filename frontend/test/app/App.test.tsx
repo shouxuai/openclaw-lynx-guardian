@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
+import { App } from "../../src/app/App";
 
 function createJsonResponse(data: unknown): Response {
   return {
@@ -64,7 +64,7 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "过去 24 小时" })).not.toBeInTheDocument();
     expect(container.querySelector("a.topbar__githubButton")).toBeNull();
     expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(6);
-    expect(screen.getByText("系统管理员")).toBeInTheDocument();
+    expect(screen.queryByText("系统管理员")).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/dashboard/overview");

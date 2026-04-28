@@ -1,14 +1,16 @@
+import { startTransition, useEffect, useState } from "react";
 import type { SessionDetailDto, SessionListItemDto } from "@lynx/local-console-shared";
 
-import { getSessionDetail, listSessions } from "../api/sessions";
+import { getSessionDetail, listSessions, type SessionListQuery } from "../api/sessions";
 import { MetricCard } from "../components/cards/MetricCard";
 import { DetailPanel } from "../components/detail/DetailPanel";
 import { StatusBadge } from "../components/feedback/StatusBadge";
 import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
+import { TablePagination } from "../components/tables/TablePagination";
 import { filterPresets } from "../data/filter-presets";
-import { useListDetailResource } from "../hooks/useListDetailResource";
+import { useCursorListResource } from "../hooks/useCursorListResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import { formatDomainLabel, renderRiskBadge } from "../utils/status";
 
@@ -25,11 +27,54 @@ function formatTokenSummary(summary: SessionDetailDto["tokenSummary"] | undefine
 }
 
 export function SessionsPage() {
-  const { items, detail, loading, error } = useListDetailResource<SessionListItemDto, SessionDetailDto>({
-    loadList: () => listSessions({ limit: 20 }),
-    loadDetail: getSessionDetail,
-    getItemId: (item) => item.sessionKey,
+  const { items, loading, error, paginationProps } = useCursorListResource<SessionListItemDto, SessionListQuery>({
+    loadPage: listSessions,
+    query: {},
   });
+  const [detail, setDetail] = useState<SessionDetailDto | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const firstSession = items[0];
+
+    if (!firstSession) {
+      setDetail(null);
+      setDetailError(null);
+      return () => {
+        active = false;
+      };
+    }
+
+    async function loadDetail() {
+      try {
+        const nextDetail = await getSessionDetail(firstSession.sessionKey);
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setDetail(nextDetail);
+          setDetailError(null);
+        });
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setDetail(null);
+          setDetailError(loadError instanceof Error ? loadError.message : "请求失败");
+        });
+      }
+    }
+
+    void loadDetail();
+
+    return () => {
+      active = false;
+    };
+  }, [items]);
 
   const activeCount = items.filter((item) => !item.endedAtMs).length;
   const groupCount = items.filter((item) => item.isGroup).length;
@@ -38,9 +83,11 @@ export function SessionsPage() {
     ? "正在从本地控制台后端加载会话索引。"
     : error
       ? `会话数据加载失败：${error}`
+      : detailError
+        ? `会话详情加载失败：${detailError}`
       : "展示真实会话列表与默认详情快照。";
-  const headerTone = error ? "danger" : loading ? "info" : "success";
-  const headerLabel = error ? "请求失败" : loading ? "加载中" : "实时数据";
+  const headerTone = error || detailError ? "danger" : loading ? "info" : "success";
+  const headerLabel = error || detailError ? "请求失败" : loading ? "加载中" : "实时数据";
 
   return (
     <div className="page-stack">
@@ -82,6 +129,7 @@ export function SessionsPage() {
               lastSeen: formatTimestamp(session.lastSeenAtMs),
             }))}
           />
+          <TablePagination {...paginationProps} />
         </article>
         <DetailPanel
           title={detail?.sessionKey ?? "暂无会话"}

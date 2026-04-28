@@ -95,6 +95,7 @@ export interface BeforeAgentStartInput extends BaseHookInput {
 
 export interface AgentEndInput extends BaseHookInput {
   outputText?: string;
+  lynxCheck?: LynxCheckSnapshotInput;
 }
 
 export interface MessageWriteInput extends BaseHookInput {
@@ -637,6 +638,9 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
           contentExcerpt: input.contentExcerpt ?? input.outputText,
         }),
       );
+      if (input.lynxCheck) {
+        items.push(createLynxCheckUpsert(input.lynxCheck));
+      }
       return items;
     },
 

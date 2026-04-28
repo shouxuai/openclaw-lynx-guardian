@@ -60,8 +60,9 @@ function NavIcon({ id }: { id: string }) {
     case "tokens":
       return (
         <svg {...commonProps}>
-          <path d="M8 18a7 7 0 1 1 0-12" />
-          <circle cx="14" cy="12" r="7" />
+          <circle cx="12" cy="12" r="8" />
+          <path d="M8.5 12h7" />
+          <path d="M12 8.5v7" />
         </svg>
       );
     default:
@@ -93,13 +94,6 @@ export function SidebarNav() {
         ))}
       </nav>
 
-      <div className="sidebar__user">
-        <div aria-hidden="true" className="sidebar__avatar">系</div>
-        <div>
-          <p className="sidebar__userName">系统管理员</p>
-          <p className="sidebar__userMeta">admin@openclaw.io</p>
-        </div>
-      </div>
     </aside>
   );
 }

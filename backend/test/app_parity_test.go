@@ -88,6 +88,113 @@ func TestIngestRejectsInvalidEnumValues(t *testing.T) {
 	expectNumber(t, body, "rejectedCount", 1)
 }
 
+func TestSplitIngestEndpointPersistsOnlyMatchingItems(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	items := fixtureItems()
+	response := doJSON(
+		t,
+		handler,
+		http.MethodPost,
+		"/lynx/internal/v1/ingest/tool-calls",
+		fixtureBatchWithItems("tool-calls-split", []any{items[5]}),
+		true,
+	)
+	body := decodeObjectStatus(t, response, http.StatusOK)
+	expectNumber(t, body, "acceptedCount", 1)
+	expectNumber(t, body, "persistedCount", 1)
+	expectNumber(t, body, "rejectedCount", 0)
+
+	mismatch := doJSON(
+		t,
+		handler,
+		http.MethodPost,
+		"/lynx/internal/v1/ingest/tool-calls",
+		fixtureBatchWithItems("tool-calls-mismatch", []any{items[2]}),
+		true,
+	)
+	mismatchBody := decodeObjectStatus(t, mismatch, http.StatusOK)
+	expectNumber(t, mismatchBody, "acceptedCount", 0)
+	expectNumber(t, mismatchBody, "persistedCount", 0)
+	expectNumber(t, mismatchBody, "rejectedCount", 1)
+}
+
+func TestToolCallAfterUpsertDoesNotDowngradeRiskEnforcement(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	before := map[string]any{
+		"kind":         "toolCallUpsert",
+		"itemId":       "tool-call-risk-before",
+		"occurredAtMs": parityBaseTimeMs - 2000,
+		"data": map[string]any{
+			"toolCallId":        "tool-call-risk",
+			"sessionKey":        "session-risk",
+			"runId":             "run-risk",
+			"toolName":          "exec",
+			"paramSummary":      "rm -rf /important",
+			"paramHash":         "hash-risk",
+			"triggeredModules":  []string{"M5:dangerous_exec"},
+			"riskLevel":         "L4",
+			"riskScore":         10,
+			"policyDecision":    "deny",
+			"enforcementAction": "block",
+			"startedAtMs":       parityBaseTimeMs - 2000,
+		},
+	}
+	after := map[string]any{
+		"kind":         "toolCallUpsert",
+		"itemId":       "tool-call-risk-after",
+		"occurredAtMs": parityBaseTimeMs - 1500,
+		"data": map[string]any{
+			"toolCallId":        "tool-call-risk",
+			"sessionKey":        "session-risk",
+			"runId":             "run-risk",
+			"toolName":          "exec",
+			"enforcementAction": "allow",
+			"startedAtMs":       parityBaseTimeMs - 1500,
+			"finishedAtMs":      parityBaseTimeMs - 1400,
+			"durationMs":        100,
+			"resultStatus":      "completed",
+		},
+	}
+
+	seed := doJSON(
+		t,
+		handler,
+		http.MethodPost,
+		"/lynx/internal/v1/ingest/batch",
+		fixtureBatchWithItems("risk-before", []any{before}),
+		true,
+	)
+	decodeObjectStatus(t, seed, http.StatusOK)
+
+	update := doJSON(
+		t,
+		handler,
+		http.MethodPost,
+		"/lynx/internal/v1/ingest/batch",
+		fixtureBatchWithItems("risk-after", []any{after}),
+		true,
+	)
+	decodeObjectStatus(t, update, http.StatusOK)
+
+	detail := doJSON(t, handler, http.MethodGet, "/lynx/tool-calls/tool-call-risk", nil, false)
+	body := decodeObjectStatus(t, detail, http.StatusOK)
+	expectString(t, body, "policyDecision", "deny")
+	expectString(t, body, "enforcementAction", "block")
+	expectString(t, body, "resultStatus", "completed")
+}
+
 func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 	handler, closer := buildParityHandler(t)
 	t.Cleanup(func() {
@@ -306,12 +413,16 @@ func expectStringSlice(t *testing.T, payload map[string]any, key string, want []
 }
 
 func fixtureBatch(batchID string) map[string]any {
+	return fixtureBatchWithItems(batchID, fixtureItems())
+}
+
+func fixtureBatchWithItems(batchID string, items []any) map[string]any {
 	return map[string]any{
 		"schemaVersion": "lynx-server.ingest.v1",
 		"producer":      map[string]any{"pluginId": "openclaw-lynx-guardian"},
 		"sentAtMs":      parityBaseTimeMs,
 		"batchId":       batchID,
-		"items":         fixtureItems(),
+		"items":         items,
 	}
 }
 

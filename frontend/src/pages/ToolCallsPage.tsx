@@ -1,50 +1,22 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { ToolCallListItemDto } from "@lynx/local-console-shared";
 
-import { listToolCalls } from "../api/tool-calls";
+import { listToolCalls, type ToolCallListQuery } from "../api/tool-calls";
 import { mockToolCalls } from "../data/mock-console";
 import { DataTable } from "../components/tables/DataTable";
+import { TablePagination } from "../components/tables/TablePagination";
+import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
 import { formatDuration, formatInteger, formatTimestamp } from "../utils/format";
 import { formatToolLabel, renderStateBadge } from "../utils/status";
 
 export function ToolCallsPage() {
-  const [items, setItems] = useState<ToolCallListItemDto[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadToolCalls() {
-      try {
-        const response = await listToolCalls({ limit: 20 });
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(response.items);
-          setError(null);
-          setLoading(false);
-        });
-      } catch (loadError) {
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(import.meta.env.DEV ? mockToolCalls : []);
-          setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
-          setLoading(false);
-        });
-      }
-    }
-
-    void loadToolCalls();
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { items, loading, error, paginationProps } = useCursorListResource<ToolCallListItemDto, ToolCallListQuery>({
+    fallbackPage: import.meta.env.DEV
+      ? (_query, pageIndex, pageSize) => paginateMockItems(mockToolCalls, pageIndex, pageSize)
+      : undefined,
+    loadPage: listToolCalls,
+    query: {},
+  });
 
   const successCount = items.filter((item) => ["success", "completed", "approved"].includes(item.resultStatus ?? "")).length;
   const abnormalCount = items.filter((item) => ["failed", "blocked"].includes(item.resultStatus ?? "")).length;
@@ -121,6 +93,7 @@ export function ToolCallsPage() {
             detail: <a className="inline-link" href={`/tool-calls#${call.toolCallId}`}>查看 JSON</a>,
           }))}
         />
+        <TablePagination {...paginationProps} />
       </section>
 
       <section className="split-grid split-grid--equal">

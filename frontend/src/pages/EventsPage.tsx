@@ -1,5 +1,7 @@
-import { startTransition, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import type { AuditEventDetailDto, AuditEventListItemDto, EnforcementAction, RiskLevel } from "@lynx/local-console-shared";
+import { Button, DatePicker, Input, Select } from "antd";
+import type { Dayjs } from "dayjs";
 
 import { getEventDetail, listEvents, type EventListQuery } from "../api/events";
 import { mockEvents } from "../data/mock-console";
@@ -7,6 +9,7 @@ import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
+import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import {
   formatActionText,
@@ -19,12 +22,16 @@ import {
 
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const { RangePicker } = DatePicker;
+
+type DateRangeValue = [Dayjs | null, Dayjs | null] | null;
 
 interface EventFilters {
   q: string;
   riskLevel: string;
   category: string;
   enforcementAction: string;
+  dateRange: DateRangeValue;
 }
 
 const EMPTY_FILTERS: EventFilters = {
@@ -32,6 +39,7 @@ const EMPTY_FILTERS: EventFilters = {
   riskLevel: "",
   category: "",
   enforcementAction: "",
+  dateRange: null,
 };
 
 const RISK_OPTIONS: Array<{ label: string; value: RiskLevel }> = [
@@ -61,16 +69,32 @@ const ACTION_OPTIONS: Array<{ label: string; value: EnforcementAction }> = [
   { label: "仅记录", value: "logOnly" },
 ];
 
+export function buildDateRangeQuery(value: DateRangeValue): Pick<EventListQuery, "fromMs" | "toMs"> {
+  const [fromDate, toDate] = value ?? [];
+
+  return {
+    fromMs: fromDate?.startOf("day").valueOf(),
+    toMs: toDate?.endOf("day").valueOf(),
+  };
+}
+
 function buildEventQuery(filters: EventFilters): EventListQuery {
   return {
     q: filters.q.trim() || undefined,
     riskLevel: filters.riskLevel ? [filters.riskLevel as RiskLevel] : undefined,
     category: filters.category || undefined,
     enforcementAction: filters.enforcementAction ? [filters.enforcementAction as EnforcementAction] : undefined,
+    ...buildDateRangeQuery(filters.dateRange),
   };
 }
 
 function eventMatchesQuery(event: AuditEventListItemDto, query: EventListQuery): boolean {
+  if (query.fromMs !== undefined && event.occurredAtMs < query.fromMs) {
+    return false;
+  }
+  if (query.toMs !== undefined && event.occurredAtMs > query.toMs) {
+    return false;
+  }
   if (query.riskLevel?.length && (!event.riskLevel || !query.riskLevel.includes(event.riskLevel))) {
     return false;
   }
@@ -109,10 +133,12 @@ function eventMatchesQuery(event: AuditEventListItemDto, query: EventListQuery):
     .some((value) => String(value).toLowerCase().includes(keyword));
 }
 
-function pageMockEvents(query: EventListQuery, pageIndex: number, pageSize: number): AuditEventListItemDto[] {
-  return mockEvents
-    .filter((event) => eventMatchesQuery(event, query))
-    .slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+function pageMockEvents(query: EventListQuery, pageIndex: number, pageSize: number) {
+  return paginateMockItems(
+    mockEvents.filter((event) => eventMatchesQuery(event, query)),
+    pageIndex,
+    pageSize,
+  );
 }
 
 function resolveEventExcerpt(event: AuditEventListItemDto): string {
@@ -128,65 +154,32 @@ function formatDetailJson(value: Record<string, unknown> | undefined): string {
 }
 
 export function EventsPage() {
-  const [items, setItems] = useState<AuditEventListItemDto[]>([]);
   const [draftFilters, setDraftFilters] = useState<EventFilters>(EMPTY_FILTERS);
   const [appliedQuery, setAppliedQuery] = useState<EventListQuery>({});
-  const [pageCursors, setPageCursors] = useState<Array<string | undefined>>([undefined]);
-  const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [refreshKey, setRefreshKey] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<AuditEventDetailDto | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
 
-  const currentCursor = pageCursors[pageIndex];
+  function clearDetailState(): void {
+    setSelectedDetail(null);
+    setDetailError(null);
+    setDetailLoadingId(null);
+  }
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadEvents() {
-      startTransition(() => {
-        setLoading(true);
-      });
-
-      try {
-        const response = await listEvents({
-          ...appliedQuery,
-          limit: pageSize,
-          cursor: currentCursor,
-        });
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(response.items);
-          setNextCursor(response.nextCursor);
-          setError(null);
-          setLoading(false);
-        });
-      } catch (loadError) {
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(import.meta.env.DEV ? pageMockEvents(appliedQuery, pageIndex, pageSize) : []);
-          setNextCursor(undefined);
-          setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
-          setLoading(false);
-        });
-      }
-    }
-
-    void loadEvents();
-    return () => {
-      active = false;
-    };
-  }, [appliedQuery, currentCursor, pageIndex, pageSize, refreshKey]);
+  const { items, loading, error, paginationProps, resetPaging } = useCursorListResource<
+    AuditEventListItemDto,
+    EventListQuery
+  >({
+    fallbackPage: import.meta.env.DEV ? pageMockEvents : undefined,
+    initialPageSize: DEFAULT_PAGE_SIZE,
+    loadPage: listEvents,
+    onPageBoundaryChange: clearDetailState,
+    pageSizeOptions: PAGE_SIZE_OPTIONS,
+    query: appliedQuery,
+    refreshKey,
+  });
 
   const pageSummary = useMemo(() => {
     const highRiskCount = items.filter((event) => event.riskLevel === "L3" || event.riskLevel === "L4").length;
@@ -205,7 +198,9 @@ export function EventsPage() {
     appliedQuery.q
     || appliedQuery.riskLevel?.length
     || appliedQuery.category
-    || appliedQuery.enforcementAction?.length,
+    || appliedQuery.enforcementAction?.length
+    || appliedQuery.fromMs !== undefined
+    || appliedQuery.toMs !== undefined,
   );
   const statusText = error
     ? `审计日志加载失败：${error}`
@@ -213,56 +208,24 @@ export function EventsPage() {
       ? "正在加载审计日志"
       : "全量追踪系统操作、策略决策及风险判定记录，确保基础设施运行的透明度与合规性。";
 
-  function resetPaging(): void {
-    setPageCursors([undefined]);
-    setPageIndex(0);
-    setNextCursor(undefined);
-    setSelectedDetail(null);
-    setDetailError(null);
-  }
-
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    setDatePickerOpen(false);
     resetPaging();
     setAppliedQuery(buildEventQuery(draftFilters));
   }
 
   function handleReset(): void {
+    setDatePickerOpen(false);
     setDraftFilters(EMPTY_FILTERS);
     resetPaging();
     setAppliedQuery({});
   }
 
-  function handleNextPage(): void {
-    if (!nextCursor) {
-      return;
+  function handleSelectOpenChange(open: boolean): void {
+    if (open) {
+      setDatePickerOpen(false);
     }
-    setPageCursors((current) => {
-      const next = current.slice(0, pageIndex + 1);
-      next[pageIndex + 1] = nextCursor;
-      return next;
-    });
-    setPageIndex((current) => current + 1);
-  }
-
-  function handlePageChange(nextPageIndex: number): void {
-    if (nextPageIndex === pageIndex) {
-      return;
-    }
-    if (nextPageIndex === pageCursors.length && nextCursor) {
-      handleNextPage();
-      return;
-    }
-    if (nextPageIndex >= 0 && nextPageIndex < pageCursors.length) {
-      setSelectedDetail(null);
-      setDetailError(null);
-      setPageIndex(nextPageIndex);
-    }
-  }
-
-  function handlePageSizeChange(nextPageSize: number): void {
-    setPageSize(nextPageSize);
-    resetPaging();
   }
 
   function handleCloseDetail(): void {
@@ -301,10 +264,17 @@ export function EventsPage() {
         eyebrow="SYSTEM INTEGRITY"
         actions={(
           <>
-            <button className="btn" type="button">导出 CSV</button>
-            <button className="btn btn--primary" type="button" onClick={() => setRefreshKey((value) => value + 1)}>
+            <Button className="console-action-button" type="default">
+              导出 CSV
+            </Button>
+            <Button
+              className="console-action-button"
+              htmlType="button"
+              type="primary"
+              onClick={() => setRefreshKey((value) => value + 1)}
+            >
               立即刷新
-            </button>
+            </Button>
           </>
         )}
       />
@@ -344,63 +314,74 @@ export function EventsPage() {
         <form className="audit-filter-form" onSubmit={handleSubmit}>
           <label className="filter-field filter-field--search">
             <span>关键词</span>
-            <input
+            <Input
+              allowClear
               aria-label="关键词"
               placeholder="搜索事件 ID、标题、摘要、请求 ID"
-              type="search"
               value={draftFilters.q}
               onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
             />
           </label>
 
-          <label className="filter-field">
+          <label className="filter-field" onMouseDownCapture={() => setDatePickerOpen(false)}>
             <span>风险等级</span>
-            <select
+            <Select
+              allowClear
               aria-label="风险等级"
-              value={draftFilters.riskLevel}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, riskLevel: event.target.value }))}
-            >
-              <option value="">全部级别</option>
-              {RISK_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              options={RISK_OPTIONS}
+              placeholder="全部级别"
+              value={draftFilters.riskLevel || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, riskLevel: value ?? "" }))}
+              onOpenChange={handleSelectOpenChange}
+            />
           </label>
 
-          <label className="filter-field">
+          <label className="filter-field" onMouseDownCapture={() => setDatePickerOpen(false)}>
             <span>事件类别</span>
-            <select
+            <Select
+              allowClear
               aria-label="事件类别"
-              value={draftFilters.category}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, category: event.target.value }))}
-            >
-              <option value="">全部分类</option>
-              {CATEGORY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              options={CATEGORY_OPTIONS}
+              placeholder="全部分类"
+              value={draftFilters.category || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, category: value ?? "" }))}
+              onOpenChange={handleSelectOpenChange}
+            />
           </label>
 
-          <label className="filter-field">
+          <label className="filter-field" onMouseDownCapture={() => setDatePickerOpen(false)}>
             <span>策略判定</span>
-            <select
+            <Select
+              allowClear
               aria-label="策略判定"
-              value={draftFilters.enforcementAction}
-              onChange={(event) => setDraftFilters((current) => ({
+              options={ACTION_OPTIONS}
+              placeholder="全部状态"
+              value={draftFilters.enforcementAction || undefined}
+              onChange={(value) => setDraftFilters((current) => ({
                 ...current,
-                enforcementAction: event.target.value,
+                enforcementAction: value ?? "",
               }))}
-            >
-              <option value="">全部状态</option>
-              {ACTION_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              onOpenChange={handleSelectOpenChange}
+            />
+          </label>
+
+          <label className="filter-field filter-field--date-range">
+            <span>发生时间</span>
+            <RangePicker
+              allowClear
+              aria-label="发生时间"
+              className="audit-date-range-picker"
+              open={datePickerOpen}
+              placeholder={["开始日期", "结束日期"]}
+              value={draftFilters.dateRange}
+              onChange={(dateRange) => setDraftFilters((current) => ({ ...current, dateRange }))}
+              onOpenChange={setDatePickerOpen}
+            />
           </label>
 
           <div className="audit-filter-form__actions">
-            <button className="btn btn--primary" type="submit">应用筛选</button>
-            <button className="btn" type="button" onClick={handleReset}>重置条件</button>
+            <Button htmlType="submit" type="primary">应用筛选</Button>
+            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
           </div>
         </form>
       </section>
@@ -430,8 +411,8 @@ export function EventsPage() {
             risk: renderRiskBadge(event.riskLevel),
             decision: renderPolicyDecisionBadge(event.policyDecision, event.enforcementAction),
             action: renderActionBadge(event.enforcementAction),
-            excerpt: <span className="table-cell-clamp">{resolveEventExcerpt(event)}</span>,
-            recommendation: <span className="table-cell-clamp">{resolveEventRecommendation(event)}</span>,
+            excerpt: resolveEventExcerpt(event),
+            recommendation: resolveEventRecommendation(event),
             time: formatTimestamp(event.occurredAtMs),
             detail: (
               <button
@@ -447,21 +428,8 @@ export function EventsPage() {
           }))}
         />
         <TablePagination
-          hasNextPage={Boolean(nextCursor)}
-          itemCount={items.length}
-          loading={loading}
-          pageCount={pageCursors.length}
-          pageIndex={pageIndex}
-          pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          onNextPage={handleNextPage}
-          onPageChange={handlePageChange}
-          onPageSizeChange={handlePageSizeChange}
-          onPreviousPage={() => {
-            setSelectedDetail(null);
-            setDetailError(null);
-            setPageIndex((current) => Math.max(0, current - 1));
-          }}
+          {...paginationProps}
+          ariaLabel="审计日志分页"
         />
       </section>
 

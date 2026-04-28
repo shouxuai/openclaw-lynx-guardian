@@ -25,6 +25,9 @@ export function ModalDialog({
       return undefined;
     }
 
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
         onClose();
@@ -32,7 +35,10 @@ export function ModalDialog({
     }
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [onClose, open]);
 
   if (!open) {

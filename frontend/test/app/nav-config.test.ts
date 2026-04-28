@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PRIMARY_NAV_ITEMS } from "./nav-config";
+import { PRIMARY_NAV_ITEMS } from "../../src/app/nav-config";
 
 describe("PRIMARY_NAV_ITEMS", () => {
   it("matches the approved Stitch reference navigation order", () => {

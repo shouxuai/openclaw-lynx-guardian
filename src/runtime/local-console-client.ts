@@ -24,10 +24,44 @@ interface LocalConsoleClientOptions {
   };
 }
 
+const INGEST_KIND_ENDPOINTS: Record<IngestItemV1["kind"], string> = {
+  auditEvent: "audit-events",
+  sessionUpsert: "sessions",
+  toolCallUpsert: "tool-calls",
+  approvalUpsert: "approvals",
+  lynxCheckUpsert: "lynx-checks",
+  tokenUsage: "token-usage",
+};
+
 function delayMs(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, durationMs);
   });
+}
+
+function resolveKindIngestUrl(batchIngestUrl: string, kind: IngestItemV1["kind"]): string {
+  const endpoint = INGEST_KIND_ENDPOINTS[kind];
+  if (!batchIngestUrl.endsWith("/batch")) {
+    return batchIngestUrl;
+  }
+  return `${batchIngestUrl.slice(0, -"/batch".length)}/${endpoint}`;
+}
+
+function groupItemsByKindEndpoint(
+  items: IngestItemV1[],
+  batchIngestUrl: string,
+): Array<{ url: string; items: IngestItemV1[] }> {
+  const groups = new Map<string, IngestItemV1[]>();
+  for (const item of items) {
+    const url = resolveKindIngestUrl(batchIngestUrl, item.kind);
+    const group = groups.get(url);
+    if (group) {
+      group.push(item);
+    } else {
+      groups.set(url, [item]);
+    }
+  }
+  return [...groups.entries()].map(([url, groupItems]) => ({ url, items: groupItems }));
 }
 
 function createBatchPayload(
@@ -89,7 +123,7 @@ export function createLocalConsoleIngestClient(options: LocalConsoleClientOption
     }, delay);
   }
 
-  async function sendBatch(items: IngestItemV1[]): Promise<IngestBatchResponseV1> {
+  async function sendBatch(url: string, items: IngestItemV1[]): Promise<IngestBatchResponseV1> {
     const token = options.getToken().trim();
     if (!token) {
       throw new Error("local console ingest token is missing");
@@ -101,7 +135,7 @@ export function createLocalConsoleIngestClient(options: LocalConsoleClientOption
     const timeoutHandle = setTimeout(() => controller.abort(), options.config.requestTimeoutMs);
 
     try {
-      const response = await fetchImpl(options.config.ingestUrl, {
+      const response = await fetchImpl(url, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -116,11 +150,11 @@ export function createLocalConsoleIngestClient(options: LocalConsoleClientOption
     }
   }
 
-  async function sendBatchWithRetry(items: IngestItemV1[]): Promise<boolean> {
+  async function sendBatchWithRetry(url: string, items: IngestItemV1[]): Promise<boolean> {
     let attempt = 0;
     while (true) {
       try {
-        await sendBatch(items);
+        await sendBatch(url, items);
         return true;
       } catch (error) {
         const retryDelayMs = retryDelaysMs[attempt];
@@ -143,11 +177,16 @@ export function createLocalConsoleIngestClient(options: LocalConsoleClientOption
   async function drainQueue(): Promise<void> {
     while (queue.length > 0) {
       const batch = queue.splice(0, options.config.maxBatchItems);
-      const delivered = await sendBatchWithRetry(batch);
-      if (!delivered) {
-        queue.unshift(...batch);
-        scheduleFlush();
-        return;
+      const groups = groupItemsByKindEndpoint(batch, options.config.ingestUrl);
+      for (let index = 0; index < groups.length; index += 1) {
+        const group = groups[index];
+        const delivered = await sendBatchWithRetry(group.url, group.items);
+        if (!delivered) {
+          const pendingGroups = groups.slice(index).flatMap((pendingGroup) => pendingGroup.items);
+          queue.unshift(...pendingGroups);
+          scheduleFlush();
+          return;
+        }
       }
     }
   }

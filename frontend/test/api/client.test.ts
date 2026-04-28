@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildQueryString } from "./client";
+import { buildQueryString } from "../../src/api/client";
 
 describe("buildQueryString", () => {
   it("encodes arrays and skips empty values", () => {

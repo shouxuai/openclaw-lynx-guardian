@@ -293,7 +293,12 @@ func (r *IngestRepository) PersistToolCall(exec sqlExecer, item ToolCallUpsertIt
 			risk_level = COALESCE(tool_calls.risk_level, excluded.risk_level),
 			risk_score = COALESCE(tool_calls.risk_score, excluded.risk_score),
 			policy_decision = COALESCE(tool_calls.policy_decision, excluded.policy_decision),
-			enforcement_action = COALESCE(excluded.enforcement_action, tool_calls.enforcement_action),
+			enforcement_action = CASE
+				WHEN excluded.enforcement_action = 'allow'
+					AND tool_calls.enforcement_action IN ('warn', 'block', 'redact', 'require_approval', 'log_only')
+					THEN tool_calls.enforcement_action
+				ELSE COALESCE(excluded.enforcement_action, tool_calls.enforcement_action)
+			END,
 			started_at = MIN(tool_calls.started_at, excluded.started_at),
 			finished_at = COALESCE(excluded.finished_at, tool_calls.finished_at),
 			duration_ms = COALESCE(excluded.duration_ms, tool_calls.duration_ms),

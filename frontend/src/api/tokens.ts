@@ -1,4 +1,5 @@
 import type {
+  CommonListQuery,
   TokenSummaryDto,
   TokenTrendBucket,
   TokenTrendDto,
@@ -11,8 +12,15 @@ export function getTokenSummary(): Promise<TokenSummaryDto> {
   return fetchJson<TokenSummaryDto>("/tokens/summary");
 }
 
-export function getTokenUsage(limit = 20): Promise<TokenUsageListResponse> {
-  return fetchJson<TokenUsageListResponse>(`/tokens/usage${buildQueryString({ limit })}`);
+export interface TokenUsageListQuery extends CommonListQuery {
+  agentId?: string;
+  isEstimated?: boolean;
+  model?: string;
+  provider?: string;
+}
+
+export function getTokenUsage(query: TokenUsageListQuery = {}): Promise<TokenUsageListResponse> {
+  return fetchJson<TokenUsageListResponse>(`/tokens/usage${buildQueryString(query)}`);
 }
 
 export function getTokenTrend(bucket: TokenTrendBucket = "hour"): Promise<TokenTrendDto> {

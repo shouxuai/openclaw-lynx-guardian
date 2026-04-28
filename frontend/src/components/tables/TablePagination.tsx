@@ -1,6 +1,12 @@
+import { Pagination } from "antd";
+
 import { formatInteger } from "../../utils/format";
 
+export const DEFAULT_TABLE_PAGE_SIZE = 20;
+export const DEFAULT_TABLE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
 export interface TablePaginationProps {
+  ariaLabel?: string;
   hasNextPage: boolean;
   itemCount: number;
   loading?: boolean;
@@ -15,6 +21,7 @@ export interface TablePaginationProps {
 }
 
 export function TablePagination({
+  ariaLabel = "列表分页",
   hasNextPage,
   itemCount,
   loading = false,
@@ -27,65 +34,34 @@ export function TablePagination({
   onPageSizeChange,
   onPreviousPage,
 }: TablePaginationProps) {
-  const selectablePageCount = pageCount + (hasNextPage ? 1 : 0);
-  const pageOptions = Array.from({ length: selectablePageCount }, (_, index) => index);
+  const estimatedTotal = hasNextPage
+    ? (pageCount + 1) * pageSize
+    : (pageIndex * pageSize) + itemCount;
 
   return (
-    <div className="table-pagination" aria-label="审计日志分页">
+    <div className="table-pagination" aria-label={ariaLabel}>
       <p className="table-pagination__summary">
         第 {formatInteger(pageIndex + 1)} 页，显示 {formatInteger(itemCount)} 条结果
       </p>
 
-      <div className="table-pagination__controls">
-        <label className="table-pagination__field">
-          <span>当前页</span>
-          <select
-            aria-label="当前页"
-            disabled={loading}
-            value={String(pageIndex)}
-            onChange={(event) => onPageChange(Number(event.target.value))}
-          >
-            {pageOptions.map((optionPageIndex) => (
-              <option key={optionPageIndex} value={optionPageIndex}>
-                第 {formatInteger(optionPageIndex + 1)} 页
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="table-pagination__field">
-          <span>每页行数</span>
-          <select
-            aria-label="每页行数"
-            disabled={loading}
-            value={String(pageSize)}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-          >
-            {pageSizeOptions.map((option) => (
-              <option key={option} value={option}>{formatInteger(option)} 行</option>
-            ))}
-          </select>
-        </label>
-
-        <div className="table-pagination__buttons">
-          <button
-            className="btn btn--compact"
-            disabled={pageIndex === 0 || loading}
-            type="button"
-            onClick={onPreviousPage}
-          >
-            上一页
-          </button>
-          <button
-            className="btn btn--compact btn--primary"
-            disabled={!hasNextPage || loading}
-            type="button"
-            onClick={onNextPage}
-          >
-            下一页
-          </button>
-        </div>
-      </div>
+      <Pagination
+        aria-label={ariaLabel}
+        className="table-pagination__antd"
+        current={pageIndex + 1}
+        disabled={loading}
+        pageSize={pageSize}
+        pageSizeOptions={pageSizeOptions.map(String)}
+        showSizeChanger
+        total={estimatedTotal}
+        onChange={(nextPage, nextPageSize) => {
+          const zeroBasedPage = nextPage - 1;
+          if (nextPageSize !== pageSize) {
+            onPageSizeChange(nextPageSize);
+            return;
+          }
+          onPageChange(zeroBasedPage);
+        }}
+      />
     </div>
   );
 }

@@ -29,7 +29,10 @@ func TestOpenAPISpecAndDocsAreServed(t *testing.T) {
 		"title: Lynx Server API",
 		"/lynx/health:",
 		"/lynx/internal/v1/ingest/batch:",
+		"/lynx/internal/v1/ingest/tool-calls:",
+		"/lynx/internal/v1/ingest/lynx-checks:",
 		"Ingest one plugin event batch.",
+		"Ingest tool call upsert items.",
 	} {
 		if !strings.Contains(specBody, want) {
 			t.Fatalf("expected openapi spec to contain %q, got %s", want, specBody)

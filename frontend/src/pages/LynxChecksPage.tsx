@@ -1,50 +1,21 @@
-import { startTransition, useEffect, useState } from "react";
 import type { LynxCheckListItemDto } from "@lynx/local-console-shared";
 
-import { listLynxChecks } from "../api/lynx-checks";
+import { listLynxChecks, type LynxCheckListQuery } from "../api/lynx-checks";
 import { mockLynxChecks } from "../data/mock-console";
 import { DataTable } from "../components/tables/DataTable";
+import { TablePagination } from "../components/tables/TablePagination";
+import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
 import { formatDuration, formatTimestamp } from "../utils/format";
 import { formatDomainLabel, renderStateBadge } from "../utils/status";
 
 export function LynxChecksPage() {
-  const [items, setItems] = useState<LynxCheckListItemDto[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadChecks() {
-      try {
-        const response = await listLynxChecks({ limit: 20 });
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(response.items);
-          setError(null);
-          setLoading(false);
-        });
-      } catch (loadError) {
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setItems(import.meta.env.DEV ? mockLynxChecks : []);
-          setError(import.meta.env.DEV ? null : loadError instanceof Error ? loadError.message : "请求失败");
-          setLoading(false);
-        });
-      }
-    }
-
-    void loadChecks();
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { items, loading, error, paginationProps } = useCursorListResource<LynxCheckListItemDto, LynxCheckListQuery>({
+    fallbackPage: import.meta.env.DEV
+      ? (_query, pageIndex, pageSize) => paginateMockItems(mockLynxChecks, pageIndex, pageSize)
+      : undefined,
+    loadPage: listLynxChecks,
+    query: {},
+  });
 
   const runningCount = items.filter((item) => item.status === "running").length;
   const completedCount = items.filter((item) => item.status === "completed").length;
@@ -116,10 +87,7 @@ export function LynxChecksPage() {
             action: "⋮",
           }))}
         />
-        <div className="table-panel__footer">
-          <span>显示第 1 到 {items.length} 条，共 {items.length} 条记录</span>
-          <span>1 · 2 · 3</span>
-        </div>
+        <TablePagination {...paginationProps} />
       </section>
 
       <section className="split-grid split-grid--equal">

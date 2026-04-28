@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TokensPage } from "./TokensPage";
+import { TokensPage } from "../../src/pages/TokensPage";
 
 function createJsonResponse(data: unknown): Response {
   return {
@@ -48,10 +48,27 @@ describe("TokensPage", () => {
           isEstimated: true,
           occurredAtMs: 1_776_942_111_288,
         }],
+        nextCursor: "cursor-token-page-2",
       }))
       .mockResolvedValueOnce(createJsonResponse({
         bucket: "hour",
         points: [{ bucketStartMs: 1_776_942_000_000, inputTokens: 1_300, outputTokens: 22, totalTokens: 1_322 }],
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        items: [{
+          usageEventId: "token-usage:2",
+          sessionKey: "#LX-90821-BF",
+          provider: "bailian",
+          model: "glm-5",
+          inputTokens: 800,
+          outputTokens: 200,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 1_000,
+          assistantTextCount: 1,
+          isEstimated: false,
+          occurredAtMs: 1_776_942_222_288,
+        }],
       }));
 
     render(<TokensPage />);
@@ -72,5 +89,10 @@ describe("TokensPage", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/tokens/summary");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/tokens/usage?limit=20");
     expect(fetchMock.mock.calls[2]?.[0]).toBe("/lynx/tokens/trend?bucket=hour");
+
+    fireEvent.click(screen.getByTitle(/Next Page|下一页/));
+
+    await screen.findByText("#LX-90821-BF");
+    expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/tokens/usage?limit=20&cursor=cursor-token-page-2");
   });
 });
