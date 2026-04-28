@@ -8,6 +8,7 @@ import (
 
 	"github.com/openclaw/lynx-guardian/backend/internal/config"
 	"github.com/openclaw/lynx-guardian/backend/internal/db"
+	"github.com/openclaw/lynx-guardian/backend/internal/decision"
 	"github.com/openclaw/lynx-guardian/backend/internal/ingest"
 	"github.com/openclaw/lynx-guardian/backend/internal/middleware"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
@@ -40,6 +41,8 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	lynxChecks := repo.NewLynxChecksRepository(database)
 	tokens := repo.NewTokensRepository(database)
 	dashboard := repo.NewDashboardRepository(database)
+	decisions := repo.NewDecisionRepository(database)
+	decisionService := decision.NewService(decisions)
 	ingestService := ingest.NewService(repo.NewIngestRepository(database))
 
 	root := gin.New()
@@ -67,6 +70,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	ingestGroup := query.Group("/internal/v1")
 	ingestGroup.Use(middleware.RequireIngestAuth(cfg.IngestToken))
 	routes.RegisterIngest(ingestGroup, ingestService)
+	routes.RegisterDecisions(query, ingestGroup, decisionService, decisions)
 
 	closer := func() error { return database.Close() }
 	return root, closer, nil
