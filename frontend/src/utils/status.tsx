@@ -100,6 +100,41 @@ function resolveActionTone(value: string | undefined): StatusBadgeProps["tone"] 
   return "neutral";
 }
 
+export function getDecisionTone(input: {
+  block?: boolean;
+  riskLevel?: "L0" | "L1" | "L2" | "L3" | "L4";
+  action?: string;
+  eventSeverity?: "info" | "warn" | "error" | "critical";
+}): "default" | "processing" | "warning" | "error" {
+  if (
+    input.eventSeverity === "critical"
+    || input.riskLevel === "L4"
+    || input.action === "deny"
+  ) {
+    return "error";
+  }
+
+  if (input.eventSeverity === "error" || input.action === "block") {
+    return "error";
+  }
+
+  if (
+    input.eventSeverity === "warn"
+    || input.riskLevel === "L2"
+    || input.riskLevel === "L3"
+    || input.action === "require_approval"
+    || input.action === "warn"
+  ) {
+    return "warning";
+  }
+
+  if (input.riskLevel === "L1" || input.action === "log_only") {
+    return "processing";
+  }
+
+  return "default";
+}
+
 function resolvePolicyTone(
   policyDecision: string | undefined,
   fallbackAction: EnforcementAction | undefined,
