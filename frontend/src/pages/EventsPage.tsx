@@ -153,6 +153,49 @@ function formatDetailJson(value: Record<string, unknown> | undefined): string {
   return value ? JSON.stringify(value, null, 2) : "暂无";
 }
 
+function formatUnknownList(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.map((item) => String(item)).join("；") : "暂无";
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return "暂无";
+}
+
+function formatScoreBreakdown(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) {
+    return "暂无";
+  }
+
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return String(entry);
+      }
+      const record = entry as Record<string, unknown>;
+      const ruleId = String(record.ruleId ?? record.rule_id ?? "unknown_rule");
+      const delta = Number(record.delta ?? record.scoreDelta ?? record.score_delta ?? 0);
+      return `${ruleId} ${delta >= 0 ? "+" : ""}${delta}`;
+    })
+    .join("；");
+}
+
+function formatControlPlaneSummary(event: AuditEventListItemDto): string {
+  const payload = (event as AuditEventDetailDto).payloadJson;
+  const winningArbiter = payload?.winningArbiter ?? payload?.winning_arbiter;
+  const matchedRules = payload?.matchedRules ?? payload?.matched_rules ?? payload?.matchedModules;
+
+  if (!winningArbiter && !matchedRules) {
+    return "暂无控制面证据";
+  }
+
+  return [
+    winningArbiter ? `arbiter:${String(winningArbiter)}` : undefined,
+    matchedRules ? `rules:${formatUnknownList(matchedRules)}` : undefined,
+  ].filter(Boolean).join("；");
+}
+
 export function EventsPage() {
   const [draftFilters, setDraftFilters] = useState<EventFilters>(EMPTY_FILTERS);
   const [appliedQuery, setAppliedQuery] = useState<EventListQuery>({});
@@ -394,6 +437,7 @@ export function EventsPage() {
             { key: "risk", label: "风险等级" },
             { key: "decision", label: "策略判定" },
             { key: "action", label: "执行动作" },
+            { key: "controlPlane", label: "控制面证据", maxWidth: 300, minWidth: 210, width: 260 },
             { key: "excerpt", label: "脱敏摘要" },
             { key: "recommendation", label: "处置建议" },
             { key: "time", label: "发生时间" },
@@ -411,6 +455,7 @@ export function EventsPage() {
             risk: renderRiskBadge(event.riskLevel),
             decision: renderPolicyDecisionBadge(event.policyDecision, event.enforcementAction),
             action: renderActionBadge(event.enforcementAction),
+            controlPlane: formatControlPlaneSummary(event),
             excerpt: resolveEventExcerpt(event),
             recommendation: resolveEventRecommendation(event),
             time: formatTimestamp(event.occurredAtMs),
@@ -450,6 +495,11 @@ export function EventsPage() {
             { label: "完整脱敏摘要", value: selectedDetail?.contentExcerpt ?? "暂无" },
             { label: "处置建议", value: selectedDetail?.recommendation ?? selectedDetail?.summary ?? "暂无" },
             { label: "模块", value: selectedDetail?.modules?.join(", ") || selectedDetail?.primaryModule || "暂无" },
+            { label: "Decision ID", value: selectedDetail?.payloadJson?.decisionId ?? selectedDetail?.requestId ?? "暂无" },
+            { label: "Winning Arbiter", value: selectedDetail?.payloadJson?.winningArbiter ?? "暂无" },
+            { label: "Matched Rules", value: formatUnknownList(selectedDetail?.payloadJson?.matchedRules ?? selectedDetail?.payloadJson?.matchedModules) },
+            { label: "Score Breakdown", value: formatScoreBreakdown(selectedDetail?.payloadJson?.scoreBreakdown) },
+            { label: "block:false 说明", value: "block:false 只表示未阻断，不等于安全" },
             { label: "内容类型", value: selectedDetail?.contentKind ?? "暂无" },
             { label: "内容哈希", value: selectedDetail?.contentHash ?? "暂无" },
             { label: "入库时间", value: selectedDetail ? formatTimestamp(selectedDetail.ingestedAtMs) : "暂无" },

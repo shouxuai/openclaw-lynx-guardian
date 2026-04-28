@@ -8,6 +8,24 @@ import { TablePagination } from "../components/tables/TablePagination";
 import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
 import { renderRiskBadge, renderStateBadge } from "../utils/status";
 
+function formatApprovalScope(approval: ApprovalListItemDto): string {
+  const metadata = (approval as ApprovalListItemDto & { metadataJson?: Record<string, unknown> }).metadataJson;
+  const grantScope = metadata?.grantScope ?? metadata?.resourceScope ?? metadata?.scope;
+  if (!grantScope) {
+    return approval.scopeType;
+  }
+  if (typeof grantScope === "string") {
+    return grantScope;
+  }
+  return JSON.stringify(grantScope);
+}
+
+function formatRevokedReason(approval: ApprovalListItemDto): string {
+  const metadata = (approval as ApprovalListItemDto & { metadataJson?: Record<string, unknown> }).metadataJson;
+  const reason = metadata?.revokedReason ?? metadata?.grantRevokedReason;
+  return typeof reason === "string" && reason.trim().length > 0 ? reason : "暂无";
+}
+
 export function ApprovalsPage() {
   const { items, loading, error, paginationProps } = useCursorListResource<ApprovalListItemDto, ApprovalListQuery>({
     fallbackPage: import.meta.env.DEV
@@ -66,6 +84,8 @@ export function ApprovalsPage() {
             { key: "requester", label: "申请人", maxWidth: 220, minWidth: 160, width: 180 },
             { key: "risk", label: "风险权重", maxWidth: 150, minWidth: 112, width: 128 },
             { key: "scope", label: "范围类型", maxWidth: 190, minWidth: 140, width: 160 },
+            { key: "grantScope", label: "Grant 范围", maxWidth: 260, minWidth: 190, width: 230 },
+            { key: "revokedReason", label: "撤销原因", maxWidth: 220, minWidth: 160, width: 190 },
             { key: "summary", label: "请求摘要", maxWidth: 360, minWidth: 260, width: 320 },
             { key: "status", label: "状态", maxWidth: 150, minWidth: 112, width: 128 },
             { key: "action", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
@@ -76,6 +96,8 @@ export function ApprovalsPage() {
             requester: approval.requesterOuId ?? "未知申请人",
             risk: renderRiskBadge(approval.riskLevel),
             scope: approval.scopeType,
+            grantScope: formatApprovalScope(approval),
+            revokedReason: formatRevokedReason(approval),
             summary: approval.promptExcerpt ?? "暂无审批摘要",
             status: renderStateBadge(approval.resolution ?? "pending"),
             action: <a className="inline-link" href={`/approvals#${approval.approvalId}`}>查看详情</a>,

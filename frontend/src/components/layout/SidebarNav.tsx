@@ -25,6 +25,7 @@ function NavIcon({ id }: { id: string }) {
         </svg>
       );
     case "events":
+    case "decisions":
       return (
         <svg {...commonProps}>
           <path d="M7 3h10v4H7z" />
@@ -43,13 +44,25 @@ function NavIcon({ id }: { id: string }) {
         </svg>
       );
     case "approvals":
+    case "grants":
       return (
         <svg {...commonProps}>
           <path d="M12 3.5 5.5 6v5.5c0 4.1 2.6 7.7 6.5 9 3.9-1.3 6.5-4.9 6.5-9V6L12 3.5Z" />
           <path d="m9.2 12 1.9 1.9 3.7-4" />
         </svg>
       );
+    case "chains":
+      return (
+        <svg {...commonProps}>
+          <path d="M7 7h10" />
+          <path d="M7 17h10" />
+          <circle cx="5" cy="7" r="2" />
+          <circle cx="19" cy="17" r="2" />
+          <path d="M7 7c5 0 5 10 10 10" />
+        </svg>
+      );
     case "lynx-checks":
+    case "skills":
       return (
         <svg {...commonProps}>
           <path d="M7 5h10a2 2 0 0 1 2 2v12H5V7a2 2 0 0 1 2-2Z" />

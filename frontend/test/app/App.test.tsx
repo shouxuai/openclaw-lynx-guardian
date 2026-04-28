@@ -53,7 +53,7 @@ describe("App", () => {
     window.history.replaceState({}, "", "/webview/");
   });
 
-  it("renders the Stitch reference console shell by default", async () => {
+  it("renders the control plane console shell by default", async () => {
     const { container } = render(<App />);
 
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe("App", () => {
     expect(screen.getByText("L0 指标")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "过去 24 小时" })).not.toBeInTheDocument();
     expect(container.querySelector("a.topbar__githubButton")).toBeNull();
-    expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(6);
+    expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(10);
     expect(screen.queryByText("系统管理员")).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -88,6 +88,10 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByRole("link", { name: "概览" })).toHaveAttribute("href", "/webview");
+    expect(screen.getByRole("link", { name: "决策观测" })).toHaveAttribute(
+      "href",
+      "/webview/decisions",
+    );
     expect(screen.getByRole("link", { name: "工具调用" })).toHaveAttribute(
       "href",
       "/webview/tool-calls",
@@ -96,9 +100,21 @@ describe("App", () => {
       "href",
       "/webview/approvals",
     );
+    expect(screen.getByRole("link", { name: "多轮链路" })).toHaveAttribute(
+      "href",
+      "/webview/chains",
+    );
+    expect(screen.getByRole("link", { name: "授权 Grant" })).toHaveAttribute(
+      "href",
+      "/webview/grants",
+    );
     expect(screen.getByRole("link", { name: "检查任务" })).toHaveAttribute(
       "href",
       "/webview/lynx-checks",
+    );
+    expect(screen.getByRole("link", { name: "Skill 供应链" })).toHaveAttribute(
+      "href",
+      "/webview/skills",
     );
     expect(screen.getByRole("link", { name: "Token 统计" })).toHaveAttribute(
       "href",

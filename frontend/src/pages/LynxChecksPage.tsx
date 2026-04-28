@@ -8,6 +8,35 @@ import { paginateMockItems, useCursorListResource } from "../hooks/useCursorList
 import { formatDuration, formatTimestamp } from "../utils/format";
 import { formatDomainLabel, renderStateBadge } from "../utils/status";
 
+function isRunningTask(status: string): boolean {
+  return [
+    "created",
+    "queued",
+    "collecting",
+    "analyzing",
+    "report_skeleton_ready",
+    "awaiting_llm_report",
+    "delivering",
+    "running",
+  ].includes(status);
+}
+
+function formatTaskEvidence(item: LynxCheckListItemDto): string {
+  const extended = item as LynxCheckListItemDto & {
+    evidence?: unknown;
+    evidenceBundle?: unknown;
+    facts?: unknown;
+  };
+  const evidence = extended.evidenceBundle ?? extended.evidence ?? extended.facts;
+  if (!evidence) {
+    return item.errorMessage || "暂无";
+  }
+  if (typeof evidence === "string") {
+    return evidence;
+  }
+  return JSON.stringify(evidence);
+}
+
 export function LynxChecksPage() {
   const { items, loading, error, paginationProps } = useCursorListResource<LynxCheckListItemDto, LynxCheckListQuery>({
     fallbackPage: import.meta.env.DEV
@@ -17,7 +46,7 @@ export function LynxChecksPage() {
     query: {},
   });
 
-  const runningCount = items.filter((item) => item.status === "running").length;
+  const runningCount = items.filter((item) => isRunningTask(item.status)).length;
   const completedCount = items.filter((item) => item.status === "completed").length;
   const failedCount = items.filter((item) => item.status === "failed").length;
   const attemptedCount = items.filter((item) => item.sendAttempted).length;
@@ -71,6 +100,8 @@ export function LynxChecksPage() {
             { key: "request", label: "请求 ID" },
             { key: "source", label: "触发源" },
             { key: "status", label: "处理状态" },
+            { key: "taskState", label: "Task State", maxWidth: 180, minWidth: 140, width: 160 },
+            { key: "evidence", label: "证据", maxWidth: 320, minWidth: 230, width: 280 },
             { key: "delivery", label: "通知状态" },
             { key: "report", label: "报告路径" },
             { key: "created", label: "创建时间" },
@@ -81,6 +112,8 @@ export function LynxChecksPage() {
             request: <code>{item.requestId}</code>,
             source: formatDomainLabel(item.trigger),
             status: renderStateBadge(item.status),
+            taskState: item.status,
+            evidence: formatTaskEvidence(item),
             delivery: renderStateBadge(item.sendSucceeded ? "completed" : item.sendAttempted ? "failed" : "pending"),
             report: item.reportPath ?? "--",
             created: formatTimestamp(item.createdAtMs),

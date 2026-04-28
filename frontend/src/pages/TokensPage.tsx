@@ -11,7 +11,6 @@ import { DEFAULT_TABLE_PAGE_SIZE, DEFAULT_TABLE_PAGE_SIZE_OPTIONS, TablePaginati
 import { mockTokenSummary, mockTokenTrend, mockTokenUsage } from "../data/mock-console";
 import { paginateMockItems } from "../hooks/useCursorListResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
-import { renderStateBadge } from "../utils/status";
 
 const EMPTY_TOKEN_SUMMARY: TokenSummaryDto = {
   totalTokens: 0,
@@ -20,6 +19,7 @@ const EMPTY_TOKEN_SUMMARY: TokenSummaryDto = {
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
   estimatedCount: 0,
+  unavailableCount: 0,
   topModels: [],
 };
 
@@ -42,6 +42,19 @@ function formatRatio(input: number, output: number): string {
   }
 
   return `${(input / output).toFixed(2)}:1`;
+}
+
+function resolveSourceType(item: TokenUsageListItemDto): "actual" | "estimated" | "unavailable" {
+  return item.sourceType ?? (item.isEstimated ? "estimated" : "actual");
+}
+
+function formatSourceTypeLabel(sourceType: "actual" | "estimated" | "unavailable"): string {
+  const labels = {
+    actual: "实际",
+    estimated: "估算",
+    unavailable: "不可用",
+  };
+  return labels[sourceType];
 }
 
 export function TokensPage() {
@@ -177,6 +190,8 @@ export function TokensPage() {
   const totalTransferTokens = summary.inputTokens + summary.outputTokens;
   const inputPercent = percent(summary.inputTokens, totalTransferTokens);
   const outputPercent = percent(summary.outputTokens, totalTransferTokens);
+  const estimatedCount = summary.estimatedCount ?? 0;
+  const unavailableCount = summary.unavailableCount ?? 0;
   const trendLabels = useMemo(() => {
     if (trend.points.length > 0) {
       return trend.points.slice(-7).map((point) => formatTimestamp(point.bucketStartMs).split(" ")[0]);
@@ -240,11 +255,12 @@ export function TokensPage() {
       <section className="summary-card-grid">
         <article className="summary-card">
           <p className="summary-card__label">今日消耗总数</p>
+          <p className="summary-card__label">{loading ? "正在刷新 actual usage" : "实际总量"}</p>
           <strong className="summary-card__value">
             {formatInteger(summary.totalTokens)}
             <span className="summary-card__unit">Tokens</span>
           </strong>
-          <p className="summary-card__delta">↗ +12.5% 较昨日</p>
+          <p className="summary-card__delta">仅统计 provider/OpenClaw 返回的 actual usage</p>
         </article>
 
         <article className="summary-card ratio-card">
@@ -275,11 +291,11 @@ export function TokensPage() {
         </article>
 
         <article className="summary-card">
-          <p className="summary-card__label">模型平均负载 (LATENCY)</p>
+          <p className="summary-card__label">Usage 来源质量</p>
           <strong className="summary-card__value">
-            342ms
+            {formatInteger(estimatedCount + unavailableCount)}
           </strong>
-          <p className="summary-card__unit">P95 延迟指标</p>
+          <p className="summary-card__unit">非 actual 记录</p>
           <div className="latency-bars" aria-hidden="true">
             <span style={{ height: "32px" }} />
             <span style={{ height: "44px" }} />
@@ -287,7 +303,11 @@ export function TokensPage() {
             <span style={{ height: "48px" }} />
             <span style={{ height: "28px" }} />
           </div>
-          <p className="summary-card__delta">● 系统状态: 稳定</p>
+          <p className="summary-card__delta">
+            <span>估算记录 {formatInteger(estimatedCount)}</span>
+            <span> · </span>
+            <span>不可用记录 {formatInteger(unavailableCount)}</span>
+          </p>
         </article>
       </section>
 
@@ -319,25 +339,35 @@ export function TokensPage() {
             { key: "model", label: "模型名称" },
             { key: "io", label: "输入 / 输出" },
             { key: "total", label: "总词元" },
-            { key: "type", label: "类型" },
+            { key: "type", label: "来源类型" },
             { key: "time", label: "触发时间" },
           ]}
-          rows={usageItems.map((item) => ({
-            id: item.usageEventId,
-            session: item.sessionKey ?? "未知会话",
-            model: (
-              <div className="row-stack">
-                <span className={item.model.toLowerCase().includes("claude") ? "model-pill model-pill--dark" : "model-pill"}>
-                  {item.model}
-                </span>
-                <span>{item.provider} / {item.model}</span>
-              </div>
-            ),
-            io: `${formatInteger(item.inputTokens)} → ${formatInteger(item.outputTokens)}`,
-            total: <strong>{formatInteger(item.totalTokens)}</strong>,
-            type: renderStateBadge(item.isEstimated ? "estimated" : "actual"),
-            time: formatTimestamp(item.occurredAtMs),
-          }))}
+          rows={usageItems.map((item) => {
+            const sourceType = resolveSourceType(item);
+            return {
+              id: item.usageEventId,
+              session: item.sessionKey ?? "未知会话",
+              model: (
+                <div className="row-stack">
+                  <span className={item.model.toLowerCase().includes("claude") ? "model-pill model-pill--dark" : "model-pill"}>
+                    {item.model}
+                  </span>
+                  <span>{item.provider} / {item.model}</span>
+                </div>
+              ),
+              io: `${formatInteger(item.inputTokens)} → ${formatInteger(item.outputTokens)}`,
+              total: sourceType === "unavailable"
+                ? "未提供"
+                : <strong>{formatInteger(item.totalTokens)} tokens</strong>,
+              type: (
+                <div className="row-stack">
+                  <span>{sourceType}</span>
+                  <span>{formatSourceTypeLabel(sourceType)}</span>
+                </div>
+              ),
+              time: formatTimestamp(item.occurredAtMs),
+            };
+          })}
         />
         <TablePagination
           hasNextPage={Boolean(nextCursor)}

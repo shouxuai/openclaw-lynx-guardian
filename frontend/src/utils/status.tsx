@@ -6,8 +6,11 @@ const ACTION_LABELS: Record<string, string> = {
   allow: "放行",
   warn: "告警",
   redact: "脱敏",
+  require_approval: "审批",
   requireApproval: "审批",
   block: "阻断",
+  deny: "拒绝",
+  log_only: "记录",
   logOnly: "记录",
 };
 
@@ -15,8 +18,11 @@ const ACTION_TEXT_LABELS: Record<string, string> = {
   allow: "记录日志并放行",
   warn: "标记复核",
   redact: "敏感字段脱敏",
+  require_approval: "等待人工审批",
   requireApproval: "等待人工审批",
   block: "阻断请求",
+  deny: "拒绝请求",
+  log_only: "仅记录",
   logOnly: "仅记录",
 };
 
@@ -41,6 +47,7 @@ const STATE_LABELS: Record<string, string> = {
   blocked: "已阻断",
   estimated: "估算",
   actual: "实际",
+  unavailable: "不可用",
 };
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -88,13 +95,13 @@ function humanizeIdentifier(value: string): string {
 }
 
 function resolveActionTone(value: string | undefined): StatusBadgeProps["tone"] {
-  if (value === "block") {
+  if (value === "block" || value === "deny") {
     return "danger";
   }
-  if (value === "redact" || value === "requireApproval" || value === "warn") {
+  if (value === "redact" || value === "requireApproval" || value === "require_approval" || value === "warn") {
     return "warning";
   }
-  if (value === "allow") {
+  if (value === "allow" || value === "log_only") {
     return "success";
   }
   return "neutral";

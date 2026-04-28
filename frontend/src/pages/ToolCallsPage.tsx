@@ -9,6 +9,34 @@ import { paginateMockItems, useCursorListResource } from "../hooks/useCursorList
 import { formatDuration, formatInteger, formatTimestamp } from "../utils/format";
 import { formatToolLabel, renderStateBadge } from "../utils/status";
 
+function readToolMetadata(call: ToolCallListItemDto): Record<string, unknown> {
+  const value = (call as ToolCallListItemDto & { metadataJson?: Record<string, unknown> }).metadataJson;
+  return value ?? {};
+}
+
+function formatToolDecision(call: ToolCallListItemDto): string {
+  const metadata = readToolMetadata(call);
+  const decisionId = metadata.decisionId ?? (call as ToolCallListItemDto & { decisionId?: string }).decisionId;
+  const grantId = metadata.grantId ?? (call as ToolCallListItemDto & { grantId?: string }).grantId;
+
+  return [
+    decisionId ? `decision:${String(decisionId)}` : undefined,
+    grantId ? `grant:${String(grantId)}` : undefined,
+    call.approvalId ? `approval:${call.approvalId}` : undefined,
+  ].filter(Boolean).join("；") || "暂无";
+}
+
+function formatToolSignals(call: ToolCallListItemDto): string {
+  const metadata = readToolMetadata(call);
+  const taint = metadata.taintSummary ?? metadata.taintLabels ?? metadata.taint;
+  const exfiltration = metadata.exfiltrationSignal ?? metadata.exfiltration ?? metadata.externalTarget;
+
+  return [
+    taint ? `taint:${JSON.stringify(taint)}` : undefined,
+    exfiltration ? `exfil:${String(exfiltration)}` : undefined,
+  ].filter(Boolean).join("；") || "暂无";
+}
+
 export function ToolCallsPage() {
   const { items, loading, error, paginationProps } = useCursorListResource<ToolCallListItemDto, ToolCallListQuery>({
     fallbackPage: import.meta.env.DEV
@@ -80,6 +108,8 @@ export function ToolCallsPage() {
             { key: "time", label: "调用时间" },
             { key: "status", label: "状态" },
             { key: "duration", label: "耗时" },
+            { key: "decision", label: "决策 / Grant", maxWidth: 260, minWidth: 190, width: 230 },
+            { key: "signals", label: "Taint / 外传", maxWidth: 260, minWidth: 190, width: 230 },
             { key: "summary", label: "参数摘要" },
             { key: "detail", label: "详情" },
           ]}
@@ -89,6 +119,8 @@ export function ToolCallsPage() {
             time: formatTimestamp(call.startedAtMs),
             status: renderStateBadge(call.resultStatus),
             duration: formatDuration(call.durationMs),
+            decision: formatToolDecision(call),
+            signals: formatToolSignals(call),
             summary: call.resultExcerpt ?? "暂无结果摘要",
             detail: <a className="inline-link" href={`/tool-calls#${call.toolCallId}`}>查看 JSON</a>,
           }))}

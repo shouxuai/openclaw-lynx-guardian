@@ -1,5 +1,19 @@
 export const WEBVIEW_BASE_PATH = "/webview";
 
+export const ROUTE_PATHS = {
+  dashboard: "/",
+  events: "/events",
+  decisions: "/decisions",
+  toolCalls: "/tool-calls",
+  approvals: "/approvals",
+  chains: "/chains",
+  grants: "/grants",
+  lynxChecks: "/lynx-checks",
+  skills: "/skills",
+  sessions: "/sessions",
+  tokens: "/tokens",
+} as const;
+
 export function isWebviewPath(pathname: string): boolean {
   return pathname === WEBVIEW_BASE_PATH || pathname.startsWith(`${WEBVIEW_BASE_PATH}/`);
 }
