@@ -209,9 +209,10 @@ var toolEvidenceRules = []evidenceRule{
 		Reason:        "tool call attempts to disable plugin config",
 		HardRiskLevel: "L4",
 		HardAction:    "deny",
-		Matcher: func(_ api.DecisionRequest, text string) bool {
-			return containsAny(text, "openclaw.json", "config") &&
-				containsAny(text, "disabled", "disable", "false", "禁用", "关闭")
+		Matcher: func(req api.DecisionRequest, text string) bool {
+			flatText := normalizeDecisionText(text + " " + toolArgsFlatText(req.ToolArgs))
+			return containsAny(flatText, "openclaw.json", "config") &&
+				containsAny(flatText, "disabled", "disable", "false", "禁用", "关闭")
 		},
 	},
 	{

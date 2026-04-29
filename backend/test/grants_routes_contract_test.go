@@ -1,4 +1,4 @@
-package routes
+package backend_test
 
 import (
 	"database/sql"
@@ -14,6 +14,7 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/db"
 	"github.com/openclaw/lynx-guardian/backend/internal/grants"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
+	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	_ "modernc.org/sqlite"
 )
 
@@ -249,7 +250,7 @@ func TestChainSummaryAccumulatesEvents(t *testing.T) {
 		Action:         "deny",
 		Content:        "blocked prompt",
 	}, &first)
-	if !containsString(first.RecentDenials, "before_dispatch") {
+	if !contractContainsString(first.RecentDenials, "before_dispatch") {
 		t.Fatalf("first summary missing denial: %#v", first)
 	}
 
@@ -272,19 +273,19 @@ func TestChainSummaryAccumulatesEvents(t *testing.T) {
 		},
 	}, &second)
 
-	if !containsString(second.RecentDenials, "before_dispatch") {
+	if !contractContainsString(second.RecentDenials, "before_dispatch") {
 		t.Fatalf("second summary lost prior denial: %#v", second)
 	}
-	if !containsString(second.RecentApprovals, "before_tool_call") {
+	if !contractContainsString(second.RecentApprovals, "before_tool_call") {
 		t.Fatalf("second summary missing approval signal: %#v", second)
 	}
-	if !containsString(second.RecentTools, "read_file") {
+	if !contractContainsString(second.RecentTools, "read_file") {
 		t.Fatalf("second summary missing tool signal: %#v", second)
 	}
-	if !containsString(second.RecentSensitive, "C:/Users/example/.env") {
+	if !contractContainsString(second.RecentSensitive, "C:/Users/example/.env") {
 		t.Fatalf("second summary missing sensitive target: %#v", second)
 	}
-	if !containsString(second.RecentTaintReads, "secret-file") {
+	if !contractContainsString(second.RecentTaintReads, "secret-file") {
 		t.Fatalf("second summary missing taint signal: %#v", second)
 	}
 	if second.PendingApproval != "approval-accumulate" {
@@ -510,8 +511,8 @@ func setupGrantRouter(t *testing.T) *gin.Engine {
 	router := gin.New()
 	query := router.Group("/lynx")
 	internal := query.Group("/internal/v1")
-	RegisterChains(query, internal, chainService, chainRepository)
-	RegisterGrants(query, internal, grantService, grantRepository)
+	routes.RegisterChains(query, internal, chainService, chainRepository)
+	routes.RegisterGrants(query, internal, grantService, grantRepository)
 	return router
 }
 
@@ -537,6 +538,15 @@ func firstValue(values []string) string {
 		return ""
 	}
 	return values[0]
+}
+
+func contractContainsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func postJSON(t *testing.T, router http.Handler, method string, path string, body any) {

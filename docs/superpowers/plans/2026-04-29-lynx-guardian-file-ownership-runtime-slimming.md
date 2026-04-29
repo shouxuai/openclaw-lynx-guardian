@@ -138,7 +138,7 @@ Do not delete `Discuss Keep` files in this plan:
 - Move/convert: existing `backend/internal/**/_test.go`
 - Modify: backend test helpers under `backend/test/`
 
-- [ ] **Step 1: Add backend test layout audit**
+- [x] **Step 1: Add backend test layout audit**
 
 Create `backend/test/test_layout_contract_test.go`:
 
@@ -200,7 +200,7 @@ func backendRepoRoot(t *testing.T) string {
 }
 ```
 
-- [ ] **Step 2: Run layout audit and confirm failure**
+- [x] **Step 2: Run layout audit and confirm failure**
 
 Run:
 
@@ -212,7 +212,7 @@ Pop-Location
 
 Expected: FAIL, listing current files such as `internal/decision/*_test.go`, `internal/routes/*_test.go`, and `internal/db/*_test.go`.
 
-- [ ] **Step 3: Convert route tests to backend/test contract tests**
+- [x] **Step 3: Convert route tests to backend/test contract tests**
 
 Move route tests currently under `backend/internal/routes/*_test.go` into `backend/test/` as app/router contract tests.
 
@@ -233,7 +233,7 @@ backend/test/lynxcheck_tasks_routes_contract_test.go
 backend/test/skills_routes_contract_test.go
 ```
 
-- [ ] **Step 4: Convert db migration tests to backend/test**
+- [x] **Step 4: Convert db migration tests to backend/test**
 
 Move `backend/internal/db/*_test.go` coverage into `backend/test/db_migration_contract_test.go`.
 
@@ -251,7 +251,7 @@ import (
 
 Call `db.Migrate(database)` through the exported migration API. Keep the existing table/column assertions.
 
-- [ ] **Step 5: Convert decision white-box tests to public contract tests**
+- [x] **Step 5: Convert decision white-box tests to public contract tests**
 
 Do not move private function tests as same-package tests. Convert them to one of these public surfaces:
 
@@ -277,7 +277,7 @@ The converted tests must preserve behavior coverage from:
 - tool semantic and evidence arbiter results;
 - chain escalation and taint-to-external behavior.
 
-- [ ] **Step 6: Add L4 dual-corpus contract tests**
+- [x] **Step 6: Add L4 dual-corpus contract tests**
 
 Create `backend/test/decision_l4_dual_corpus_contract_test.go` with backend-side tests for the same L4 families protected by plugin local L4:
 
@@ -335,7 +335,7 @@ func TestGoMirrorsPluginLocalL4Families(t *testing.T) {
 
 Implement `postDecisionThroughTestApp`, `assertDecisionModules`, and `assertHasBothArbiters` using existing `backend/test` app helpers. Do not put these helpers under `backend/internal`.
 
-- [ ] **Step 7: Delete old internal test files after conversion**
+- [x] **Step 7: Delete old internal test files after conversion**
 
 After the converted `backend/test` coverage passes, remove all `backend/internal/**/_test.go` files.
 
@@ -347,7 +347,7 @@ Get-ChildItem backend\internal -Recurse -File -Filter *_test.go
 
 Expected: no output.
 
-- [ ] **Step 8: Verify Priority Task 0**
+- [x] **Step 8: Verify Priority Task 0**
 
 Run:
 

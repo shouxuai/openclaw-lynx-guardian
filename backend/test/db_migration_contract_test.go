@@ -1,22 +1,39 @@
-package db
+package backend_test
 
 import (
 	"database/sql"
 	"testing"
 
+	"github.com/openclaw/lynx-guardian/backend/internal/db"
 	_ "modernc.org/sqlite"
 )
 
-func TestQaRecordsMigrationCreatesPrimaryTableAndLinkColumns(t *testing.T) {
-	database, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	defer database.Close()
+func TestControlPlaneMigrationCreatesTables(t *testing.T) {
+	database := openMigrationContractDB(t)
 
-	if err := Migrate(database); err != nil {
-		t.Fatalf("migrate: %v", err)
+	required := []string{
+		"decisions",
+		"decision_arbiters",
+		"decision_evidence",
+		"chains",
+		"approval_grants",
+		"lynx_check_tasks",
+		"skill_inventory",
 	}
+	for _, table := range required {
+		var name string
+		err := database.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+			table,
+		).Scan(&name)
+		if err != nil {
+			t.Fatalf("missing table %s: %v", table, err)
+		}
+	}
+}
+
+func TestQaRecordsMigrationCreatesPrimaryTableAndLinkColumns(t *testing.T) {
+	database := openMigrationContractDB(t)
 
 	requiredQaColumns := []string{
 		"qa_record_id",
@@ -41,24 +58,39 @@ func TestQaRecordsMigrationCreatesPrimaryTableAndLinkColumns(t *testing.T) {
 		"link_origin",
 	}
 	for _, column := range requiredQaColumns {
-		if !hasColumn(t, database, "qa_records", column) {
+		if !migrationContractHasColumn(t, database, "qa_records", column) {
 			t.Fatalf("qa_records missing column %s", column)
 		}
 	}
 
 	for _, table := range []string{"audit_events", "tool_calls", "approvals", "lynx_checks", "token_usage"} {
-		if !hasColumn(t, database, table, "qa_record_id") {
+		if !migrationContractHasColumn(t, database, table, "qa_record_id") {
 			t.Fatalf("%s missing qa_record_id link column", table)
 		}
 	}
 	for _, table := range []string{"lynx_checks", "lynx_check_tasks"} {
-		if !hasColumn(t, database, table, "report_markdown") {
+		if !migrationContractHasColumn(t, database, table, "report_markdown") {
 			t.Fatalf("%s missing report_markdown column", table)
 		}
 	}
 }
 
-func hasColumn(t *testing.T, database *sql.DB, table string, column string) bool {
+func openMigrationContractDB(t *testing.T) *sql.DB {
+	t.Helper()
+
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if err := db.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return database
+}
+
+func migrationContractHasColumn(t *testing.T, database *sql.DB, table string, column string) bool {
 	t.Helper()
 	rows, err := database.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {

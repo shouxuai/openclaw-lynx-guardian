@@ -1,4 +1,4 @@
-package routes
+package backend_test
 
 import (
 	"database/sql"
@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/openclaw/lynx-guardian/backend/internal/db"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
+	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	"github.com/openclaw/lynx-guardian/backend/internal/tasks"
 	_ "modernc.org/sqlite"
 )
@@ -166,7 +167,7 @@ func setupLynxCheckTaskRouter(t *testing.T) *gin.Engine {
 	router := gin.New()
 	query := router.Group("/lynx")
 	internal := query.Group("/internal/v1")
-	RegisterLynxCheckTasks(query, internal, service, repository)
+	routes.RegisterLynxCheckTasks(query, internal, service, repository)
 	return router
 }
 

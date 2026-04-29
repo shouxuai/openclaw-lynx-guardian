@@ -1,4 +1,4 @@
-package routes
+package backend_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/db"
 	"github.com/openclaw/lynx-guardian/backend/internal/decision"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
+	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	_ "modernc.org/sqlite"
 )
 
@@ -342,7 +343,7 @@ func setupDecisionRouterWithDB(t *testing.T) (*gin.Engine, *repo.DecisionReposit
 	router := gin.New()
 	query := router.Group("/lynx")
 	internal := query.Group("/internal/v1")
-	RegisterDecisions(query, internal, service, repository)
+	routes.RegisterDecisions(query, internal, service, repository)
 	return router, repository, database
 }
 

@@ -1,4 +1,4 @@
-package routes
+package backend_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 	"github.com/openclaw/lynx-guardian/backend/internal/db"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
+	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	"github.com/openclaw/lynx-guardian/backend/internal/skills"
 	_ "modernc.org/sqlite"
 )
@@ -206,7 +207,7 @@ func setupSkillRouter(t *testing.T) *gin.Engine {
 	router := gin.New()
 	query := router.Group("/lynx")
 	internal := query.Group("/internal/v1")
-	RegisterSkills(query, internal, service, repository)
+	routes.RegisterSkills(query, internal, service, repository)
 	return router
 }
 
@@ -217,7 +218,7 @@ func setupTokenRouter(t *testing.T) (*gin.Engine, *sql.DB) {
 	database := openMigratedTestDB(t)
 	router := gin.New()
 	query := router.Group("/lynx")
-	RegisterTokens(query, repo.NewTokensRepository(database))
+	routes.RegisterTokens(query, repo.NewTokensRepository(database))
 	return router, database
 }
 
