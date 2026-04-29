@@ -1584,7 +1584,7 @@ git commit -m "feat: add go chain escalation signals"
 - Test: `backend/internal/routes/decision_test.go`
 - Test: `frontend/test/app/nav-config.test.ts` only if frontend labels change
 
-- [ ] **Step 1: Audit whether DTO changes are necessary**
+- [x] **Step 1: Audit whether DTO changes are necessary**
 
 Run:
 
@@ -1595,7 +1595,7 @@ Get-Content shared\src\decision.ts | Select-String -Pattern "DecisionResponse|Ar
 
 Expected: existing DTOs already contain arbiters, evidence, score breakdown, matched modules, action, risk, and audit color. If so, do not add new DTO fields.
 
-- [ ] **Step 2: Add route-level evidence regression**
+- [x] **Step 2: Add route-level evidence regression**
 
 Append a route test in `backend/internal/routes/decision_test.go` for a Chinese evasive request:
 
@@ -1621,7 +1621,7 @@ func TestDecisionRouteReturnsBothArbitersForChineseEvasion(t *testing.T) {
 
 If the route test helpers use different names, adapt the body to the existing helpers in the same file without changing the assertion meaning.
 
-- [ ] **Step 3: Run route tests**
+- [x] **Step 3: Run route tests**
 
 Run:
 
@@ -1633,7 +1633,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit Task 7**
+- [x] **Step 4: Commit Task 7**
 
 ```powershell
 git add backend/internal/api/dto.go shared/src/decision.ts backend/internal/routes/decision_test.go frontend/src/utils/status.tsx frontend/test/app/nav-config.test.ts
