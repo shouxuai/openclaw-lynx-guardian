@@ -6,6 +6,18 @@ import (
 
 var inputEvidenceRules = []evidenceRule{
 	{
+		ID:         "input.safe_security_education",
+		Module:     "security_education",
+		Kind:       "safe_prompt_discussion",
+		Source:     "input",
+		Severity:   "info",
+		ScoreDelta: 20,
+		Reason:     "input asks for high-level prompt or security education without protected text",
+		Matcher: func(_ api.DecisionRequest, text string) bool {
+			return asksSafePromptEducation(text)
+		},
+	},
+	{
 		ID:            "input.system_prompt_extraction_terms",
 		Module:        "prompt_protection",
 		Kind:          "protected_prompt",

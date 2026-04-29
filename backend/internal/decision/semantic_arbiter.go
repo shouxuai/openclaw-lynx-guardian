@@ -23,6 +23,8 @@ func (semanticArbiter) Evaluate(
 		return result, nil
 	}
 	switch {
+	case asksSafePromptEducation(text):
+		return semanticResult("L1", "log_only", 10, "security_education", "safe high-level prompt or security education request"), nil
 	case asksSecurityEducationWithoutCode(text):
 		return semanticResult("L1", "log_only", 10, "semantic.security_education", "security education request without code generation"), nil
 	case chainHasPendingApproval(chain):
@@ -81,8 +83,24 @@ func chainHasRecentEvasionFamilies(chain ChainSummary, families ...string) bool 
 }
 
 func asksForProtectedPrompt(text string) bool {
+	if asksSafePromptEducation(text) {
+		return false
+	}
 	return containsAny(text, "system prompt", "developer instruction", "系统提示", "系统提示词", "开发者指令", "安全规则原文") ||
 		(containsAny(text, "管理员", "administrator", "admin") && containsAny(text, "prompt", "规则", "指令"))
+}
+
+func asksSafePromptEducation(text string) bool {
+	if !containsAny(text, "system prompt", "developer instruction", "hidden instruction", "security rule", "系统提示", "开发者指令", "安全规则") {
+		return false
+	}
+	if !containsAny(text, "explain", "what is", "what a", "concept", "high level", "overview", "解释", "概念", "高层次") {
+		return false
+	}
+	if !containsAny(text, "without revealing", "without printing", "do not reveal", "do not print", "no hidden instructions", "不要泄露", "不要输出原文", "不输出原文") {
+		return false
+	}
+	return !containsAny(text, "verbatim", "raw", "in full", "print your", "dump", "原文", "完整打印")
 }
 
 func asksToBypassApproval(text string) bool {

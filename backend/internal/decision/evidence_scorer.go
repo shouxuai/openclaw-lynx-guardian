@@ -175,6 +175,9 @@ type evidenceRule struct {
 
 func (r evidenceRule) matches(req api.DecisionRequest) bool {
 	text := requestText(req)
+	if isProtectedPromptExtractionRule(r.ID) && asksSafePromptEducation(text) {
+		return false
+	}
 	if r.Matcher != nil {
 		return r.Matcher(req, text)
 	}
@@ -185,6 +188,17 @@ func (r evidenceRule) matches(req api.DecisionRequest) bool {
 		return false
 	}
 	return len(r.AnyTerms) > 0 || len(r.AllTerms) > 0
+}
+
+func isProtectedPromptExtractionRule(ruleID string) bool {
+	switch ruleID {
+	case "input.system_prompt_extraction_terms",
+		"input.developer_instruction_extraction_terms",
+		"input.security_rule_raw_print_terms":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r evidenceRule) matchesWithChain(req api.DecisionRequest, chain ChainSummary) bool {

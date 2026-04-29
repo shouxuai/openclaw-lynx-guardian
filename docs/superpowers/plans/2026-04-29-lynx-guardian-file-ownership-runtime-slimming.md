@@ -641,7 +641,7 @@ git commit -m "refactor: remove root api compatibility shim"
 - Modify: `src/guard/global-allowlist.ts`
 - Modify: `src/guard/safety-guard.ts`
 
-- [ ] **Step 1: Add backend contract tests for migrated corpora**
+- [x] **Step 1: Add backend contract tests for migrated corpora**
 
 Create `backend/test/decision_corpus_contract_test.go`. Use the existing backend app test helpers in `backend/test` for app setup. If no helper exists for decision routes, add a small local helper in this test file that posts to `/lynx/internal/v1/decision/input`, `/tool`, and `/output`.
 
@@ -698,7 +698,7 @@ var corpusContractCases = []struct {
 
 The assertions must check both `semantic_intent` and `evidence_score` arbiters when the route returns arbiter details.
 
-- [ ] **Step 2: Run contract tests and confirm current gaps**
+- [x] **Step 2: Run contract tests and confirm current gaps**
 
 Run:
 
@@ -710,7 +710,7 @@ Pop-Location
 
 Expected: FAIL for any corpus family not yet owned by Go.
 
-- [ ] **Step 3: Implement missing Go corpora and evidence rules**
+- [x] **Step 3: Implement missing Go corpora and evidence rules**
 
 Modify existing files under `backend/internal/decision` instead of adding a generic engine:
 
@@ -731,6 +731,8 @@ For `src/guard/concealed-intent.ts`, `src/guard/prompt-injection.ts`, `src/guard
 - keep a mirrored Go L4 corpus for every retained local L4 family that can be represented in `DecisionRequest`;
 - keep test fixtures outside `src` if needed.
 
+Observed during Task 3: the Go decision corpus contract now covers Chinese evasive intent, prompt extraction, concealed execution, and safe metadata-only prompt education through existing decision routes. TypeScript guard corpus reduction is intentionally still open and will be completed with the local L4/guard facade split in Task 4 and Task 5.
+
 - [ ] **Step 5: Verify Task 3**
 
 Run:
@@ -745,6 +747,8 @@ npx tsc --noEmit
 ```
 
 Expected: backend corpus contracts pass, Go mirror L4 contracts pass, local L4 still passes without Go, TypeScript compiles.
+
+Observed during Task 3: `go test ./test -run TestDecisionCorpusContracts -count=1`, backend `go test ./... -count=1`, `test/local-l4-fast-path.test.ts`, `test/safety-guard.test.ts`, and `npx tsc --noEmit` pass. `test/src-file-ownership-audit.test.ts` still fails only on the known Task 5 dependency from `src/local-guard/output-protection.ts` to `src/guard/safety-guard.ts`.
 
 - [ ] **Step 6: Commit Task 3**
 
