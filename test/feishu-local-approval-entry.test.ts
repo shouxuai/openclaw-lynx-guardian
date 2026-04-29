@@ -4,8 +4,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 import setup from "../index.ts";
 import * as utils from "../src/utils.js";
-import * as api from "../src/api.js";
-import * as remoteApi from "../src/api/remote-safety-service.js";
+import * as api from "../src/api/remote-safety-service.js";
 import * as safetyGuard from "../src/guard/safety-guard.js";
 import * as runtimeConfig from "../src/discovery/discovery-runtime-config.js";
 import * as tokenOptimizerRunner from "../src/runtime/token-optimizer-runner.js";
@@ -30,7 +29,6 @@ import {
 } from "../src/approval/approval-bridge.js";
 
 vi.mock("../src/utils.js");
-vi.mock("../src/api.js");
 vi.mock("../src/api/remote-safety-service.js");
 vi.mock("../src/discovery/discovery-runtime-config.js", () => ({
   DISCOVERY_CONFIG_SOURCE_PATH: "openclaw.plugin.json",
@@ -104,23 +102,6 @@ describe("feishu local approval entry", () => {
       message: "ok",
     } as any);
     vi.mocked(api.checkTool).mockResolvedValue({
-      code: 200,
-      result: { is_safe: true, risk_level: 0, content: "" },
-      message: "ok",
-    } as any);
-    vi.mocked(remoteApi.registerUser).mockResolvedValue({ code: 200, id: "TEST_ID", message: "OK" } as any);
-    vi.mocked(remoteApi.pushRecord).mockResolvedValue({ code: 200, message: "OK" } as any);
-    vi.mocked(remoteApi.checkPublicAccess).mockResolvedValue({
-      code: 200,
-      result: { is_public: false },
-      message: "ok",
-    } as any);
-    vi.mocked(remoteApi.checkContent).mockResolvedValue({
-      code: 200,
-      result: { is_safe: true, risk_level: 0, level_one: "other", level_two: "other", level_three: "other" },
-      message: "ok",
-    } as any);
-    vi.mocked(remoteApi.checkTool).mockResolvedValue({
       code: 200,
       result: { is_safe: true, risk_level: 0, content: "" },
       message: "ok",

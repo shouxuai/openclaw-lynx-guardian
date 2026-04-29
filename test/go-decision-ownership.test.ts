@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync, statSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
 
 const repoRoot = process.cwd();
@@ -19,10 +19,6 @@ function rel(path: string): string {
   return relative(repoRoot, path).replace(/\\/g, "/");
 }
 
-function readRel(path: string): string {
-  return readFileSync(join(repoRoot, path), "utf8").trim();
-}
-
 describe("Go decision ownership", () => {
   it("keeps rich Chinese evasive intent detector out of active plugin runtime", () => {
     const srcFiles = listFiles(join(repoRoot, "src"));
@@ -38,8 +34,8 @@ describe("Go decision ownership", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("keeps src/api.ts as a compatibility shim only", () => {
-    expect(readRel("src/api.ts")).toBe('export * from "./api/remote-safety-service.js";');
+  it("does not keep a root src/api.ts shim", () => {
+    expect(existsSync(join(repoRoot, "src/api.ts"))).toBe(false);
   });
 
   it("keeps Go control-plane requests centralized", () => {

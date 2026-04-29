@@ -536,7 +536,7 @@ npx vitest run test/src-file-ownership-audit.test.ts
 
 Expected: FAIL because `src/api.ts` still exists and `src/local-guard/output-protection.ts` still imports `src/guard/safety-guard.ts`.
 
-- [ ] **Step 3: Commit Task 1**
+- [x] **Step 3: Commit Task 1**
 
 ```powershell
 git add test/src-file-ownership-audit.test.ts test/runtime-slimming-audit.test.ts
@@ -556,7 +556,7 @@ If the worktree still contains unrelated dirty changes, stage only the files abo
 - Modify: `test/go-decision-ownership.test.ts`
 - Modify: `test/api-boundary.test.ts`
 
-- [ ] **Step 1: Update tests to import the explicit remote API**
+- [x] **Step 1: Update tests to import the explicit remote API**
 
 Replace imports like:
 
@@ -587,7 +587,7 @@ import {
 } from "../src/api/remote-safety-service.js";
 ```
 
-- [ ] **Step 2: Update ownership tests**
+- [x] **Step 2: Update ownership tests**
 
 In `test/go-decision-ownership.test.ts`, replace the shim assertion with:
 
@@ -599,7 +599,7 @@ it("does not keep a root src/api.ts shim", () => {
 
 Add `existsSync` to the existing `fs` import if needed.
 
-- [ ] **Step 3: Delete `src/api.ts`**
+- [x] **Step 3: Delete `src/api.ts`**
 
 Remove the file:
 
@@ -607,7 +607,7 @@ Remove the file:
 Remove-Item -LiteralPath src\api.ts
 ```
 
-- [ ] **Step 4: Verify API boundary**
+- [x] **Step 4: Verify API boundary**
 
 Run:
 
@@ -618,7 +618,9 @@ npx tsc --noEmit
 
 Expected: PASS for API boundary and TypeScript compile.
 
-- [ ] **Step 5: Commit Task 2**
+Observed during Task 2: API boundary, Go ownership, affected approval/plugin tests, and TypeScript compile pass. `test/src-file-ownership-audit.test.ts` still fails only on the Task 5 `output-protection` dependency on `safety-guard`.
+
+- [x] **Step 5: Commit Task 2**
 
 ```powershell
 git add test/api.test.ts test/api-boundary.test.ts test/go-decision-ownership.test.ts test/src-file-ownership-audit.test.ts test/approval-channel-alignment.test.ts test/feishu-local-approval-entry.test.ts

@@ -1,6 +1,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { registerUser, checkContent, checkTool, pushRecord } from '../src/api.js';
+import {
+  registerUser,
+  checkContent,
+  checkTool,
+  pushRecord,
+} from '../src/api/remote-safety-service.js';
 
 // Mock fetch globally
 global.fetch = vi.fn();
