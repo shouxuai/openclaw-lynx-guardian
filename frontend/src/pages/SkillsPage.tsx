@@ -120,6 +120,7 @@ export function SkillsPage() {
             { key: "lastSeen", label: "最后发现", maxWidth: 210, minWidth: 160, width: 180 },
             { key: "path", label: "安装路径", maxWidth: 320, minWidth: 230, width: 280 },
           ]}
+          loading={loading}
           rows={items.map((item) => ({
             id: item.skillId,
             skill: (

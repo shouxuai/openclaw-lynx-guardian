@@ -10,6 +10,7 @@ import type { LocalConsoleIngestClient } from "./ingest-client.js";
 
 export const LOCAL_CONSOLE_CHARS_PER_TOKEN_ESTIMATE = 4;
 
+const STORED_EXCERPT_MAX_CHARS = 1_024;
 const NON_LATIN_RE = /[\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7AF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/gu;
 const CJK_SURROGATE_HIGH_RE = /[\uD840-\uD87E][\uDC00-\uDFFF]/g;
 
@@ -360,13 +361,13 @@ function normalizeTokenCount(value: unknown): number | undefined {
   return Math.max(0, Math.trunc(normalized));
 }
 
-function truncateText(value: unknown, maxLength = 320): string | undefined {
+function truncateText(value: unknown, maxLength = STORED_EXCERPT_MAX_CHARS): string | undefined {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text) {
     return undefined;
   }
 
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}...`;
+  return text.length <= maxLength ? text : text.slice(0, maxLength);
 }
 
 function buildStableId(prefix: string, parts: Array<string | number | undefined>): string {

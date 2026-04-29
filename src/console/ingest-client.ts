@@ -27,6 +27,7 @@ interface LocalConsoleClientOptions {
 const INGEST_KIND_ENDPOINTS: Record<IngestItemV1["kind"], string> = {
   auditEvent: "audit-events",
   sessionUpsert: "sessions",
+  qaRecordUpsert: "qa-records",
   toolCallUpsert: "tool-calls",
   approvalUpsert: "approvals",
   lynxCheckUpsert: "lynx-checks",

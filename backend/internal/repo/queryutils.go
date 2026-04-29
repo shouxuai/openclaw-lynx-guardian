@@ -2,6 +2,8 @@
 package repo
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/service"
@@ -101,6 +103,25 @@ func (f *Filter) AppendDescendingCursor(sortField, idField string, cursor *servi
 	f.clauses = append(f.clauses,
 		"("+sortField+" < ? OR ("+sortField+" = ? AND "+idField+" < ?))")
 	f.params = append(f.params, cursor.SortValue, cursor.SortValue, cursor.ID)
+}
+
+func countRows(db *sql.DB, tableExpr string, filter *Filter) (int, error) {
+	var total int
+	err := db.QueryRow(
+		"SELECT COUNT(*) FROM "+tableExpr+" "+filter.Where(),
+		filter.Params()...,
+	).Scan(&total)
+	return total, err
+}
+
+func countRowsContext(ctx context.Context, db *sql.DB, tableExpr string, filter *Filter) (int, error) {
+	var total int
+	err := db.QueryRowContext(
+		ctx,
+		"SELECT COUNT(*) FROM "+tableExpr+" "+filter.Where(),
+		filter.Params()...,
+	).Scan(&total)
+	return total, err
 }
 
 func escapeLikePattern(value string) string {

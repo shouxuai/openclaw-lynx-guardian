@@ -93,7 +93,11 @@ export interface DataTableRow {
 
 export interface DataTableProps {
   columns: DataTableColumn[];
+  loading?: boolean;
+  loadingLabel?: string;
+  onRowClick?: (row: DataTableRow) => void;
   rows: DataTableRow[];
+  selectedRowId?: string;
 }
 
 function isPrimitiveCell(value: ReactNode): value is string | number {
@@ -214,7 +218,23 @@ function resolveTableMinWidth(columns: DataTableColumn[]): number {
   return columns.reduce((total, column) => total + resolveColumnSize(column).width, 0);
 }
 
-export function DataTable({ columns, rows }: DataTableProps) {
+function buildRowClassName(clickable: boolean, selected: boolean): string | undefined {
+  const classes = [
+    clickable ? "data-table__row--clickable" : undefined,
+    selected ? "data-table__row--selected" : undefined,
+  ].filter(Boolean);
+
+  return classes.length > 0 ? classes.join(" ") : undefined;
+}
+
+export function DataTable({
+  columns,
+  loading = false,
+  loadingLabel = "正在加载列表数据",
+  onRowClick,
+  rows,
+  selectedRowId,
+}: DataTableProps) {
   return (
     <div className="table-wrap">
       <table className="data-table" style={{ minWidth: resolveTableMinWidth(columns) }}>
@@ -237,8 +257,27 @@ export function DataTable({ columns, rows }: DataTableProps) {
           </tr>
         </thead>
         <tbody>
+          {loading ? (
+            <tr className="data-table__loading-row">
+              <td className="data-table__loading-cell" colSpan={columns.length}>
+                <span className="data-table__loading-status" role="status">{loadingLabel}</span>
+              </td>
+            </tr>
+          ) : null}
           {rows.map((row) => (
-            <tr key={row.id}>
+            <tr
+              aria-selected={selectedRowId ? row.id === selectedRowId : undefined}
+              className={buildRowClassName(Boolean(onRowClick), row.id === selectedRowId)}
+              key={row.id}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              onKeyDown={onRowClick ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onRowClick(row);
+                }
+              } : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
+            >
               {columns.map((column, columnIndex) => (
                 <td
                   className={buildColumnCellClassName(column)}

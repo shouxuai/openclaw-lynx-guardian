@@ -19,6 +19,8 @@ import { SensitiveDataBlocker } from "../local-guard/sensitive-patterns.js";
 type JsonRecord = Record<string, unknown>;
 
 const auditExcerptRedactor = new SensitiveDataBlocker();
+const STORED_EXCERPT_MAX_CHARS = 1_024;
+const RESULT_STATUS_MAX_CHARS = 64;
 
 interface BaseHookInput {
   occurredAtMs?: number;
@@ -198,7 +200,7 @@ function normalizeOccurredAtMs(value: number | undefined): number {
     : Date.now();
 }
 
-function truncateText(value: unknown, maxLength = 240): string | undefined {
+function truncateText(value: unknown, maxLength = STORED_EXCERPT_MAX_CHARS): string | undefined {
   const text = typeof value === "string"
     ? value.trim()
     : typeof value === "number" || typeof value === "boolean"
@@ -207,10 +209,10 @@ function truncateText(value: unknown, maxLength = 240): string | undefined {
   if (!text) {
     return undefined;
   }
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}...`;
+  return text.length <= maxLength ? text : text.slice(0, maxLength);
 }
 
-function redactAuditExcerpt(value: unknown, maxLength = 320): string | undefined {
+function redactAuditExcerpt(value: unknown, maxLength = STORED_EXCERPT_MAX_CHARS): string | undefined {
   const text = typeof value === "string"
     ? value.trim()
     : typeof value === "number" || typeof value === "boolean"
@@ -279,7 +281,7 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
   const payloadJson = cleanRecord({
     ...(input.payloadJson ?? {}),
   });
-  const contentExcerpt = redactAuditExcerpt(input.contentExcerpt, 320);
+  const contentExcerpt = redactAuditExcerpt(input.contentExcerpt, STORED_EXCERPT_MAX_CHARS);
   const eventId = buildStableId("audit", [
     input.hookName,
     input.sessionKey,
@@ -318,8 +320,8 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
       policyDecision: input.policyDecision,
       enforcementAction: resolveEnforcementAction(input.enforcementAction),
       title: input.title,
-      summary: truncateText(input.summary, 320),
-      recommendation: truncateText(input.recommendation, 320),
+      summary: truncateText(input.summary, STORED_EXCERPT_MAX_CHARS),
+      recommendation: truncateText(input.recommendation, STORED_EXCERPT_MAX_CHARS),
       contentExcerpt,
       contentHash: hashValue(contentExcerpt),
       payloadJson,
@@ -389,7 +391,7 @@ function createToolCallUpsert(input: BeforeToolCallInput | AfterToolCallInput, p
       runId: input.runId,
       approvalId: input.approvalId,
       toolName: input.toolName,
-      paramSummary: truncateText(input.paramSummary ?? stableSerialize(input.params), 320),
+      paramSummary: truncateText(input.paramSummary ?? stableSerialize(input.params), STORED_EXCERPT_MAX_CHARS),
       paramHash: hashValue(input.params),
       triggeredModules: input.triggeredModules ?? input.modules,
       riskLevel: input.riskLevel,
@@ -399,9 +401,9 @@ function createToolCallUpsert(input: BeforeToolCallInput | AfterToolCallInput, p
       startedAtMs: phase === "before" ? occurredAtMs : normalizeOccurredAtMs((input as AfterToolCallInput).finishedAtMs ?? input.occurredAtMs),
       finishedAtMs: phase === "after" ? normalizeOccurredAtMs((input as AfterToolCallInput).finishedAtMs ?? input.occurredAtMs) : undefined,
       durationMs: phase === "after" ? (input as AfterToolCallInput).durationMs : undefined,
-      resultStatus: phase === "after" ? truncateText((input as AfterToolCallInput).resultStatus, 64) : undefined,
-      resultExcerpt: phase === "after" ? truncateText((input as AfterToolCallInput).resultExcerpt, 320) : undefined,
-      errorText: phase === "after" ? truncateText((input as AfterToolCallInput).errorText, 320) : undefined,
+      resultStatus: phase === "after" ? truncateText((input as AfterToolCallInput).resultStatus, RESULT_STATUS_MAX_CHARS) : undefined,
+      resultExcerpt: phase === "after" ? truncateText((input as AfterToolCallInput).resultExcerpt, STORED_EXCERPT_MAX_CHARS) : undefined,
+      errorText: phase === "after" ? truncateText((input as AfterToolCallInput).errorText, STORED_EXCERPT_MAX_CHARS) : undefined,
       metadataJson: cleanRecord({
         ...(input.metadataJson ?? {}),
       }),
@@ -439,7 +441,7 @@ function createApprovalUpsert(input: ApprovalSnapshotInput, fallback: BaseHookIn
       expiresAtMs: input.expiresAtMs,
       resolvedAtMs: input.resolvedAtMs,
       resolution: input.resolution,
-      promptExcerpt: redactAuditExcerpt(input.promptExcerpt, 320),
+      promptExcerpt: redactAuditExcerpt(input.promptExcerpt, STORED_EXCERPT_MAX_CHARS),
       auditSummaryJson: cleanRecord({
         ...(input.auditSummaryJson ?? {}),
       }),
@@ -472,7 +474,7 @@ function createLynxCheckUpsert(input: LynxCheckSnapshotInput): LynxCheckUpsertIt
       sendSucceeded: input.sendSucceeded,
       transport: input.transport,
       reportPath: input.reportPath,
-      errorMessage: truncateText(input.errorMessage, 320),
+      errorMessage: truncateText(input.errorMessage, STORED_EXCERPT_MAX_CHARS),
       deliveryAttemptsJson: input.deliveryAttemptsJson,
       createdAtMs: input.createdAtMs,
       completedAtMs: input.completedAtMs,
@@ -756,7 +758,7 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
           payloadJson: cleanRecord({
             ...(input.payloadJson ?? {}),
             toolName: input.toolName,
-            paramSummary: truncateText(input.paramSummary ?? stableSerialize(input.params), 320),
+            paramSummary: truncateText(input.paramSummary ?? stableSerialize(input.params), STORED_EXCERPT_MAX_CHARS),
           }),
         }),
       );

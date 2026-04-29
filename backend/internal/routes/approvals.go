@@ -17,6 +17,8 @@ func RegisterApprovals(router gin.IRoutes, repository *repo.ApprovalsRepository)
 			SessionKey:    httpserver.ReadString(values, "sessionKey"),
 			RunID:         httpserver.ReadString(values, "runId"),
 			RiskLevel:     httpserver.ReadStringSlice(values, "riskLevel"),
+			PageNum:       httpserver.ReadInt(values, "pageNum"),
+			PageSize:      httpserver.ReadInt(values, "pageSize"),
 			Limit:         httpserver.ReadInt(values, "limit"),
 			Cursor:        httpserver.ReadString(values, "cursor"),
 			Resolution:    httpserver.ReadString(values, "resolution"),

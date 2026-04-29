@@ -234,7 +234,7 @@ func (r *DashboardRepository) recentHighRiskEvents(filter *Filter) ([]map[string
 	rows, err := r.db.Query(
 		`
 		SELECT
-			event_id, session_key, run_id, tool_call_id, approval_id, request_id,
+			event_id, qa_record_id, session_key, run_id, tool_call_id, approval_id, request_id,
 			source_kind, hook_name, event_type, category, sub_category, direction,
 			primary_module, risk_level, risk_score, policy_decision, enforcement_action,
 			title, summary, recommendation, content_excerpt, occurred_at
@@ -253,7 +253,7 @@ func (r *DashboardRepository) recentHighRiskEvents(filter *Filter) ([]map[string
 	for rows.Next() {
 		var row auditEventListRow
 		if err := rows.Scan(
-			&row.EventID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
+			&row.EventID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
 			&row.RequestID, &row.SourceKind, &row.HookName, &row.EventType, &row.Category,
 			&row.SubCategory, &row.Direction, &row.PrimaryModule, &row.RiskLevel,
 			&row.RiskScore, &row.PolicyDecision, &row.EnforcementAction, &row.Title,
@@ -270,7 +270,7 @@ func (r *DashboardRepository) recentToolCalls(filter *Filter) ([]map[string]any,
 	rows, err := r.db.Query(
 		`
 		SELECT
-			tool_call_id, session_key, run_id, approval_id, tool_name, risk_level,
+			tool_call_id, qa_record_id, session_key, run_id, approval_id, tool_name, risk_level,
 			risk_score, policy_decision, enforcement_action, started_at, finished_at,
 			duration_ms, result_status, result_excerpt
 		FROM tool_calls
@@ -288,7 +288,7 @@ func (r *DashboardRepository) recentToolCalls(filter *Filter) ([]map[string]any,
 	for rows.Next() {
 		var row toolCallListRow
 		if err := rows.Scan(
-			&row.ToolCallID, &row.SessionKey, &row.RunID, &row.ApprovalID,
+			&row.ToolCallID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ApprovalID,
 			&row.ToolName, &row.RiskLevel, &row.RiskScore, &row.PolicyDecision,
 			&row.EnforcementAction, &row.StartedAt, &row.FinishedAt, &row.DurationMs,
 			&row.ResultStatus, &row.ResultExcerpt,
@@ -304,7 +304,7 @@ func (r *DashboardRepository) recentApprovals(filter *Filter) ([]any, error) {
 	rows, err := r.db.Query(
 		`
 		SELECT
-			approval_id, pending_id, session_key, run_id, transport, requester_ou_id,
+			approval_id, qa_record_id, pending_id, session_key, run_id, transport, requester_ou_id,
 			module, risk_level, tool_name, scope_type, requested_at, expires_at,
 			resolved_at, resolution, prompt_excerpt
 		FROM approvals
@@ -322,7 +322,7 @@ func (r *DashboardRepository) recentApprovals(filter *Filter) ([]any, error) {
 	for rows.Next() {
 		var row approvalListRow
 		if err := rows.Scan(
-			&row.ApprovalID, &row.PendingID, &row.SessionKey, &row.RunID,
+			&row.ApprovalID, &row.QARecordID, &row.PendingID, &row.SessionKey, &row.RunID,
 			&row.Transport, &row.RequesterOuID, &row.Module, &row.RiskLevel,
 			&row.ToolName, &row.ScopeType, &row.RequestedAt, &row.ExpiresAt,
 			&row.ResolvedAt, &row.Resolution, &row.PromptExcerpt,

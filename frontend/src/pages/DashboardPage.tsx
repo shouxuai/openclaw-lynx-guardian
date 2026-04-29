@@ -448,6 +448,7 @@ export function DashboardPage() {
             { key: "recommendation", label: "处置建议" },
             { key: "time", label: "时间" },
           ]}
+          loading={loading}
           rows={dashboard.recentHighRiskEvents.map((event) => ({
             id: event.eventId,
             risk: renderRiskBadge(event.riskLevel),

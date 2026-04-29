@@ -10,7 +10,7 @@ import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
 import { filterPresets } from "../data/filter-presets";
-import { useCursorListResource } from "../hooks/useCursorListResource";
+import { usePagedListResource } from "../hooks/usePagedListResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import { formatDomainLabel, renderRiskBadge } from "../utils/status";
 
@@ -27,28 +27,39 @@ function formatTokenSummary(summary: SessionDetailDto["tokenSummary"] | undefine
 }
 
 export function SessionsPage() {
-  const { items, loading, error, paginationProps } = useCursorListResource<SessionListItemDto, SessionListQuery>({
+  const { items, loading, error, paginationProps } = usePagedListResource<SessionListItemDto, SessionListQuery>({
     loadPage: listSessions,
     query: {},
   });
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionDetailDto | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
 
   useEffect(() => {
-    let active = true;
     const firstSession = items[0];
-
     if (!firstSession) {
+      setSelectedSessionKey(null);
       setDetail(null);
       setDetailError(null);
-      return () => {
-        active = false;
-      };
+      return;
     }
+
+    if (!selectedSessionKey || !items.some((item) => item.sessionKey === selectedSessionKey)) {
+      setSelectedSessionKey(firstSession.sessionKey);
+    }
+  }, [items, selectedSessionKey]);
+
+  useEffect(() => {
+    if (!selectedSessionKey) {
+      return;
+    }
+
+    let active = true;
+    const sessionKey = selectedSessionKey;
 
     async function loadDetail() {
       try {
-        const nextDetail = await getSessionDetail(firstSession.sessionKey);
+        const nextDetail = await getSessionDetail(sessionKey);
         if (!active) {
           return;
         }
@@ -74,7 +85,7 @@ export function SessionsPage() {
     return () => {
       active = false;
     };
-  }, [items]);
+  }, [selectedSessionKey]);
 
   const activeCount = items.filter((item) => !item.endedAtMs).length;
   const groupCount = items.filter((item) => item.isGroup).length;
@@ -120,14 +131,17 @@ export function SessionsPage() {
               { key: "risk", label: "风险" },
               { key: "lastSeen", label: "最近活动" },
             ]}
+            loading={loading}
             rows={items.map((session) => ({
               id: session.sessionKey,
               session: session.sessionKey,
               profile: formatDomainLabel(session.channelProfile),
               events: formatInteger(session.eventCount ?? 0),
-              risk: renderRiskBadge((session.highRiskEventCount ?? 0) > 0 ? "L3" : "L1"),
-              lastSeen: formatTimestamp(session.lastSeenAtMs),
+                risk: renderRiskBadge((session.highRiskEventCount ?? 0) > 0 ? "L3" : "L1"),
+                lastSeen: formatTimestamp(session.lastSeenAtMs),
             }))}
+            onRowClick={(row) => setSelectedSessionKey(row.id)}
+            selectedRowId={selectedSessionKey ?? undefined}
           />
           <TablePagination {...paginationProps} />
         </article>

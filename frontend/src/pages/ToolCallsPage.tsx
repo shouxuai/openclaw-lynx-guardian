@@ -6,8 +6,9 @@ import { mockToolCalls } from "../data/mock-console";
 import { ModalDialog } from "../components/feedback/ModalDialog";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
-import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
+import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListResource";
 import { formatDuration, formatInteger, formatTimestamp } from "../utils/format";
+import { formatQaRecordId } from "../utils/qa-records";
 import { formatToolLabel, renderStateBadge } from "../utils/status";
 
 function readToolMetadata(call: ToolCallListItemDto): Record<string, unknown> {
@@ -50,9 +51,9 @@ export function ToolCallsPage() {
   const [selectedDetail, setSelectedDetail] = useState<ToolCallDetailDto | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const { items, loading, error, paginationProps } = useCursorListResource<ToolCallListItemDto, ToolCallListQuery>({
+  const { items, loading, error, paginationProps } = usePagedListResource<ToolCallListItemDto, ToolCallListQuery>({
     fallbackPage: import.meta.env.DEV
-      ? (_query, pageIndex, pageSize) => paginateMockItems(mockToolCalls, pageIndex, pageSize)
+      ? (_query, pageIndex, pageSize) => paginateMockPage(mockToolCalls, pageIndex, pageSize)
       : undefined,
     loadPage: listToolCalls,
     query: {},
@@ -137,6 +138,7 @@ export function ToolCallsPage() {
         <DataTable
           columns={[
             { key: "id", label: "调用 ID" },
+            { key: "qaRecord", label: "问答记录" },
             { key: "tool", label: "工具名称" },
             { key: "time", label: "调用时间" },
             { key: "status", label: "状态" },
@@ -146,8 +148,10 @@ export function ToolCallsPage() {
             { key: "summary", label: "参数摘要" },
             { key: "detail", label: "详情" },
           ]}
+          loading={loading}
           rows={items.map((call) => ({
             id: call.toolCallId,
+            qaRecord: formatQaRecordId(call.qaRecordId),
             tool: <strong>{formatToolLabel(call.toolName)}</strong>,
             time: formatTimestamp(call.startedAtMs),
             status: renderStateBadge(call.resultStatus),
@@ -226,6 +230,7 @@ export function ToolCallsPage() {
         <dl className="detail-panel__grid">
           {[
             { label: "工具", value: selectedDetail ? formatToolLabel(selectedDetail.toolName) : "暂无" },
+            { label: "关联问答记录", value: formatQaRecordId(selectedDetail?.qaRecordId) },
             { label: "状态", value: selectedDetail?.resultStatus ?? "暂无" },
             { label: "会话", value: selectedDetail?.sessionKey ?? "暂无" },
             { label: "Run ID", value: selectedDetail?.runId ?? "暂无" },

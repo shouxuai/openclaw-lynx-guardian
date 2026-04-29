@@ -15,6 +15,8 @@ type EventsListQuery struct {
 	RunID                   *string
 	RiskLevel               []string
 	EnforcementAction       []string
+	PageNum                 *int
+	PageSize                *int
 	Limit                   *int
 	Cursor                  *string
 	HookName                *string
@@ -31,6 +33,7 @@ type EventsListQuery struct {
 
 type auditEventListRow struct {
 	EventID           string
+	QARecordID        sql.NullString
 	SessionKey        sql.NullString
 	RunID             sql.NullString
 	ToolCallID        sql.NullString
@@ -63,10 +66,8 @@ type auditEventDetailRow struct {
 	PayloadJSON sql.NullString
 }
 
-func (r *EventsRepository) List(query EventsListQuery) (service.CursorPage[map[string]any], error) {
-	limit := service.ResolveListLimit(query.Limit)
-	cursor := service.DecodeDescendingCursor(query.Cursor)
-
+func (r *EventsRepository) List(query EventsListQuery) (service.PageResponse[map[string]any], error) {
+	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
 	filter.AppendTextSearch([]string{
 		"event_id", "session_key", "run_id", "tool_call_id", "approval_id",
@@ -89,51 +90,52 @@ func (r *EventsRepository) List(query EventsListQuery) (service.CursorPage[map[s
 	filter.AppendIn("risk_level", query.RiskLevel)
 	filter.AppendIn("enforcement_action", mapStringSlice(query.EnforcementAction, toDBEnforcementAction))
 	appendRoutineHeartbeatDefaultFilter(filter, query.IncludeRoutineHeartbeat)
-	filter.AppendDescendingCursor("occurred_at", "event_id", cursor)
+
+	total, err := countRows(r.db, "audit_events", filter)
+	if err != nil {
+		return service.PageResponse[map[string]any]{}, err
+	}
 
 	rows, err := r.db.Query(
 		`
 		SELECT
-			event_id, session_key, run_id, tool_call_id, approval_id, request_id,
+			event_id, qa_record_id, session_key, run_id, tool_call_id, approval_id, request_id,
 			source_kind, hook_name, event_type, category, sub_category, direction,
 			primary_module, risk_level, risk_score, policy_decision, enforcement_action,
 			title, summary, recommendation, content_excerpt, occurred_at
 		FROM audit_events `+filter.Where()+`
 		ORDER BY occurred_at DESC, event_id DESC
-		LIMIT ?`,
-		append(filter.Params(), limit+1)...,
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
 	)
 	if err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 	defer rows.Close()
 
-	all := make([]auditEventListRow, 0, limit+1)
+	all := make([]auditEventListRow, 0, page.PageSize)
 	for rows.Next() {
 		var row auditEventListRow
 		if err := rows.Scan(
-			&row.EventID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
+			&row.EventID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
 			&row.RequestID, &row.SourceKind, &row.HookName, &row.EventType, &row.Category,
 			&row.SubCategory, &row.Direction, &row.PrimaryModule, &row.RiskLevel,
 			&row.RiskScore, &row.PolicyDecision, &row.EnforcementAction, &row.Title,
 			&row.Summary, &row.Recommendation, &row.ContentExcerpt, &row.OccurredAt,
 		); err != nil {
-			return service.CursorPage[map[string]any]{}, err
+			return service.PageResponse[map[string]any]{}, err
 		}
 		all = append(all, row)
 	}
 	if err := rows.Err(); err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 
-	return service.BuildCursorPage(
-		all,
-		limit,
-		mapAuditEventListRow,
-		func(row auditEventListRow) service.DescendingCursor {
-			return service.DescendingCursor{SortValue: row.OccurredAt, ID: row.EventID}
-		},
-	), nil
+	items := make([]map[string]any, 0, len(all))
+	for _, row := range all {
+		items = append(items, mapAuditEventListRow(row))
+	}
+	return service.BuildPageResponse(items, total, page), nil
 }
 
 func (r *EventsRepository) GetByID(eventID string) (map[string]any, error) {
@@ -141,7 +143,7 @@ func (r *EventsRepository) GetByID(eventID string) (map[string]any, error) {
 	err := r.db.QueryRow(
 		`
 		SELECT
-			event_id, session_key, run_id, tool_call_id, approval_id, request_id,
+			event_id, qa_record_id, session_key, run_id, tool_call_id, approval_id, request_id,
 			source_kind, hook_name, event_type, category, sub_category, direction,
 			primary_module, risk_level, risk_score, policy_decision, enforcement_action,
 			title, summary, recommendation, content_excerpt, occurred_at,
@@ -150,7 +152,7 @@ func (r *EventsRepository) GetByID(eventID string) (map[string]any, error) {
 		WHERE event_id = ?`,
 		eventID,
 	).Scan(
-		&row.EventID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
+		&row.EventID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
 		&row.RequestID, &row.SourceKind, &row.HookName, &row.EventType, &row.Category,
 		&row.SubCategory, &row.Direction, &row.PrimaryModule, &row.RiskLevel,
 		&row.RiskScore, &row.PolicyDecision, &row.EnforcementAction, &row.Title,
@@ -186,6 +188,7 @@ func mapAuditEventListRow(row auditEventListRow) map[string]any {
 		"occurredAtMs":      row.OccurredAt,
 	}
 	putString(out, "sessionKey", row.SessionKey)
+	putString(out, "qaRecordId", row.QARecordID)
 	putString(out, "runId", row.RunID)
 	putString(out, "toolCallId", row.ToolCallID)
 	putString(out, "approvalId", row.ApprovalID)

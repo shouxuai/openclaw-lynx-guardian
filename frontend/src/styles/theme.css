@@ -596,6 +596,7 @@ button {
   min-width: 84px;
   padding: 0 12px;
   font-size: var(--font-size-sm);
+  white-space: nowrap;
 }
 
 .btn:hover,
@@ -1199,6 +1200,25 @@ button {
 
 .data-table tbody tr:hover {
   background: var(--table-row-hover-bg);
+}
+
+.data-table__row--clickable {
+  cursor: pointer;
+}
+
+.data-table__row--selected {
+  background: var(--surface);
+}
+
+.data-table__loading-cell {
+  color: var(--muted);
+  text-align: center;
+}
+
+.data-table__loading-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
 }
 
 .data-table__sticky-cell {

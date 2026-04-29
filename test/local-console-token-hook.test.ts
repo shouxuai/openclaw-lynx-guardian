@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { IngestItemV1, TokenUsageItem } from "../shared/src/ingest.js";
+import type { AuditEventItem, IngestItemV1, TokenUsageItem } from "../shared/src/ingest.js";
 import { createLocalConsoleTokenHook } from "../src/console/token-usage.js";
 import type { EventContext, LlmOutputEvent } from "../src/types.js";
 
@@ -34,6 +34,14 @@ function firstTokenUsage(items: IngestItemV1[]): TokenUsageItem {
   const item = items.find((entry): entry is TokenUsageItem => entry.kind === "tokenUsage");
   if (!item) {
     throw new Error(`No tokenUsage item found in ${JSON.stringify(items)}`);
+  }
+  return item;
+}
+
+function firstAuditEvent(items: IngestItemV1[]): AuditEventItem {
+  const item = items.find((entry): entry is AuditEventItem => entry.kind === "auditEvent");
+  if (!item) {
+    throw new Error(`No auditEvent item found in ${JSON.stringify(items)}`);
   }
   return item;
 }
@@ -89,5 +97,19 @@ describe("createLocalConsoleTokenHook", () => {
     expect(usage.data.totalTokens).toBe(0);
     expect(usage.data.inputTokens).toBeUndefined();
     expect(usage.data.outputTokens).toBeUndefined();
+  });
+
+  it("stores unavailable-usage audit excerpts up to 1024 characters without display ellipses", () => {
+    const { hook, items } = collectTokenItems({
+      estimate() {
+        return null;
+      },
+    });
+
+    hook.handle(event({ assistantTexts: ["u".repeat(1_100)] }), {} as EventContext);
+
+    const auditEvent = firstAuditEvent(items);
+    expect(auditEvent.data.contentExcerpt).toHaveLength(1_024);
+    expect(auditEvent.data.contentExcerpt?.endsWith("...")).toBe(false);
   });
 });

@@ -250,4 +250,22 @@ describe("DataTable", () => {
     expect(detailCell).toHaveClass("data-table__sticky-cell--right");
     expect(detailCell).toHaveStyle({ right: "0px" });
   });
+
+  it("renders a table-scoped loading status row while list data is loading", () => {
+    render(
+      <ConfigProvider locale={zhCN}>
+        <DataTable
+          columns={[
+            { key: "id", label: "ID" },
+            { key: "summary", label: "Summary" },
+          ]}
+          loading
+          rows={[]}
+        />
+      </ConfigProvider>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在加载列表数据");
+    expect(screen.getByRole("cell", { name: "正在加载列表数据" })).toHaveAttribute("colspan", "2");
+  });
 });

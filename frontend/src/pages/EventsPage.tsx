@@ -9,8 +9,9 @@ import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
-import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
+import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
+import { formatQaRecordId } from "../utils/qa-records";
 import {
   formatActionText,
   formatEventCategoryLabel,
@@ -134,7 +135,7 @@ function eventMatchesQuery(event: AuditEventListItemDto, query: EventListQuery):
 }
 
 function pageMockEvents(query: EventListQuery, pageIndex: number, pageSize: number) {
-  return paginateMockItems(
+  return paginateMockPage(
     mockEvents.filter((event) => eventMatchesQuery(event, query)),
     pageIndex,
     pageSize,
@@ -304,7 +305,7 @@ export function EventsPage() {
     setDetailLoadingId(null);
   }
 
-  const { items, loading, error, paginationProps, resetPaging } = useCursorListResource<
+  const { items, loading, error, paginationProps, resetPaging } = usePagedListResource<
     AuditEventListItemDto,
     EventListQuery
   >({
@@ -521,6 +522,7 @@ export function EventsPage() {
         <DataTable
           columns={[
             { key: "event", label: "事件" },
+            { key: "qaRecord", label: "问答记录", maxWidth: 220, minWidth: 150, width: 180 },
             { key: "category", label: "类别" },
             { key: "risk", label: "风险等级" },
             { key: "decision", label: "策略判定" },
@@ -531,6 +533,7 @@ export function EventsPage() {
             { key: "time", label: "发生时间" },
             { key: "detail", label: "操作" },
           ]}
+          loading={loading}
           rows={items.map((event) => ({
             id: event.eventId,
             event: (
@@ -539,6 +542,7 @@ export function EventsPage() {
                 <code>{event.eventId}</code>
               </div>
             ),
+            qaRecord: formatQaRecordId(event.qaRecordId),
             category: formatEventCategoryLabel(event.category),
             risk: renderRiskBadge(event.riskLevel),
             decision: renderPolicyDecisionBadge(event.policyDecision, event.enforcementAction),
@@ -580,6 +584,7 @@ export function EventsPage() {
         <dl className="detail-panel__grid audit-detail-dialog__grid">
           {[
             { label: "触发点", value: formatHookLabel(selectedDetail?.hookName) },
+            { label: "关联问答记录", value: formatQaRecordId(selectedDetail?.qaRecordId) },
             { label: "完整脱敏摘要", value: selectedDetail?.contentExcerpt ?? "暂无" },
             { label: "处置建议", value: selectedDetail?.recommendation ?? selectedDetail?.summary ?? "暂无" },
             { label: "模块", value: selectedDetail?.modules?.join(", ") || selectedDetail?.primaryModule || "暂无" },

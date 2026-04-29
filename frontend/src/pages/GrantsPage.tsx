@@ -100,6 +100,7 @@ export function GrantsPage() {
             { key: "status", label: "状态", maxWidth: 140, minWidth: 110, width: 120 },
             { key: "revoked", label: "撤销原因", maxWidth: 260, minWidth: 190, width: 230 },
           ]}
+          loading={loading}
           rows={items.map((item) => ({
             id: item.grantId,
             grant: item.grantId,

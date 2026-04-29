@@ -2,6 +2,7 @@ export const WEBVIEW_BASE_PATH = "/webview";
 
 export const ROUTE_PATHS = {
   dashboard: "/",
+  qaRecords: "/qa-records",
   events: "/events",
   decisions: "/decisions",
   toolCalls: "/tool-calls",

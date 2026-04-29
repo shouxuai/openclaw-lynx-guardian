@@ -21,6 +21,8 @@ func RegisterEvents(router gin.IRoutes, repository *repo.EventsRepository) {
 			RunID:                   httpserver.ReadString(values, "runId"),
 			RiskLevel:               httpserver.ReadStringSlice(values, "riskLevel"),
 			EnforcementAction:       httpserver.ReadStringSlice(values, "enforcementAction"),
+			PageNum:                 httpserver.ReadInt(values, "pageNum"),
+			PageSize:                httpserver.ReadInt(values, "pageSize"),
 			Limit:                   httpserver.ReadInt(values, "limit"),
 			Cursor:                  httpserver.ReadString(values, "cursor"),
 			HookName:                httpserver.ReadString(values, "hookName"),
@@ -66,6 +68,8 @@ func RegisterToolCalls(router gin.IRoutes, repository *repo.ToolCallsRepository)
 			RunID:             httpserver.ReadString(values, "runId"),
 			RiskLevel:         httpserver.ReadStringSlice(values, "riskLevel"),
 			EnforcementAction: httpserver.ReadStringSlice(values, "enforcementAction"),
+			PageNum:           httpserver.ReadInt(values, "pageNum"),
+			PageSize:          httpserver.ReadInt(values, "pageSize"),
 			Limit:             httpserver.ReadInt(values, "limit"),
 			Cursor:            httpserver.ReadString(values, "cursor"),
 			ToolName:          httpserver.ReadString(values, "toolName"),
@@ -100,6 +104,8 @@ func RegisterSessions(router gin.IRoutes, repository *repo.SessionsRepository) {
 		page, err := repository.List(repo.SessionsListQuery{
 			FromMs:         httpserver.ReadInt64(values, "fromMs"),
 			ToMs:           httpserver.ReadInt64(values, "toMs"),
+			PageNum:        httpserver.ReadInt(values, "pageNum"),
+			PageSize:       httpserver.ReadInt(values, "pageSize"),
 			Limit:          httpserver.ReadInt(values, "limit"),
 			Cursor:         httpserver.ReadString(values, "cursor"),
 			ChannelProfile: httpserver.ReadString(values, "channelProfile"),
@@ -137,6 +143,8 @@ func RegisterLynxChecks(router gin.IRoutes, repository *repo.LynxChecksRepositor
 			FromMs:          httpserver.ReadInt64(values, "fromMs"),
 			ToMs:            httpserver.ReadInt64(values, "toMs"),
 			SessionKey:      httpserver.ReadString(values, "sessionKey"),
+			PageNum:         httpserver.ReadInt(values, "pageNum"),
+			PageSize:        httpserver.ReadInt(values, "pageSize"),
 			Limit:           httpserver.ReadInt(values, "limit"),
 			Cursor:          httpserver.ReadString(values, "cursor"),
 			Source:          httpserver.ReadString(values, "source"),
@@ -174,6 +182,8 @@ func RegisterTokens(router gin.IRoutes, repository *repo.TokensRepository) {
 			ToMs:        httpserver.ReadInt64(values, "toMs"),
 			SessionKey:  httpserver.ReadString(values, "sessionKey"),
 			RunID:       httpserver.ReadString(values, "runId"),
+			PageNum:     httpserver.ReadInt(values, "pageNum"),
+			PageSize:    httpserver.ReadInt(values, "pageSize"),
 			Limit:       httpserver.ReadInt(values, "limit"),
 			Cursor:      httpserver.ReadString(values, "cursor"),
 			Provider:    httpserver.ReadString(values, "provider"),
@@ -251,6 +261,9 @@ func RegisterIngest(router gin.IRoutes, service *ingest.Service) {
 	})
 	registerIngestBatchRoute(router, "/ingest/sessions", func(payload []byte) (ingest.BatchResult, error) {
 		return service.ProcessBatchForKinds(payload, "sessionUpsert")
+	})
+	registerIngestBatchRoute(router, "/ingest/qa-records", func(payload []byte) (ingest.BatchResult, error) {
+		return service.ProcessBatchForKinds(payload, "qaRecordUpsert")
 	})
 	registerIngestBatchRoute(router, "/ingest/tool-calls", func(payload []byte) (ingest.BatchResult, error) {
 		return service.ProcessBatchForKinds(payload, "toolCallUpsert")

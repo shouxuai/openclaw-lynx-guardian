@@ -15,6 +15,8 @@ type LynxCheckTaskListQuery struct {
 	FromMs     *int64
 	ToMs       *int64
 	SessionKey *string
+	PageNum    *int
+	PageSize   *int
 	Limit      *int
 	Cursor     *string
 	Source     *string
@@ -34,11 +36,11 @@ func (r *LynxCheckTaskRepository) Upsert(ctx context.Context, task api.LynxCheck
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO lynx_check_tasks (
 			id, request_id, trigger, source, requester_id, session_key, target_key,
-			status, facts_json, evidence_bundle_json, report_skeleton, delivery_channel,
-			delivery_target, delivery_status, delivery_error, created_at, updated_at,
+			status, facts_json, evidence_bundle_json, report_skeleton, report_markdown,
+			delivery_channel, delivery_target, delivery_status, delivery_error, created_at, updated_at,
 			delivered_at, completed_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(request_id) DO UPDATE SET
 			trigger = excluded.trigger,
 			source = excluded.source,
@@ -49,6 +51,7 @@ func (r *LynxCheckTaskRepository) Upsert(ctx context.Context, task api.LynxCheck
 			facts_json = excluded.facts_json,
 			evidence_bundle_json = excluded.evidence_bundle_json,
 			report_skeleton = excluded.report_skeleton,
+			report_markdown = excluded.report_markdown,
 			delivery_channel = excluded.delivery_channel,
 			delivery_target = excluded.delivery_target,
 			delivery_status = excluded.delivery_status,
@@ -67,6 +70,7 @@ func (r *LynxCheckTaskRepository) Upsert(ctx context.Context, task api.LynxCheck
 		jsonText(task.Facts, "{}"),
 		jsonText(task.EvidenceBundle, "{}"),
 		task.ReportSkeleton,
+		task.ReportMarkdown,
 		task.DeliveryChannel,
 		task.DeliveryTarget,
 		task.DeliveryStatus,
@@ -106,7 +110,7 @@ func (r *LynxCheckTaskRepository) Get(ctx context.Context, requestID string) (ap
 	task, err := scanLynxCheckTask(r.db.QueryRowContext(ctx, `
 		SELECT
 			request_id, trigger, source, requester_id, session_key, target_key, status,
-			facts_json, evidence_bundle_json, report_skeleton, delivery_channel,
+			facts_json, evidence_bundle_json, report_skeleton, report_markdown, delivery_channel,
 			delivery_target, delivery_status, delivery_error, created_at, updated_at,
 			COALESCE(delivered_at, ''), COALESCE(completed_at, '')
 		FROM lynx_check_tasks
@@ -119,8 +123,8 @@ func (r *LynxCheckTaskRepository) Get(ctx context.Context, requestID string) (ap
 	return task, err
 }
 
-func (r *LynxCheckTaskRepository) List(ctx context.Context, query LynxCheckTaskListQuery) (service.CursorPage[api.LynxCheckTask], error) {
-	limit := service.ResolveListLimit(query.Limit)
+func (r *LynxCheckTaskRepository) List(ctx context.Context, query LynxCheckTaskListQuery) (service.PageResponse[api.LynxCheckTask], error) {
+	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
 	filter.AppendEquals("session_key", query.SessionKey)
 	filter.AppendEquals("source", query.Source)
@@ -128,42 +132,40 @@ func (r *LynxCheckTaskRepository) List(ctx context.Context, query LynxCheckTaskL
 	filter.AppendEquals("status", query.Status)
 	appendTimeRange(filter, "created_at", query.FromMs, query.ToMs)
 
+	total, err := countRowsContext(ctx, r.db, "lynx_check_tasks", filter)
+	if err != nil {
+		return service.PageResponse[api.LynxCheckTask]{}, err
+	}
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
 			request_id, trigger, source, requester_id, session_key, target_key, status,
-			facts_json, evidence_bundle_json, report_skeleton, delivery_channel,
+			facts_json, evidence_bundle_json, report_skeleton, report_markdown, delivery_channel,
 			delivery_target, delivery_status, delivery_error, created_at, updated_at,
 			COALESCE(delivered_at, ''), COALESCE(completed_at, '')
 		FROM lynx_check_tasks `+filter.Where()+`
 		ORDER BY created_at DESC, request_id DESC
-		LIMIT ?`,
-		append(filter.Params(), limit+1)...,
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
 	)
 	if err != nil {
-		return service.CursorPage[api.LynxCheckTask]{}, err
+		return service.PageResponse[api.LynxCheckTask]{}, err
 	}
 	defer rows.Close()
 
-	tasks := make([]api.LynxCheckTask, 0, limit+1)
+	tasks := make([]api.LynxCheckTask, 0, page.PageSize)
 	for rows.Next() {
 		task, err := scanLynxCheckTask(rows)
 		if err != nil {
-			return service.CursorPage[api.LynxCheckTask]{}, err
+			return service.PageResponse[api.LynxCheckTask]{}, err
 		}
 		tasks = append(tasks, task)
 	}
 	if err := rows.Err(); err != nil {
-		return service.CursorPage[api.LynxCheckTask]{}, err
+		return service.PageResponse[api.LynxCheckTask]{}, err
 	}
 
-	return service.BuildCursorPage(
-		tasks,
-		limit,
-		func(task api.LynxCheckTask) api.LynxCheckTask { return task },
-		func(task api.LynxCheckTask) service.DescendingCursor {
-			return service.DescendingCursor{SortValue: task.CreatedAtMs, ID: task.RequestID}
-		},
-	), nil
+	return service.BuildPageResponse(tasks, total, page), nil
 }
 
 type lynxCheckTaskScanner interface {
@@ -185,6 +187,7 @@ func scanLynxCheckTask(scanner lynxCheckTaskScanner) (api.LynxCheckTask, error) 
 		&factsJSON,
 		&evidenceBundleJSON,
 		&task.ReportSkeleton,
+		&task.ReportMarkdown,
 		&task.DeliveryChannel,
 		&task.DeliveryTarget,
 		&task.DeliveryStatus,

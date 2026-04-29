@@ -24,6 +24,12 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
         path: ROUTE_PATHS.dashboard,
         pageTitle: "安全概览",
       },
+      {
+        id: "qa-records",
+        label: "问答记录",
+        path: ROUTE_PATHS.qaRecords,
+        pageTitle: "问答记录",
+      },
     ],
   },
   {
@@ -80,9 +86,9 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
     items: [
       {
         id: "lynx-checks",
-        label: "检查任务",
+        label: "检测",
         path: ROUTE_PATHS.lynxChecks,
-        pageTitle: "检查任务",
+        pageTitle: "检测",
       },
       {
         id: "sessions",

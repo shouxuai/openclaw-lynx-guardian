@@ -14,6 +14,8 @@ type ToolCallsListQuery struct {
 	RunID             *string
 	RiskLevel         []string
 	EnforcementAction []string
+	PageNum           *int
+	PageSize          *int
 	Limit             *int
 	Cursor            *string
 	ToolName          *string
@@ -23,6 +25,7 @@ type ToolCallsListQuery struct {
 
 type toolCallListRow struct {
 	ToolCallID        string
+	QARecordID        sql.NullString
 	SessionKey        sql.NullString
 	RunID             sql.NullString
 	ApprovalID        sql.NullString
@@ -47,10 +50,8 @@ type toolCallDetailRow struct {
 	MetadataJSON         sql.NullString
 }
 
-func (r *ToolCallsRepository) List(query ToolCallsListQuery) (service.CursorPage[map[string]any], error) {
-	limit := service.ResolveListLimit(query.Limit)
-	cursor := service.DecodeDescendingCursor(query.Cursor)
-
+func (r *ToolCallsRepository) List(query ToolCallsListQuery) (service.PageResponse[map[string]any], error) {
+	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
 	filter.AppendRange("started_at", query.FromMs, query.ToMs)
 	filter.AppendEquals("session_key", query.SessionKey)
@@ -60,49 +61,50 @@ func (r *ToolCallsRepository) List(query ToolCallsListQuery) (service.CursorPage
 	filter.AppendEquals("approval_id", query.ApprovalID)
 	filter.AppendIn("risk_level", query.RiskLevel)
 	filter.AppendIn("enforcement_action", mapStringSlice(query.EnforcementAction, toDBEnforcementAction))
-	filter.AppendDescendingCursor("started_at", "tool_call_id", cursor)
+
+	total, err := countRows(r.db, "tool_calls", filter)
+	if err != nil {
+		return service.PageResponse[map[string]any]{}, err
+	}
 
 	rows, err := r.db.Query(
 		`
 		SELECT
-			tool_call_id, session_key, run_id, approval_id, tool_name, risk_level,
+			tool_call_id, qa_record_id, session_key, run_id, approval_id, tool_name, risk_level,
 			risk_score, policy_decision, enforcement_action, started_at, finished_at,
 			duration_ms, result_status, result_excerpt
 		FROM tool_calls `+filter.Where()+`
 		ORDER BY started_at DESC, tool_call_id DESC
-		LIMIT ?`,
-		append(filter.Params(), limit+1)...,
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
 	)
 	if err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 	defer rows.Close()
 
-	all := make([]toolCallListRow, 0, limit+1)
+	all := make([]toolCallListRow, 0, page.PageSize)
 	for rows.Next() {
 		var row toolCallListRow
 		if err := rows.Scan(
-			&row.ToolCallID, &row.SessionKey, &row.RunID, &row.ApprovalID,
+			&row.ToolCallID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ApprovalID,
 			&row.ToolName, &row.RiskLevel, &row.RiskScore, &row.PolicyDecision,
 			&row.EnforcementAction, &row.StartedAt, &row.FinishedAt, &row.DurationMs,
 			&row.ResultStatus, &row.ResultExcerpt,
 		); err != nil {
-			return service.CursorPage[map[string]any]{}, err
+			return service.PageResponse[map[string]any]{}, err
 		}
 		all = append(all, row)
 	}
 	if err := rows.Err(); err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 
-	return service.BuildCursorPage(
-		all,
-		limit,
-		mapToolCallListRow,
-		func(row toolCallListRow) service.DescendingCursor {
-			return service.DescendingCursor{SortValue: row.StartedAt, ID: row.ToolCallID}
-		},
-	), nil
+	items := make([]map[string]any, 0, len(all))
+	for _, row := range all {
+		items = append(items, mapToolCallListRow(row))
+	}
+	return service.BuildPageResponse(items, total, page), nil
 }
 
 func (r *ToolCallsRepository) GetByID(toolCallID string) (map[string]any, error) {
@@ -110,7 +112,7 @@ func (r *ToolCallsRepository) GetByID(toolCallID string) (map[string]any, error)
 	err := r.db.QueryRow(
 		`
 		SELECT
-			tool_call_id, session_key, run_id, approval_id, tool_name, risk_level,
+			tool_call_id, qa_record_id, session_key, run_id, approval_id, tool_name, risk_level,
 			risk_score, policy_decision, enforcement_action, started_at, finished_at,
 			duration_ms, result_status, result_excerpt, param_summary, param_hash,
 			triggered_modules_json, error_text, metadata_json
@@ -118,7 +120,7 @@ func (r *ToolCallsRepository) GetByID(toolCallID string) (map[string]any, error)
 		WHERE tool_call_id = ?`,
 		toolCallID,
 	).Scan(
-		&row.ToolCallID, &row.SessionKey, &row.RunID, &row.ApprovalID,
+		&row.ToolCallID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ApprovalID,
 		&row.ToolName, &row.RiskLevel, &row.RiskScore, &row.PolicyDecision,
 		&row.EnforcementAction, &row.StartedAt, &row.FinishedAt, &row.DurationMs,
 		&row.ResultStatus, &row.ResultExcerpt, &row.ParamSummary, &row.ParamHash,
@@ -148,6 +150,7 @@ func mapToolCallListRow(row toolCallListRow) map[string]any {
 		"startedAtMs":       row.StartedAt,
 	}
 	putString(out, "sessionKey", row.SessionKey)
+	putString(out, "qaRecordId", row.QARecordID)
 	putString(out, "runId", row.RunID)
 	putString(out, "approvalId", row.ApprovalID)
 	putString(out, "riskLevel", row.RiskLevel)

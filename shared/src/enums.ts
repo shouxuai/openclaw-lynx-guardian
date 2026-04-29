@@ -22,6 +22,7 @@ export const INGEST_ITEM_KINDS = [
   "approvalUpsert",
   "lynxCheckUpsert",
   "tokenUsage",
+  "qaRecordUpsert",
 ] as const;
 export type IngestItemKind = typeof INGEST_ITEM_KINDS[number];
 

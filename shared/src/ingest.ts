@@ -77,6 +77,7 @@ export interface SessionUpsertItem extends IngestItemBase {
 
 export interface AuditEventData {
   eventId: string;
+  qaRecordId?: string;
   sessionKey?: string;
   runId?: string;
   toolCallId?: string;
@@ -110,6 +111,7 @@ export interface AuditEventItem extends IngestItemBase {
 
 export interface ToolCallUpsertData {
   toolCallId: string;
+  qaRecordId?: string;
   sessionKey?: string;
   runId?: string;
   approvalId?: string;
@@ -137,6 +139,7 @@ export interface ToolCallUpsertItem extends IngestItemBase {
 
 export interface ApprovalUpsertData {
   approvalId: string;
+  qaRecordId?: string;
   pendingId?: string;
   sessionKey?: string;
   runId?: string;
@@ -169,6 +172,7 @@ export interface ApprovalUpsertItem extends IngestItemBase {
 
 export interface LynxCheckUpsertData {
   requestId: string;
+  qaRecordId?: string;
   source: LynxCheckSource;
   trigger: LynxCheckTrigger;
   preferredTargetKind: LynxCheckPreferredTargetKind;
@@ -181,6 +185,7 @@ export interface LynxCheckUpsertData {
   sendSucceeded?: boolean;
   transport?: string;
   reportPath?: string;
+  reportMarkdown?: string;
   errorMessage?: string;
   deliveryAttemptsJson?: Array<Record<string, unknown>>;
   createdAtMs: number;
@@ -194,6 +199,7 @@ export interface LynxCheckUpsertItem extends IngestItemBase {
 
 export interface TokenUsageData {
   usageEventId: string;
+  qaRecordId?: string;
   sessionKey?: string;
   runId?: string;
   agentId?: string;
@@ -215,10 +221,38 @@ export interface TokenUsageItem extends IngestItemBase {
   data: TokenUsageData;
 }
 
+export interface QaRecordUpsertData {
+  qaRecordId: string;
+  sessionKey?: string;
+  runId?: string;
+  agentId?: string;
+  userPromptExcerpt?: string;
+  userPromptHash?: string;
+  finalAnswerExcerpt?: string;
+  finalAnswerHash?: string;
+  status: string;
+  riskLevel?: RiskLevel;
+  riskScore?: number;
+  toolCallCount?: number;
+  approvalCount?: number;
+  detectionCount?: number;
+  totalTokens?: number;
+  startedAtMs: number;
+  completedAtMs?: number;
+  linkOrigin?: "runtime" | "inferred" | "legacy";
+  payloadJson?: Record<string, unknown>;
+}
+
+export interface QaRecordUpsertItem extends IngestItemBase {
+  kind: "qaRecordUpsert";
+  data: QaRecordUpsertData;
+}
+
 export type IngestItemV1 =
   | SessionUpsertItem
   | AuditEventItem
   | ToolCallUpsertItem
   | ApprovalUpsertItem
   | LynxCheckUpsertItem
-  | TokenUsageItem;
+  | TokenUsageItem
+  | QaRecordUpsertItem;

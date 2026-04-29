@@ -290,14 +290,16 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 		t.Fatalf("expected seed ingest 200, got %d: %s", seed.Code, seed.Body.String())
 	}
 
-	events := doJSON(t, handler, http.MethodGet, "/lynx/events?limit=1", nil, false)
+	events := doJSON(t, handler, http.MethodGet, "/lynx/events?pageNum=1&pageSize=1", nil, false)
 	eventItems := expectItems(t, events, http.StatusOK)
 	expectString(t, eventItems[0], "eventId", "event-approval")
 	expectString(t, eventItems[0], "enforcementAction", "requireApproval")
 	expectString(t, eventItems[0], "recommendation", "Review requester identity before approving exec.")
-	if _, ok := decodeObject(t, events)["nextCursor"].(string); !ok {
-		t.Fatalf("expected events nextCursor string")
-	}
+	eventsBody := decodeObject(t, events)
+	expectNumber(t, eventsBody, "total", 3)
+	expectNumber(t, eventsBody, "pageNum", 1)
+	expectNumber(t, eventsBody, "pageSize", 1)
+	expectNumber(t, eventsBody, "totalPages", 3)
 
 	eventDetail := doJSON(t, handler, http.MethodGet, "/lynx/events/event-approval", nil, false)
 	eventDetailBody := decodeObjectStatus(t, eventDetail, http.StatusOK)
@@ -359,6 +361,9 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 	tokenSummary := doJSON(t, handler, http.MethodGet, "/lynx/tokens/summary?provider=openai", nil, false)
 	tokenSummaryBody := decodeObjectStatus(t, tokenSummary, http.StatusOK)
 	expectNumber(t, tokenSummaryBody, "totalTokens", 315)
+	expectNumber(t, tokenSummaryBody, "actualTokens", 315)
+	expectNumber(t, tokenSummaryBody, "estimatedTokens", 120)
+	expectNumber(t, tokenSummaryBody, "measurableTokens", 435)
 	expectNumber(t, tokenSummaryBody, "estimatedCount", 1)
 
 	tokenTrend := doJSON(t, handler, http.MethodGet, "/lynx/tokens/trend?bucket=hour&provider=openai", nil, false)

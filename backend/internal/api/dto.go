@@ -6,6 +6,7 @@ package api
 // ApprovalListItem mirrors ApprovalListItemDto.
 type ApprovalListItem struct {
 	ApprovalID    string  `json:"approvalId"`
+	QARecordID    *string `json:"qaRecordId,omitempty"`
 	PendingID     *string `json:"pendingId,omitempty"`
 	SessionKey    *string `json:"sessionKey,omitempty"`
 	RunID         *string `json:"runId,omitempty"`
@@ -268,6 +269,7 @@ type LynxCheckTask struct {
 	SendSucceeded       bool           `json:"sendSucceeded"`
 	Transport           string         `json:"transport,omitempty"`
 	ReportPath          string         `json:"reportPath,omitempty"`
+	ReportMarkdown      string         `json:"reportMarkdown,omitempty"`
 	CreatedAt           string         `json:"createdAt"`
 	UpdatedAt           string         `json:"updatedAt"`
 	DeliveredAt         string         `json:"deliveredAt,omitempty"`

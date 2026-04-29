@@ -8,6 +8,7 @@ import { EventsPage } from "../pages/EventsPage";
 import { GrantsPage } from "../pages/GrantsPage";
 import { LynxChecksPage } from "../pages/LynxChecksPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import { QaRecordsPage } from "../pages/QaRecordsPage";
 import { SessionsPage } from "../pages/SessionsPage";
 import { SkillsPage } from "../pages/SkillsPage";
 import { TokensPage } from "../pages/TokensPage";
@@ -18,6 +19,7 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path={ROUTE_PATHS.dashboard} element={<DashboardPage />} />
+      <Route path={ROUTE_PATHS.qaRecords} element={<QaRecordsPage />} />
       <Route path={ROUTE_PATHS.events} element={<EventsPage />} />
       <Route path={ROUTE_PATHS.decisions} element={<DecisionsPage />} />
       <Route path={ROUTE_PATHS.toolCalls} element={<ToolCallsPage />} />

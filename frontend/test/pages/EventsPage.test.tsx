@@ -16,7 +16,7 @@ function createJsonResponse(data: unknown): Response {
   } as unknown as Response;
 }
 
-function createEvent(eventId: string, title: string) {
+function createEvent(eventId: string, title: string, overrides: Record<string, unknown> = {}) {
   return {
     eventId,
     sourceKind: "plugin_hook",
@@ -31,6 +31,7 @@ function createEvent(eventId: string, title: string) {
     recommendation: "建议先核对申请人身份。",
     contentExcerpt: "用户请求读取配置，密钥 sk-*** 已脱敏。",
     occurredAtMs: 1_776_945_600_000,
+    ...overrides,
   };
 }
 
@@ -44,6 +45,16 @@ function createEventDetail(eventId: string, title: string) {
     payloadJson: {
       toolName: "exec",
     },
+  };
+}
+
+function createPage(items: unknown[], pageNum = 1, pageSize = 10, total = items.length) {
+  return {
+    items,
+    total,
+    pageNum,
+    pageSize,
+    totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
   };
 }
 
@@ -76,15 +87,23 @@ describe("EventsPage", () => {
 
   it("shows bounded audit columns and opens event details in a dialog", async () => {
     fetchMock
+      .mockResolvedValueOnce(createJsonResponse(createPage([
+        createEvent("EVT-001", "初始审计事件", { qaRecordId: "qa-1" }),
+        createEvent("EVT-LEGACY", "历史审计事件", {
+          contentExcerpt: "历史事件未关联问答记录。",
+          recommendation: "等待人工补充上下文。",
+        }),
+      ])))
       .mockResolvedValueOnce(createJsonResponse({
-        items: [createEvent("EVT-001", "初始审计事件")],
-        nextCursor: "cursor-page-2",
-      }))
-      .mockResolvedValueOnce(createJsonResponse(createEventDetail("EVT-001", "初始审计事件")));
+        ...createEventDetail("EVT-001", "初始审计事件"),
+        qaRecordId: "qa-1",
+      }));
 
     const { container } = renderEventsPage();
 
     await screen.findByText("EVT-001");
+    expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
+    expect(screen.getByText("未关联问答记录")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /导出/ })).not.toBeInTheDocument();
     expect(container.querySelectorAll(".audit-filter-form .ant-select")).toHaveLength(3);
     expect(container.querySelector(".audit-filter-form .ant-picker")).not.toBeNull();
@@ -93,13 +112,15 @@ describe("EventsPage", () => {
     expect(screen.getAllByText("处置建议").length).toBeGreaterThan(0);
     expect(screen.getByText("用户请求读取配置，密钥 sk-*** 已脱敏。")).toBeInTheDocument();
     expect(screen.getByText("建议先核对申请人身份。")).toBeInTheDocument();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?limit=10");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
 
     fireEvent.click(screen.getByRole("button", { name: "查看 EVT-001 详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "初始审计事件" });
     expect(dialog).toBeInTheDocument();
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/events/EVT-001");
+    expect(screen.getByText("关联问答记录")).toBeInTheDocument();
+    expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
     expect(screen.getByText("M2:protected_file_access")).toBeInTheDocument();
     expect(screen.getByText(/"toolName": "exec"/)).toBeInTheDocument();
 
@@ -108,8 +129,7 @@ describe("EventsPage", () => {
   });
 
   it("summarizes control-plane evidence from real list fields and optional top-level evidence", async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse({
-      items: [
+    fetchMock.mockResolvedValueOnce(createJsonResponse(createPage([
         {
           ...createEvent("EVT-FIELDS", "列表字段证据"),
           primaryModule: "M2:protected_file_access",
@@ -124,8 +144,7 @@ describe("EventsPage", () => {
           scoreBreakdown: [{ ruleId: "chain.recent_denial", delta: 30 }],
           evidence: [{ id: "taint.recent_sensitive_read", module: "taint_context" }],
         },
-      ],
-    }));
+      ])));
 
     renderEventsPage();
 
@@ -142,8 +161,7 @@ describe("EventsPage", () => {
   });
 
   it("does not say control-plane evidence is absent when list rows omit detail payloadJson", async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse({
-      items: [
+    fetchMock.mockResolvedValueOnce(createJsonResponse(createPage([
         {
           ...createEvent("EVT-DETAIL-ONLY", "详情包含控制面证据"),
           policyDecision: undefined,
@@ -153,8 +171,7 @@ describe("EventsPage", () => {
           toolCallId: undefined,
           riskScore: undefined,
         },
-      ],
-    }));
+      ])));
 
     renderEventsPage();
 
@@ -163,47 +180,35 @@ describe("EventsPage", () => {
     expect(screen.queryByText("暂无控制面证据")).not.toBeInTheDocument();
   });
 
-  it("supports cursor pagination, page selection, page size, and filters", async () => {
+  it("supports backend total-pages pagination, page selection, page size, and filters", async () => {
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse({
-        items: [createEvent("EVT-001", "初始审计事件")],
-        nextCursor: "cursor-page-2",
-      }))
-      .mockResolvedValueOnce(createJsonResponse({
-        items: [createEvent("EVT-002", "第二页审计事件")],
-        nextCursor: "cursor-page-3",
-      }))
-      .mockResolvedValueOnce(createJsonResponse({
-        items: [createEvent("EVT-001", "初始审计事件")],
-        nextCursor: "cursor-page-2",
-      }))
-      .mockResolvedValueOnce(createJsonResponse({
-        items: [createEvent("EVT-PAGE-SIZE", "每页行数更新后的审计事件")],
-      }))
-      .mockResolvedValueOnce(createJsonResponse({
-        items: [createEvent("EVT-SEARCH", "搜索命中的审计事件")],
-      }));
+      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-001", "初始审计事件")], 1, 10, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-LAST", "最后一页审计事件")], 5, 10, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-001", "初始审计事件")], 1, 10, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-PAGE-SIZE", "每页行数更新后的审计事件")], 1, 25, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-SEARCH", "搜索命中的审计事件")], 1, 25, 1)));
 
     renderEventsPage();
 
     await screen.findByText("EVT-001");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?limit=10");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
+    expect(screen.getByTitle("5")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle(/Next Page|下一页/));
+    fireEvent.click(screen.getByTitle("5"));
 
-    await screen.findByText("EVT-002");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/events?limit=10&cursor=cursor-page-2");
+    await screen.findByText("EVT-LAST");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/events?pageNum=5&pageSize=10");
 
     fireEvent.click(screen.getByTitle("1"));
 
     await screen.findByText("EVT-001");
-    expect(fetchMock.mock.calls[2]?.[0]).toBe("/lynx/events?limit=10");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
 
     fireEvent.mouseDown(screen.getAllByRole("combobox").at(-1)!);
     fireEvent.click(await screen.findByText(/25/));
 
     await screen.findByText("EVT-PAGE-SIZE");
-    expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/events?limit=25");
+    expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=25");
 
     fireEvent.change(screen.getByLabelText("关键词"), {
       target: { value: "exec" },
@@ -217,7 +222,7 @@ describe("EventsPage", () => {
       expect(fetchMock).toHaveBeenCalledTimes(5);
     });
     expect(fetchMock.mock.calls[4]?.[0]).toBe(
-      "/lynx/events?q=exec&riskLevel=L3&enforcementAction=requireApproval&limit=25",
+      "/lynx/events?q=exec&riskLevel=L3&enforcementAction=requireApproval&pageNum=1&pageSize=25",
     );
   });
 

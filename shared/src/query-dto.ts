@@ -14,6 +14,14 @@ export interface CursorPage<T> {
   nextCursor?: string;
 }
 
+export interface PageResponse<T> {
+  items: T[];
+  total: number;
+  pageNum: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export interface RiskBucketDto {
   riskLevel: RiskLevel;
   count: number;
@@ -37,6 +45,8 @@ export interface CommonListQuery {
   runId?: string;
   riskLevel?: RiskLevel[];
   enforcementAction?: EnforcementAction[];
+  pageNum?: number;
+  pageSize?: number;
   limit?: number;
   cursor?: string;
 }
@@ -55,6 +65,7 @@ export interface CapabilitiesDto {
 
 export interface AuditEventListItemDto {
   eventId: string;
+  qaRecordId?: string;
   sessionKey?: string;
   runId?: string;
   toolCallId?: string;
@@ -78,7 +89,7 @@ export interface AuditEventListItemDto {
   occurredAtMs: number;
 }
 
-export type AuditEventListResponse = CursorPage<AuditEventListItemDto>;
+export type AuditEventListResponse = PageResponse<AuditEventListItemDto>;
 
 export interface AuditEventDetailDto extends AuditEventListItemDto {
   contentKind?: string;
@@ -91,6 +102,7 @@ export interface AuditEventDetailDto extends AuditEventListItemDto {
 
 export interface ToolCallListItemDto {
   toolCallId: string;
+  qaRecordId?: string;
   sessionKey?: string;
   runId?: string;
   approvalId?: string;
@@ -106,7 +118,7 @@ export interface ToolCallListItemDto {
   resultExcerpt?: string;
 }
 
-export type ToolCallListResponse = CursorPage<ToolCallListItemDto>;
+export type ToolCallListResponse = PageResponse<ToolCallListItemDto>;
 
 export interface ToolCallDetailDto extends ToolCallListItemDto {
   paramSummary?: string;
@@ -118,6 +130,7 @@ export interface ToolCallDetailDto extends ToolCallListItemDto {
 
 export interface ApprovalListItemDto {
   approvalId: string;
+  qaRecordId?: string;
   pendingId?: string;
   sessionKey?: string;
   runId?: string;
@@ -134,7 +147,7 @@ export interface ApprovalListItemDto {
   promptExcerpt?: string;
 }
 
-export type ApprovalListResponse = CursorPage<ApprovalListItemDto>;
+export type ApprovalListResponse = PageResponse<ApprovalListItemDto>;
 
 export interface ApprovalDetailDto extends ApprovalListItemDto {
   channelProfile?: string;
@@ -150,6 +163,7 @@ export interface ApprovalDetailDto extends ApprovalListItemDto {
 
 export interface LynxCheckListItemDto {
   requestId: string;
+  qaRecordId?: string;
   source: LynxCheckSource;
   trigger: LynxCheckTrigger;
   preferredTargetKind: LynxCheckPreferredTargetKind;
@@ -167,9 +181,10 @@ export interface LynxCheckListItemDto {
   completedAtMs?: number;
 }
 
-export type LynxCheckListResponse = CursorPage<LynxCheckListItemDto>;
+export type LynxCheckListResponse = PageResponse<LynxCheckListItemDto>;
 
 export interface LynxCheckDetailDto extends LynxCheckListItemDto {
+  reportMarkdown?: string;
   deliveryAttemptsJson?: Array<Record<string, unknown>>;
 }
 
@@ -191,7 +206,7 @@ export interface SessionListItemDto {
   toolCallCount?: number;
 }
 
-export type SessionListResponse = CursorPage<SessionListItemDto>;
+export type SessionListResponse = PageResponse<SessionListItemDto>;
 
 export interface SessionDetailDto extends SessionListItemDto {
   metadataJson?: Record<string, unknown>;
@@ -207,6 +222,7 @@ export interface SessionDetailDto extends SessionListItemDto {
 
 export interface TokenUsageListItemDto {
   usageEventId: string;
+  qaRecordId?: string;
   sessionKey?: string;
   runId?: string;
   agentId?: string;
@@ -223,7 +239,7 @@ export interface TokenUsageListItemDto {
   occurredAtMs: number;
 }
 
-export type TokenUsageListResponse = CursorPage<TokenUsageListItemDto>;
+export type TokenUsageListResponse = PageResponse<TokenUsageListItemDto>;
 
 export interface TokenSummaryDto {
   totalTokens: number;
@@ -233,6 +249,7 @@ export interface TokenSummaryDto {
   cacheWriteTokens: number;
   actualTokens?: number;
   estimatedTokens?: number;
+  measurableTokens?: number;
   estimatedCount: number;
   unavailableCount: number;
   topModels: Array<{
@@ -251,6 +268,67 @@ export interface TokenTrendPointDto {
 export interface TokenTrendDto {
   bucket: TokenTrendBucket;
   points: TokenTrendPointDto[];
+}
+
+export interface QaRecordListItemDto {
+  qaRecordId: string;
+  sessionKey?: string;
+  runId?: string;
+  agentId?: string;
+  userPromptExcerpt?: string;
+  finalAnswerExcerpt?: string;
+  status: string;
+  riskLevel?: RiskLevel;
+  riskScore?: number;
+  toolCallCount: number;
+  approvalCount: number;
+  detectionCount: number;
+  totalTokens: number;
+  startedAtMs: number;
+  completedAtMs?: number;
+  linkOrigin?: "runtime" | "inferred" | "legacy";
+}
+
+export type QaRecordListResponse = PageResponse<QaRecordListItemDto>;
+
+export type QaChainNodeType =
+  | "userPrompt"
+  | "agentStep"
+  | "toolCall"
+  | "terminal"
+  | "approval"
+  | "detection"
+  | "auditEvent"
+  | "tokenUsage"
+  | "finalAnswer";
+
+export interface QaChainNodeDto {
+  nodeId: string;
+  qaRecordId: string;
+  type: QaChainNodeType;
+  title: string;
+  summary?: string;
+  occurredAtMs: number;
+  completedAtMs?: number;
+  status?: string;
+  riskLevel?: RiskLevel;
+  detailRef?: { kind: string; id: string };
+  detailJson?: Record<string, unknown>;
+}
+
+export interface QaChainEdgeDto {
+  fromNodeId: string;
+  toNodeId: string;
+  label?: string;
+}
+
+export interface QaRecordDetailDto extends QaRecordListItemDto {
+  chainNodes: QaChainNodeDto[];
+  chainEdges: QaChainEdgeDto[];
+  relatedToolCalls: ToolCallListItemDto[];
+  relatedApprovals: ApprovalListItemDto[];
+  relatedEvents: AuditEventListItemDto[];
+  relatedDetections: LynxCheckListItemDto[];
 }
 
 export interface DashboardOverviewDto {

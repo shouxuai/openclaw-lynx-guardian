@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { AuditEventItem, IngestItemV1, LynxCheckUpsertItem } from "../shared/src/ingest.js";
+import type {
+  AuditEventItem,
+  IngestItemV1,
+  LynxCheckUpsertItem,
+  ToolCallUpsertItem,
+} from "../shared/src/ingest.js";
 import { createLocalConsoleEventBuilder } from "../src/console/event-builder.js";
 
 function findAuditEvent(items: IngestItemV1[]): AuditEventItem {
@@ -15,6 +20,14 @@ function findLynxCheck(items: IngestItemV1[]): LynxCheckUpsertItem {
   const item = items.find((candidate): candidate is LynxCheckUpsertItem => candidate.kind === "lynxCheckUpsert");
   if (!item) {
     throw new Error("Expected lynx-check upsert item.");
+  }
+  return item;
+}
+
+function findToolCall(items: IngestItemV1[]): ToolCallUpsertItem {
+  const item = items.find((candidate): candidate is ToolCallUpsertItem => candidate.kind === "toolCallUpsert");
+  if (!item) {
+    throw new Error("Expected tool-call upsert item.");
   }
   return item;
 }
@@ -72,5 +85,39 @@ describe("createLocalConsoleEventBuilder", () => {
     expect(check.data.sendAttempted).toBe(true);
     expect(check.data.sendSucceeded).toBe(true);
     expect(check.data.completedAtMs).toBe(1_776_945_610_000);
+  });
+
+  it("stores long excerpts up to 1024 characters without display ellipses", () => {
+    const builder = createLocalConsoleEventBuilder();
+    const longPrompt = "p".repeat(1_100);
+    const longParamSummary = "a".repeat(1_100);
+    const longResult = "r".repeat(1_100);
+    const longError = "e".repeat(1_100);
+
+    const promptEvent = findAuditEvent(builder.beforeAgentStart({
+      occurredAtMs: 1_776_945_620_000,
+      sessionKey: "session-long",
+      runId: "run-long",
+      promptText: longPrompt,
+    }));
+    const toolCall = findToolCall(builder.afterToolCall({
+      occurredAtMs: 1_776_945_621_000,
+      sessionKey: "session-long",
+      runId: "run-long",
+      toolCallId: "tool-long",
+      toolName: "shell",
+      paramSummary: longParamSummary,
+      resultExcerpt: longResult,
+      errorText: longError,
+    }));
+
+    expect(promptEvent.data.contentExcerpt).toHaveLength(1_024);
+    expect(promptEvent.data.contentExcerpt?.endsWith("...")).toBe(false);
+    expect(toolCall.data.paramSummary).toHaveLength(1_024);
+    expect(toolCall.data.paramSummary?.endsWith("...")).toBe(false);
+    expect(toolCall.data.resultExcerpt).toHaveLength(1_024);
+    expect(toolCall.data.resultExcerpt?.endsWith("...")).toBe(false);
+    expect(toolCall.data.errorText).toHaveLength(1_024);
+    expect(toolCall.data.errorText?.endsWith("...")).toBe(false);
   });
 });

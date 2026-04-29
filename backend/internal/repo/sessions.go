@@ -10,6 +10,8 @@ import (
 type SessionsListQuery struct {
 	FromMs         *int64
 	ToMs           *int64
+	PageNum        *int
+	PageSize       *int
 	Limit          *int
 	Cursor         *string
 	ChannelProfile *string
@@ -74,10 +76,8 @@ const sessionCountsSQL = `
 	) tc ON tc.session_key = s.session_key
 `
 
-func (r *SessionsRepository) List(query SessionsListQuery) (service.CursorPage[map[string]any], error) {
-	limit := service.ResolveListLimit(query.Limit)
-	cursor := service.DecodeDescendingCursor(query.Cursor)
-
+func (r *SessionsRepository) List(query SessionsListQuery) (service.PageResponse[map[string]any], error) {
+	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
 	filter.AppendRange("s.last_seen_at", query.FromMs, query.ToMs)
 	filter.AppendEquals("s.channel_profile", query.ChannelProfile)
@@ -85,40 +85,41 @@ func (r *SessionsRepository) List(query SessionsListQuery) (service.CursorPage[m
 	filter.AppendEquals("s.requester_id", query.RequesterID)
 	filter.AppendEquals("s.requester_ou_id", query.RequesterOuID)
 	filter.AppendBool("s.is_group", query.IsGroup)
-	filter.AppendDescendingCursor("s.last_seen_at", "s.session_key", cursor)
+
+	total, err := countRows(r.db, "sessions s", filter)
+	if err != nil {
+		return service.PageResponse[map[string]any]{}, err
+	}
 
 	rows, err := r.db.Query(
 		sessionCountsSQL+`
 		`+filter.Where()+`
 		ORDER BY s.last_seen_at DESC, s.session_key DESC
-		LIMIT ?`,
-		append(filter.Params(), limit+1)...,
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
 	)
 	if err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 	defer rows.Close()
 
-	all := make([]sessionListRow, 0, limit+1)
+	all := make([]sessionListRow, 0, page.PageSize)
 	for rows.Next() {
 		row, err := scanSessionListRow(rows)
 		if err != nil {
-			return service.CursorPage[map[string]any]{}, err
+			return service.PageResponse[map[string]any]{}, err
 		}
 		all = append(all, row)
 	}
 	if err := rows.Err(); err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 
-	return service.BuildCursorPage(
-		all,
-		limit,
-		mapSessionListRow,
-		func(row sessionListRow) service.DescendingCursor {
-			return service.DescendingCursor{SortValue: row.LastSeenAt, ID: row.SessionKey}
-		},
-	), nil
+	items := make([]map[string]any, 0, len(all))
+	for _, row := range all {
+		items = append(items, mapSessionListRow(row))
+	}
+	return service.BuildPageResponse(items, total, page), nil
 }
 
 func (r *SessionsRepository) GetByKey(sessionKey string) (map[string]any, error) {
@@ -164,7 +165,7 @@ func (r *SessionsRepository) recentEvents(sessionKey string) ([]map[string]any, 
 	rows, err := r.db.Query(
 		`
 		SELECT
-			event_id, session_key, run_id, tool_call_id, approval_id, request_id,
+			event_id, qa_record_id, session_key, run_id, tool_call_id, approval_id, request_id,
 			source_kind, hook_name, event_type, category, sub_category, direction,
 			primary_module, risk_level, risk_score, policy_decision, enforcement_action,
 			title, summary, recommendation, content_excerpt, occurred_at
@@ -182,7 +183,7 @@ func (r *SessionsRepository) recentEvents(sessionKey string) ([]map[string]any, 
 	for rows.Next() {
 		var row auditEventListRow
 		if err := rows.Scan(
-			&row.EventID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
+			&row.EventID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
 			&row.RequestID, &row.SourceKind, &row.HookName, &row.EventType, &row.Category,
 			&row.SubCategory, &row.Direction, &row.PrimaryModule, &row.RiskLevel,
 			&row.RiskScore, &row.PolicyDecision, &row.EnforcementAction, &row.Title,
@@ -199,7 +200,7 @@ func (r *SessionsRepository) recentToolCalls(sessionKey string) ([]map[string]an
 	rows, err := r.db.Query(
 		`
 		SELECT
-			tool_call_id, session_key, run_id, approval_id, tool_name, risk_level,
+			tool_call_id, qa_record_id, session_key, run_id, approval_id, tool_name, risk_level,
 			risk_score, policy_decision, enforcement_action, started_at, finished_at,
 			duration_ms, result_status, result_excerpt
 		FROM tool_calls
@@ -216,7 +217,7 @@ func (r *SessionsRepository) recentToolCalls(sessionKey string) ([]map[string]an
 	for rows.Next() {
 		var row toolCallListRow
 		if err := rows.Scan(
-			&row.ToolCallID, &row.SessionKey, &row.RunID, &row.ApprovalID,
+			&row.ToolCallID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ApprovalID,
 			&row.ToolName, &row.RiskLevel, &row.RiskScore, &row.PolicyDecision,
 			&row.EnforcementAction, &row.StartedAt, &row.FinishedAt, &row.DurationMs,
 			&row.ResultStatus, &row.ResultExcerpt,
@@ -232,7 +233,7 @@ func (r *SessionsRepository) recentApprovals(sessionKey string) ([]any, error) {
 	rows, err := r.db.Query(
 		`
 		SELECT
-			approval_id, pending_id, session_key, run_id, transport, requester_ou_id,
+			approval_id, qa_record_id, pending_id, session_key, run_id, transport, requester_ou_id,
 			module, risk_level, tool_name, scope_type, requested_at, expires_at,
 			resolved_at, resolution, prompt_excerpt
 		FROM approvals
@@ -249,7 +250,7 @@ func (r *SessionsRepository) recentApprovals(sessionKey string) ([]any, error) {
 	for rows.Next() {
 		var row approvalListRow
 		if err := rows.Scan(
-			&row.ApprovalID, &row.PendingID, &row.SessionKey, &row.RunID,
+			&row.ApprovalID, &row.QARecordID, &row.PendingID, &row.SessionKey, &row.RunID,
 			&row.Transport, &row.RequesterOuID, &row.Module, &row.RiskLevel,
 			&row.ToolName, &row.ScopeType, &row.RequestedAt, &row.ExpiresAt,
 			&row.ResolvedAt, &row.Resolution, &row.PromptExcerpt,

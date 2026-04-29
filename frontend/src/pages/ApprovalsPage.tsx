@@ -7,8 +7,9 @@ import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
-import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
+import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListResource";
 import { formatTimestamp } from "../utils/format";
+import { formatQaRecordId } from "../utils/qa-records";
 import { renderRiskBadge, renderStateBadge } from "../utils/status";
 
 function formatApprovalScope(approval: ApprovalListItemDto): string {
@@ -41,9 +42,9 @@ export function ApprovalsPage() {
   const [selectedDetail, setSelectedDetail] = useState<ApprovalDetailDto | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const { items, loading, error, paginationProps } = useCursorListResource<ApprovalListItemDto, ApprovalListQuery>({
+  const { items, loading, error, paginationProps } = usePagedListResource<ApprovalListItemDto, ApprovalListQuery>({
     fallbackPage: import.meta.env.DEV
-      ? (_query, pageIndex, pageSize) => paginateMockItems(mockApprovals, pageIndex, pageSize)
+      ? (_query, pageIndex, pageSize) => paginateMockPage(mockApprovals, pageIndex, pageSize)
       : undefined,
     loadPage: listApprovals,
     query: {},
@@ -113,6 +114,7 @@ export function ApprovalsPage() {
         <DataTable
           columns={[
             { key: "approvalId", label: "审批 ID", maxWidth: 220, minWidth: 170, width: 190 },
+            { key: "qaRecord", label: "问答记录", maxWidth: 220, minWidth: 150, width: 180 },
             { key: "requester", label: "申请人", maxWidth: 220, minWidth: 160, width: 180 },
             { key: "risk", label: "风险权重", maxWidth: 150, minWidth: 112, width: 128 },
             { key: "scope", label: "范围类型", maxWidth: 190, minWidth: 140, width: 160 },
@@ -122,9 +124,11 @@ export function ApprovalsPage() {
             { key: "status", label: "状态", maxWidth: 150, minWidth: 112, width: 128 },
             { key: "action", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
           ]}
+          loading={loading}
           rows={items.map((approval) => ({
             id: approval.approvalId,
             approvalId: approval.approvalId,
+            qaRecord: formatQaRecordId(approval.qaRecordId),
             requester: approval.requesterOuId ?? "未知申请人",
             risk: renderRiskBadge(approval.riskLevel),
             scope: approval.scopeType,
@@ -181,6 +185,7 @@ export function ApprovalsPage() {
         <dl className="detail-panel__grid">
           {[
             { label: "审批 ID", value: selectedDetail?.approvalId ?? "暂无" },
+            { label: "关联问答记录", value: formatQaRecordId(selectedDetail?.qaRecordId) },
             { label: "Pending ID", value: selectedDetail?.pendingId ?? "暂无" },
             { label: "申请人", value: selectedDetail?.requesterOuId ?? "暂无" },
             { label: "审批人候选", value: formatList(selectedDetail?.approverOuIds) },

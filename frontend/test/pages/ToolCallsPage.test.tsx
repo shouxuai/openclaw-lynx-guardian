@@ -16,6 +16,7 @@ function createJsonResponse(data: unknown): Response {
 function createToolCall() {
   return {
     toolCallId: "TOOL-001",
+    qaRecordId: "qa-1",
     sessionKey: "session-1",
     runId: "run-1",
     approvalId: "APR-001",
@@ -47,6 +48,16 @@ function createToolCallDetail() {
   };
 }
 
+function createPage(items: unknown[], pageNum = 1, pageSize = 20, total = items.length) {
+  return {
+    items,
+    total,
+    pageNum,
+    pageSize,
+    totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+  };
+}
+
 describe("ToolCallsPage", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -62,18 +73,30 @@ describe("ToolCallsPage", () => {
 
   it("opens tool call JSON details in a dialog instead of navigating to a missing route", async () => {
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse({ items: [createToolCall()] }))
+      .mockResolvedValueOnce(createJsonResponse(createPage([
+        createToolCall(),
+        {
+          ...createToolCall(),
+          toolCallId: "TOOL-LEGACY",
+          qaRecordId: undefined,
+        },
+      ])))
       .mockResolvedValueOnce(createJsonResponse(createToolCallDetail()));
 
     render(<ToolCallsPage />);
 
     expect(await screen.findByText("TOOL-001")).toBeInTheDocument();
+    expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
+    expect(screen.getByText("未关联问答记录")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/tool-calls?pageNum=1&pageSize=20");
     expect(screen.queryByRole("link", { name: "查看 JSON" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "查看 TOOL-001 JSON 详情" }));
 
     expect(await screen.findByRole("dialog", { name: "工具调用详情" })).toBeInTheDocument();
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/tool-calls/TOOL-001");
+    expect(screen.getByText("关联问答记录")).toBeInTheDocument();
+    expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
     expect(screen.getByText("powershell Get-Content secret.txt")).toBeInTheDocument();
     expect(screen.getByText("M2:protected_file_access")).toBeInTheDocument();
     expect(screen.getByText(/"decisionId": "decision-001"/)).toBeInTheDocument();

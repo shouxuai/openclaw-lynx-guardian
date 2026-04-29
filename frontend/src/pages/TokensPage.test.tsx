@@ -18,6 +18,8 @@ describe("TokensPage", () => {
           outputTokens: 40,
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
+          actualTokens: 100,
+          estimatedTokens: 0,
           estimatedCount: 1,
           unavailableCount: 1,
           topModels: [{ model: "actual-model", totalTokens: 100 }],
@@ -79,7 +81,7 @@ describe("TokensPage", () => {
 
     render(<TokensPage />);
 
-    expect(await screen.findByText("实际总量")).toBeInTheDocument();
+    expect(await screen.findByText("可计量总量")).toBeInTheDocument();
     expect(screen.getByText("100")).toBeInTheDocument();
     expect(screen.getByText("估算记录 1")).toBeInTheDocument();
     expect(screen.getByText("不可用记录 1")).toBeInTheDocument();

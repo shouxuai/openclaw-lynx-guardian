@@ -65,6 +65,7 @@ describe("createLocalConsoleIngestClient", () => {
 
     client.enqueueMany([
       item("auditEvent", "audit-1"),
+      item("qaRecordUpsert", "qa-1"),
       item("toolCallUpsert", "tool-1"),
       item("lynxCheckUpsert", "check-1"),
     ]);
@@ -72,11 +73,13 @@ describe("createLocalConsoleIngestClient", () => {
 
     expect(calls.map((call) => call.url)).toEqual([
       "http://127.0.0.1:31789/lynx/internal/v1/ingest/audit-events",
+      "http://127.0.0.1:31789/lynx/internal/v1/ingest/qa-records",
       "http://127.0.0.1:31789/lynx/internal/v1/ingest/tool-calls",
       "http://127.0.0.1:31789/lynx/internal/v1/ingest/lynx-checks",
     ]);
     expect(calls.map((call) => call.body.items.map((queuedItem: IngestItemV1) => queuedItem.kind))).toEqual([
       ["auditEvent"],
+      ["qaRecordUpsert"],
       ["toolCallUpsert"],
       ["lynxCheckUpsert"],
     ]);

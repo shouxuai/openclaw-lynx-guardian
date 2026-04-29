@@ -11,6 +11,8 @@ type TokenUsageListQuery struct {
 	ToMs        *int64
 	SessionKey  *string
 	RunID       *string
+	PageNum     *int
+	PageSize    *int
 	Limit       *int
 	Cursor      *string
 	Provider    *string
@@ -36,6 +38,7 @@ type TokenTrendQuery struct {
 
 type tokenUsageRow struct {
 	UsageEventID       string
+	QARecordID         sql.NullString
 	SessionKey         sql.NullString
 	RunID              sql.NullString
 	AgentID            sql.NullString
@@ -52,9 +55,8 @@ type tokenUsageRow struct {
 	OccurredAt         int64
 }
 
-func (r *TokensRepository) List(query TokenUsageListQuery) (service.CursorPage[map[string]any], error) {
-	limit := service.ResolveListLimit(query.Limit)
-	cursor := service.DecodeDescendingCursor(query.Cursor)
+func (r *TokensRepository) List(query TokenUsageListQuery) (service.PageResponse[map[string]any], error) {
+	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := tokenCommonFilter(TokenSummaryQuery{
 		FromMs:     query.FromMs,
 		ToMs:       query.ToMs,
@@ -66,54 +68,56 @@ func (r *TokensRepository) List(query TokenUsageListQuery) (service.CursorPage[m
 	filter.AppendEquals("agent_id", query.AgentID)
 	filter.AppendBool("is_estimated", query.IsEstimated)
 	filter.AppendEquals("source_type", query.SourceType)
-	filter.AppendDescendingCursor("occurred_at", "usage_event_id", cursor)
+
+	total, err := countRows(r.db, "token_usage", filter)
+	if err != nil {
+		return service.PageResponse[map[string]any]{}, err
+	}
 
 	rows, err := r.db.Query(
 		`
 		SELECT
-			usage_event_id, session_key, run_id, agent_id, provider, model,
+			usage_event_id, qa_record_id, session_key, run_id, agent_id, provider, model,
 			source_type, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			total_tokens, assistant_text_count, is_estimated, occurred_at
 		FROM token_usage `+filter.Where()+`
 		ORDER BY occurred_at DESC, usage_event_id DESC
-		LIMIT ?`,
-		append(filter.Params(), limit+1)...,
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
 	)
 	if err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 	defer rows.Close()
 
-	all := make([]tokenUsageRow, 0, limit+1)
+	all := make([]tokenUsageRow, 0, page.PageSize)
 	for rows.Next() {
 		var row tokenUsageRow
 		if err := rows.Scan(
-			&row.UsageEventID, &row.SessionKey, &row.RunID, &row.AgentID,
+			&row.UsageEventID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.AgentID,
 			&row.Provider, &row.Model, &row.SourceType, &row.InputTokens, &row.OutputTokens,
 			&row.CacheReadTokens, &row.CacheWriteTokens, &row.TotalTokens,
 			&row.AssistantTextCount, &row.IsEstimated, &row.OccurredAt,
 		); err != nil {
-			return service.CursorPage[map[string]any]{}, err
+			return service.PageResponse[map[string]any]{}, err
 		}
 		all = append(all, row)
 	}
 	if err := rows.Err(); err != nil {
-		return service.CursorPage[map[string]any]{}, err
+		return service.PageResponse[map[string]any]{}, err
 	}
 
-	return service.BuildCursorPage(
-		all,
-		limit,
-		mapTokenUsageRow,
-		func(row tokenUsageRow) service.DescendingCursor {
-			return service.DescendingCursor{SortValue: row.OccurredAt, ID: row.UsageEventID}
-		},
-	), nil
+	items := make([]map[string]any, 0, len(all))
+	for _, row := range all {
+		items = append(items, mapTokenUsageRow(row))
+	}
+	return service.BuildPageResponse(items, total, page), nil
 }
 
 func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, error) {
 	filter := tokenCommonFilter(query)
-	var totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, estimatedCount, unavailableCount int64
+	var totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64
+	var actualTokens, estimatedTokens, measurableTokens, estimatedCount, unavailableCount int64
 	if err := r.db.QueryRow(
 		`
 		SELECT
@@ -122,11 +126,17 @@ func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, 
 			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN output_tokens ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN cache_read_tokens ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN cache_write_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'actual' THEN total_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type = 'estimated' THEN total_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type IN ('actual', 'estimated') THEN total_tokens ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN source_type = 'estimated' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN source_type = 'unavailable' THEN 1 ELSE 0 END), 0)
 		FROM token_usage `+filter.Where(),
 		filter.Params()...,
-	).Scan(&totalTokens, &inputTokens, &outputTokens, &cacheReadTokens, &cacheWriteTokens, &estimatedCount, &unavailableCount); err != nil {
+	).Scan(
+		&totalTokens, &inputTokens, &outputTokens, &cacheReadTokens, &cacheWriteTokens,
+		&actualTokens, &estimatedTokens, &measurableTokens, &estimatedCount, &unavailableCount,
+	); err != nil {
 		return nil, err
 	}
 
@@ -169,6 +179,9 @@ func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, 
 		"outputTokens":     outputTokens,
 		"cacheReadTokens":  cacheReadTokens,
 		"cacheWriteTokens": cacheWriteTokens,
+		"actualTokens":     actualTokens,
+		"estimatedTokens":  estimatedTokens,
+		"measurableTokens": measurableTokens,
 		"estimatedCount":   estimatedCount,
 		"unavailableCount": unavailableCount,
 		"topModels":        topModels,
@@ -254,6 +267,7 @@ func mapTokenUsageRow(row tokenUsageRow) map[string]any {
 		"occurredAtMs":       row.OccurredAt,
 	}
 	putString(out, "sessionKey", row.SessionKey)
+	putString(out, "qaRecordId", row.QARecordID)
 	putString(out, "runId", row.RunID)
 	putString(out, "agentId", row.AgentID)
 	return out

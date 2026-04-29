@@ -45,6 +45,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	lynxCheckTasks := repo.NewLynxCheckTaskRepository(database)
 	skillRepository := repo.NewSkillRepository(database)
 	tokens := repo.NewTokensRepository(database)
+	qaRecords := repo.NewQARecordsRepository(database)
 	dashboard := repo.NewDashboardRepository(database)
 	decisions := repo.NewDecisionRepository(database)
 	chains := repo.NewChainRepository(database)
@@ -79,6 +80,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	routes.RegisterLynxCheckTasks(query, ingestGroup, lynxCheckService, lynxCheckTasks)
 	routes.RegisterSkills(query, ingestGroup, skillService, skillRepository)
 	routes.RegisterSessions(query, sessions)
+	routes.RegisterQARecords(query, qaRecords)
 	routes.RegisterDashboard(query, dashboard)
 	routes.RegisterTokens(query, tokens)
 

@@ -55,6 +55,8 @@ func RegisterLynxCheckTasks(
 			FromMs:     httpserver.ReadInt64(values, "fromMs"),
 			ToMs:       httpserver.ReadInt64(values, "toMs"),
 			SessionKey: httpserver.ReadString(values, "sessionKey"),
+			PageNum:    httpserver.ReadInt(values, "pageNum"),
+			PageSize:   httpserver.ReadInt(values, "pageSize"),
 			Limit:      httpserver.ReadInt(values, "limit"),
 			Cursor:     httpserver.ReadString(values, "cursor"),
 			Source:     httpserver.ReadString(values, "source"),

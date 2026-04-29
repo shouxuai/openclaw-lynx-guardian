@@ -38,6 +38,7 @@ type SessionUpsertItem struct {
 
 type AuditEventData struct {
 	EventID           string
+	QARecordID        *string
 	SessionKey        *string
 	RunID             *string
 	ToolCallID        *string
@@ -71,6 +72,7 @@ type AuditEventItem struct {
 
 type ToolCallUpsertData struct {
 	ToolCallID        string
+	QARecordID        *string
 	SessionKey        *string
 	RunID             *string
 	ApprovalID        *string
@@ -98,6 +100,7 @@ type ToolCallUpsertItem struct {
 
 type ApprovalUpsertData struct {
 	ApprovalID             string
+	QARecordID             *string
 	PendingID              *string
 	SessionKey             *string
 	RunID                  *string
@@ -130,6 +133,7 @@ type ApprovalUpsertItem struct {
 
 type LynxCheckUpsertData struct {
 	RequestID            string
+	QARecordID           *string
 	Source               string
 	Trigger              string
 	PreferredTargetKind  string
@@ -142,6 +146,7 @@ type LynxCheckUpsertData struct {
 	SendSucceeded        *bool
 	Transport            *string
 	ReportPath           *string
+	ReportMarkdown       *string
 	ErrorMessage         *string
 	DeliveryAttemptsJSON []map[string]any
 	CreatedAtMs          int64
@@ -155,6 +160,7 @@ type LynxCheckUpsertItem struct {
 
 type TokenUsageData struct {
 	UsageEventID       string
+	QARecordID         *string
 	SessionKey         *string
 	RunID              *string
 	AgentID            *string
@@ -174,6 +180,33 @@ type TokenUsageData struct {
 type TokenUsageItem struct {
 	IngestBase
 	Data TokenUsageData
+}
+
+type QARecordUpsertData struct {
+	QARecordID         string
+	SessionKey         *string
+	RunID              *string
+	AgentID            *string
+	UserPromptExcerpt  *string
+	UserPromptHash     *string
+	FinalAnswerExcerpt *string
+	FinalAnswerHash    *string
+	Status             string
+	RiskLevel          *string
+	RiskScore          *int64
+	ToolCallCount      int64
+	ApprovalCount      int64
+	DetectionCount     int64
+	TotalTokens        int64
+	StartedAtMs        int64
+	CompletedAtMs      *int64
+	LinkOrigin         string
+	PayloadJSON        map[string]any
+}
+
+type QARecordUpsertItem struct {
+	IngestBase
+	Data QARecordUpsertData
 }
 
 func (r *IngestRepository) WithTransaction(callback func(*sql.Tx) error) error {
@@ -230,18 +263,76 @@ func (r *IngestRepository) PersistSession(exec sqlExecer, item SessionUpsertItem
 	return resultStatus(result)
 }
 
+func (r *IngestRepository) PersistQARecord(exec sqlExecer, item QARecordUpsertItem, ingestedAtMs int64) (PersistResult, error) {
+	result, err := exec.Exec(
+		`
+		INSERT INTO qa_records (
+			qa_record_id, session_key, run_id, agent_id, user_prompt_excerpt,
+			user_prompt_hash, final_answer_excerpt, final_answer_hash, status,
+			risk_level, risk_score, tool_call_count, approval_count, detection_count,
+			total_tokens, started_at, completed_at, ingested_at, payload_json, link_origin
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(qa_record_id) DO UPDATE SET
+			session_key = COALESCE(qa_records.session_key, excluded.session_key),
+			run_id = COALESCE(qa_records.run_id, excluded.run_id),
+			agent_id = COALESCE(qa_records.agent_id, excluded.agent_id),
+			user_prompt_excerpt = COALESCE(excluded.user_prompt_excerpt, qa_records.user_prompt_excerpt),
+			user_prompt_hash = COALESCE(excluded.user_prompt_hash, qa_records.user_prompt_hash),
+			final_answer_excerpt = COALESCE(excluded.final_answer_excerpt, qa_records.final_answer_excerpt),
+			final_answer_hash = COALESCE(excluded.final_answer_hash, qa_records.final_answer_hash),
+			status = COALESCE(excluded.status, qa_records.status),
+			risk_level = COALESCE(excluded.risk_level, qa_records.risk_level),
+			risk_score = COALESCE(excluded.risk_score, qa_records.risk_score),
+			tool_call_count = MAX(qa_records.tool_call_count, excluded.tool_call_count),
+			approval_count = MAX(qa_records.approval_count, excluded.approval_count),
+			detection_count = MAX(qa_records.detection_count, excluded.detection_count),
+			total_tokens = MAX(qa_records.total_tokens, excluded.total_tokens),
+			started_at = MIN(qa_records.started_at, excluded.started_at),
+			completed_at = COALESCE(excluded.completed_at, qa_records.completed_at),
+			ingested_at = excluded.ingested_at,
+			payload_json = COALESCE(excluded.payload_json, qa_records.payload_json),
+			link_origin = COALESCE(excluded.link_origin, qa_records.link_origin)
+		`,
+		item.Data.QARecordID,
+		item.Data.SessionKey,
+		item.Data.RunID,
+		item.Data.AgentID,
+		item.Data.UserPromptExcerpt,
+		item.Data.UserPromptHash,
+		item.Data.FinalAnswerExcerpt,
+		item.Data.FinalAnswerHash,
+		item.Data.Status,
+		item.Data.RiskLevel,
+		item.Data.RiskScore,
+		item.Data.ToolCallCount,
+		item.Data.ApprovalCount,
+		item.Data.DetectionCount,
+		item.Data.TotalTokens,
+		item.Data.StartedAtMs,
+		item.Data.CompletedAtMs,
+		ingestedAtMs,
+		toJSON(item.Data.PayloadJSON),
+		item.Data.LinkOrigin,
+	)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	return resultStatus(result)
+}
+
 func (r *IngestRepository) PersistAuditEvent(exec sqlExecer, item AuditEventItem, ingestedAtMs int64) (PersistResult, error) {
 	result, err := exec.Exec(
 		`
 		INSERT OR IGNORE INTO audit_events (
-			event_id, session_key, run_id, tool_call_id, approval_id, request_id,
+			event_id, qa_record_id, session_key, run_id, tool_call_id, approval_id, request_id,
 			source_kind, hook_name, event_type, category, sub_category, direction,
 			content_kind, primary_module, modules_json, risk_level, risk_score,
 			policy_decision, enforcement_action, title, summary, recommendation,
 			content_excerpt, content_hash, occurred_at, ingested_at, payload_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 		item.Data.EventID,
+		item.Data.QARecordID,
 		item.Data.SessionKey,
 		item.Data.RunID,
 		item.Data.ToolCallID,
@@ -279,12 +370,13 @@ func (r *IngestRepository) PersistToolCall(exec sqlExecer, item ToolCallUpsertIt
 	result, err := exec.Exec(
 		`
 		INSERT INTO tool_calls (
-			tool_call_id, session_key, run_id, approval_id, tool_name, param_summary,
+			tool_call_id, qa_record_id, session_key, run_id, approval_id, tool_name, param_summary,
 			param_hash, triggered_modules_json, risk_level, risk_score, policy_decision,
 			enforcement_action, started_at, finished_at, duration_ms, result_status,
 			result_excerpt, error_text, metadata_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tool_call_id) DO UPDATE SET
+			qa_record_id = COALESCE(tool_calls.qa_record_id, excluded.qa_record_id),
 			session_key = COALESCE(tool_calls.session_key, excluded.session_key),
 			run_id = COALESCE(tool_calls.run_id, excluded.run_id),
 			approval_id = COALESCE(tool_calls.approval_id, excluded.approval_id),
@@ -310,6 +402,7 @@ func (r *IngestRepository) PersistToolCall(exec sqlExecer, item ToolCallUpsertIt
 			metadata_json = COALESCE(tool_calls.metadata_json, excluded.metadata_json)
 		`,
 		item.Data.ToolCallID,
+		item.Data.QARecordID,
 		item.Data.SessionKey,
 		item.Data.RunID,
 		item.Data.ApprovalID,
@@ -339,13 +432,14 @@ func (r *IngestRepository) PersistApproval(exec sqlExecer, item ApprovalUpsertIt
 	result, err := exec.Exec(
 		`
 		INSERT INTO approvals (
-			approval_id, pending_id, session_key, run_id, transport, channel_profile,
+			approval_id, qa_record_id, pending_id, session_key, run_id, transport, channel_profile,
 			channel_id, account_id, conversation_id, requester_ou_id, approver_ou_ids_json,
 			resolved_approver_ou_id, request_fingerprint_hash, module, risk_level, tool_name,
 			scope_type, requested_at, expires_at, resolved_at, resolution, prompt_excerpt,
 			audit_summary_json, metadata_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(approval_id) DO UPDATE SET
+			qa_record_id = COALESCE(approvals.qa_record_id, excluded.qa_record_id),
 			pending_id = COALESCE(approvals.pending_id, excluded.pending_id),
 			session_key = COALESCE(approvals.session_key, excluded.session_key),
 			run_id = COALESCE(approvals.run_id, excluded.run_id),
@@ -371,6 +465,7 @@ func (r *IngestRepository) PersistApproval(exec sqlExecer, item ApprovalUpsertIt
 			metadata_json = COALESCE(approvals.metadata_json, excluded.metadata_json)
 		`,
 		item.Data.ApprovalID,
+		item.Data.QARecordID,
 		item.Data.PendingID,
 		item.Data.SessionKey,
 		item.Data.RunID,
@@ -405,11 +500,12 @@ func (r *IngestRepository) PersistLynxCheck(exec sqlExecer, item LynxCheckUpsert
 	result, err := exec.Exec(
 		`
 		INSERT INTO lynx_checks (
-			request_id, source, trigger, preferred_target_kind, session_key, target_key,
+			request_id, qa_record_id, source, trigger, preferred_target_kind, session_key, target_key,
 			channel_id, message_provider, status, send_attempted, send_succeeded, transport,
-			report_path, error_message, delivery_attempts_json, created_at, completed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			report_path, report_markdown, error_message, delivery_attempts_json, created_at, completed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(request_id) DO UPDATE SET
+			qa_record_id = COALESCE(lynx_checks.qa_record_id, excluded.qa_record_id),
 			source = COALESCE(lynx_checks.source, excluded.source),
 			trigger = COALESCE(lynx_checks.trigger, excluded.trigger),
 			preferred_target_kind = COALESCE(lynx_checks.preferred_target_kind, excluded.preferred_target_kind),
@@ -422,12 +518,14 @@ func (r *IngestRepository) PersistLynxCheck(exec sqlExecer, item LynxCheckUpsert
 			send_succeeded = MAX(lynx_checks.send_succeeded, excluded.send_succeeded),
 			transport = COALESCE(excluded.transport, lynx_checks.transport),
 			report_path = COALESCE(excluded.report_path, lynx_checks.report_path),
+			report_markdown = COALESCE(excluded.report_markdown, lynx_checks.report_markdown),
 			error_message = COALESCE(excluded.error_message, lynx_checks.error_message),
 			delivery_attempts_json = COALESCE(excluded.delivery_attempts_json, lynx_checks.delivery_attempts_json),
 			created_at = MIN(lynx_checks.created_at, excluded.created_at),
 			completed_at = COALESCE(excluded.completed_at, lynx_checks.completed_at)
 		`,
 		item.Data.RequestID,
+		item.Data.QARecordID,
 		item.Data.Source,
 		item.Data.Trigger,
 		item.Data.PreferredTargetKind,
@@ -440,6 +538,7 @@ func (r *IngestRepository) PersistLynxCheck(exec sqlExecer, item LynxCheckUpsert
 		toBoolInt(item.Data.SendSucceeded),
 		item.Data.Transport,
 		item.Data.ReportPath,
+		item.Data.ReportMarkdown,
 		item.Data.ErrorMessage,
 		toJSON(item.Data.DeliveryAttemptsJSON),
 		item.Data.CreatedAtMs,
@@ -478,11 +577,11 @@ func (r *IngestRepository) persistLynxCheckTaskCompatibility(exec sqlExecer, ite
 		`
 		INSERT INTO lynx_check_tasks (
 			id, request_id, trigger, source, requester_id, session_key, target_key,
-			status, facts_json, evidence_bundle_json, report_skeleton, delivery_channel,
-			delivery_target, delivery_status, delivery_error, created_at, updated_at,
+			status, facts_json, evidence_bundle_json, report_skeleton, report_markdown,
+			delivery_channel, delivery_target, delivery_status, delivery_error, created_at, updated_at,
 			delivered_at, completed_at
 		)
-		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, '{}', '', ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, '{}', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(request_id) DO UPDATE SET
 			trigger = COALESCE(NULLIF(excluded.trigger, ''), lynx_check_tasks.trigger),
 			source = COALESCE(NULLIF(excluded.source, ''), lynx_check_tasks.source),
@@ -499,6 +598,7 @@ func (r *IngestRepository) persistLynxCheckTaskCompatibility(exec sqlExecer, ite
 				ELSE COALESCE(NULLIF(excluded.status, ''), lynx_check_tasks.status)
 			END,
 			facts_json = COALESCE(NULLIF(excluded.facts_json, '{}'), lynx_check_tasks.facts_json),
+			report_markdown = COALESCE(NULLIF(excluded.report_markdown, ''), lynx_check_tasks.report_markdown),
 			delivery_channel = COALESCE(NULLIF(excluded.delivery_channel, ''), lynx_check_tasks.delivery_channel),
 			delivery_target = COALESCE(NULLIF(excluded.delivery_target, ''), lynx_check_tasks.delivery_target),
 			delivery_status = COALESCE(NULLIF(excluded.delivery_status, ''), lynx_check_tasks.delivery_status),
@@ -519,6 +619,7 @@ func (r *IngestRepository) persistLynxCheckTaskCompatibility(exec sqlExecer, ite
 			"messageProvider":     optionalString(item.Data.MessageProvider),
 			"reportPath":          optionalString(item.Data.ReportPath),
 		}),
+		optionalString(item.Data.ReportMarkdown),
 		deliveryChannel,
 		optionalString(item.Data.TargetKey),
 		deliveryStatus,
@@ -535,13 +636,14 @@ func (r *IngestRepository) PersistTokenUsage(exec sqlExecer, item TokenUsageItem
 	result, err := exec.Exec(
 		`
 		INSERT OR IGNORE INTO token_usage (
-			usage_event_id, session_key, run_id, agent_id, provider, model,
+			usage_event_id, qa_record_id, session_key, run_id, agent_id, provider, model,
 			source_type, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			total_tokens, assistant_text_count, is_estimated, occurred_at, ingested_at,
 			payload_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 		item.Data.UsageEventID,
+		item.Data.QARecordID,
 		item.Data.SessionKey,
 		item.Data.RunID,
 		item.Data.AgentID,

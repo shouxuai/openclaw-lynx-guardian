@@ -78,6 +78,7 @@ export function ChainsPage() {
             { key: "grant", label: "Active Grant", maxWidth: 220, minWidth: 160, width: 190 },
             { key: "approval", label: "Pending Approval", maxWidth: 220, minWidth: 160, width: 190 },
           ]}
+          loading={loading}
           rows={items.map((item) => ({
             id: item.chainId,
             chain: item.chainId,

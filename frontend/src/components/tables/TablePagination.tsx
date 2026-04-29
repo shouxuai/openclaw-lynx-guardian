@@ -14,6 +14,8 @@ export interface TablePaginationProps {
   pageIndex: number;
   pageSize: number;
   pageSizeOptions: number[];
+  totalItems?: number;
+  totalPages?: number;
   onNextPage: () => void;
   onPageChange: (pageIndex: number) => void;
   onPageSizeChange: (pageSize: number) => void;
@@ -29,6 +31,8 @@ export function TablePagination({
   pageIndex,
   pageSize,
   pageSizeOptions,
+  totalItems,
+  totalPages,
   onNextPage,
   onPageChange,
   onPageSizeChange,
@@ -37,11 +41,15 @@ export function TablePagination({
   const estimatedTotal = hasNextPage
     ? (pageCount + 1) * pageSize
     : (pageIndex * pageSize) + itemCount;
+  const displayTotal = totalItems ?? estimatedTotal;
+  const displayPageCount = totalPages ?? pageCount;
 
   return (
     <div className="table-pagination" aria-label={ariaLabel}>
       <p className="table-pagination__summary">
-        第 {formatInteger(pageIndex + 1)} 页，显示 {formatInteger(itemCount)} 条结果
+        第 {formatInteger(pageIndex + 1)} 页
+        {displayPageCount > 0 ? ` / 共 ${formatInteger(displayPageCount)} 页` : ""}，显示 {formatInteger(itemCount)} 条结果
+        {totalItems !== undefined ? `，共 ${formatInteger(totalItems)} 条` : ""}
       </p>
 
       <Pagination
@@ -52,7 +60,7 @@ export function TablePagination({
         pageSize={pageSize}
         pageSizeOptions={pageSizeOptions.map(String)}
         showSizeChanger
-        total={estimatedTotal}
+        total={displayTotal}
         onChange={(nextPage, nextPageSize) => {
           const zeroBasedPage = nextPage - 1;
           if (nextPageSize !== pageSize) {

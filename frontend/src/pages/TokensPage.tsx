@@ -8,11 +8,11 @@ import type {
 } from "@lynx/local-console-shared";
 
 import { getTokenSummary, getTokenTrend, getTokenUsage } from "../api/tokens";
-import type { TokenTimeRangeQuery } from "../api/tokens";
+import type { TokenTimeRangeQuery, TokenUsageListQuery } from "../api/tokens";
 import { DataTable } from "../components/tables/DataTable";
-import { DEFAULT_TABLE_PAGE_SIZE, DEFAULT_TABLE_PAGE_SIZE_OPTIONS, TablePagination } from "../components/tables/TablePagination";
+import { TablePagination } from "../components/tables/TablePagination";
 import { mockTokenSummary, mockTokenTrend, mockTokenUsage } from "../data/mock-console";
-import { paginateMockItems } from "../hooks/useCursorListResource";
+import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
 
 const EMPTY_TOKEN_SUMMARY: TokenSummaryDto = {
@@ -128,19 +128,25 @@ function resolveTokenTimeRange(key: TokenTimeRangeKey): { bucket: TokenTrendBuck
 export function TokensPage() {
   const [summary, setSummary] = useState<TokenSummaryDto>(EMPTY_TOKEN_SUMMARY);
   const [trend, setTrend] = useState<TokenTrendDto>(EMPTY_TOKEN_TREND);
-  const [usageItems, setUsageItems] = useState<TokenUsageListItemDto[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(true);
-  const [usageLoading, setUsageLoading] = useState(true);
   const [trendLoading, setTrendLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pageCursors, setPageCursors] = useState<Array<string | undefined>>([undefined]);
-  const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState(DEFAULT_TABLE_PAGE_SIZE);
-  const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [timeRangeKey, setTimeRangeKey] = useState<TokenTimeRangeKey>("last24h");
 
-  const currentCursor = pageCursors[pageIndex];
   const selectedTimeRange = useMemo(() => resolveTokenTimeRange(timeRangeKey), [timeRangeKey]);
+  const {
+    items: usageItems,
+    loading: usageLoading,
+    error: usageError,
+    paginationProps: usagePaginationProps,
+    resetPaging: resetUsagePaging,
+  } = usePagedListResource<TokenUsageListItemDto, TokenUsageListQuery>({
+    fallbackPage: import.meta.env.DEV
+      ? (_query, pageIndex, pageSize) => paginateMockPage(mockTokenUsage, pageIndex, pageSize)
+      : undefined,
+    loadPage: getTokenUsage,
+    query: selectedTimeRange.query,
+  });
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -180,52 +186,6 @@ export function TokensPage() {
       abortController.abort();
     };
   }, [selectedTimeRange.query]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadUsage() {
-      startTransition(() => {
-        setUsageLoading(true);
-      });
-
-      try {
-        const nextUsage = await getTokenUsage({
-          limit: pageSize,
-          cursor: currentCursor,
-          ...selectedTimeRange.query,
-        });
-        if (!active) {
-          return;
-        }
-
-        startTransition(() => {
-          setUsageItems(nextUsage.items);
-          setNextCursor(nextUsage.nextCursor);
-          setError(null);
-          setUsageLoading(false);
-        });
-      } catch (loadError) {
-        if (!active) {
-          return;
-        }
-
-        const fallback = import.meta.env.DEV ? paginateMockItems(mockTokenUsage, pageIndex, pageSize) : undefined;
-        const message = loadError instanceof Error ? loadError.message : "未知错误";
-        startTransition(() => {
-          setUsageItems(fallback?.items ?? []);
-          setNextCursor(fallback?.nextCursor);
-          setError(fallback ? null : message);
-          setUsageLoading(false);
-        });
-      }
-    }
-
-    void loadUsage();
-    return () => {
-      active = false;
-    };
-  }, [currentCursor, pageIndex, pageSize, selectedTimeRange.query]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -291,44 +251,8 @@ export function TokensPage() {
     return models.length > 0 ? models : ["暂无模型"];
   }, [summary.topModels]);
   const loading = summaryLoading || usageLoading || trendLoading;
-  const loadStatus = error ? `实时数据不可用：${error}` : loading ? "正在刷新中" : "实时刷新中";
-
-  function resetUsagePaging(): void {
-    setPageCursors([undefined]);
-    setPageIndex(0);
-    setNextCursor(undefined);
-  }
-
-  function handleNextPage(): void {
-    if (!nextCursor) {
-      return;
-    }
-
-    setPageCursors((current) => {
-      const next = current.slice(0, pageIndex + 1);
-      next[pageIndex + 1] = nextCursor;
-      return next;
-    });
-    setPageIndex((current) => current + 1);
-  }
-
-  function handlePageChange(nextPageIndex: number): void {
-    if (nextPageIndex === pageIndex) {
-      return;
-    }
-    if (nextPageIndex === pageCursors.length && nextCursor) {
-      handleNextPage();
-      return;
-    }
-    if (nextPageIndex >= 0 && nextPageIndex < pageCursors.length) {
-      setPageIndex(nextPageIndex);
-    }
-  }
-
-  function handlePageSizeChange(nextPageSize: number): void {
-    setPageSize(nextPageSize);
-    resetUsagePaging();
-  }
+  const combinedError = error ?? usageError;
+  const loadStatus = combinedError ? `实时数据不可用：${combinedError}` : loading ? "正在刷新中" : "实时刷新中";
 
   function handleTimeRangeChange(nextTimeRangeKey: TokenTimeRangeKey): void {
     setTimeRangeKey(nextTimeRangeKey);
@@ -555,6 +479,7 @@ export function TokensPage() {
             { key: "type", label: "来源类型" },
             { key: "time", label: "触发时间" },
           ]}
+          loading={usageLoading}
           rows={usageItems.map((item) => {
             const sourceType = resolveSourceType(item);
             return {
@@ -583,17 +508,7 @@ export function TokensPage() {
           })}
         />
         <TablePagination
-          hasNextPage={Boolean(nextCursor)}
-          itemCount={usageItems.length}
-          loading={usageLoading}
-          pageCount={pageCursors.length}
-          pageIndex={pageIndex}
-          pageSize={pageSize}
-          pageSizeOptions={DEFAULT_TABLE_PAGE_SIZE_OPTIONS}
-          onNextPage={handleNextPage}
-          onPageChange={handlePageChange}
-          onPageSizeChange={handlePageSizeChange}
-          onPreviousPage={() => setPageIndex((current) => Math.max(0, current - 1))}
+          {...usagePaginationProps}
         />
       </section>
     </div>

@@ -13,6 +13,16 @@ function createJsonResponse(data: unknown): Response {
   } as unknown as Response;
 }
 
+function createPage(items: unknown[]) {
+  return {
+    items,
+    total: items.length,
+    pageNum: 1,
+    pageSize: 10,
+    totalPages: items.length === 0 ? 0 : 1,
+  };
+}
+
 describe("App", () => {
   const fetchMock = vi.fn<typeof fetch>();
   const dashboardOverview = {
@@ -39,10 +49,13 @@ describe("App", () => {
     fetchMock.mockImplementation(async (input) => {
       const requestUrl = String(input);
       if (requestUrl.startsWith("/lynx/events")) {
-        return createJsonResponse({ items: [] });
+        return createJsonResponse(createPage([]));
       }
       if (requestUrl.startsWith("/lynx/sessions")) {
-        return createJsonResponse({ items: [] });
+        return createJsonResponse(createPage([]));
+      }
+      if (requestUrl.startsWith("/lynx/qa-records")) {
+        return createJsonResponse(createPage([]));
       }
 
       return createJsonResponse(dashboardOverview);
@@ -66,7 +79,7 @@ describe("App", () => {
     expect(screen.getByText("L0 指标")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "过去 24 小时" })).not.toBeInTheDocument();
     expect(container.querySelector("a.topbar__githubButton")).toBeNull();
-    expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(11);
+    expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(12);
     expect(screen.queryByText("系统管理员")).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -83,7 +96,7 @@ describe("App", () => {
     expect(screen.getByText("审计控制台")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?limit=10");
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
     });
   });
 
@@ -91,6 +104,10 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByRole("link", { name: "概览" })).toHaveAttribute("href", "/webview");
+    expect(screen.getByRole("link", { name: "问答记录" })).toHaveAttribute(
+      "href",
+      "/webview/qa-records",
+    );
     expect(screen.getByRole("link", { name: "决策观测" })).toHaveAttribute(
       "href",
       "/webview/decisions",
@@ -111,7 +128,7 @@ describe("App", () => {
       "href",
       "/webview/grants",
     );
-    expect(screen.getByRole("link", { name: "检查任务" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "检测" })).toHaveAttribute(
       "href",
       "/webview/lynx-checks",
     );
@@ -137,7 +154,7 @@ describe("App", () => {
     expect(screen.getByText("审计控制台")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/lynx/events?limit=10");
+      expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
     });
   });
 

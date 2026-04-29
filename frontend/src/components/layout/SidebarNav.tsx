@@ -25,6 +25,14 @@ function NavIcon({ id }: { id: string }) {
           <path d="M14 14h6v6h-6z" />
         </svg>
       );
+    case "qa-records":
+      return (
+        <svg {...commonProps}>
+          <path d="M5 5h14v10H8l-3 3V5Z" />
+          <path d="M8 9h8" />
+          <path d="M8 12h5" />
+        </svg>
+      );
     case "events":
     case "decisions":
       return (

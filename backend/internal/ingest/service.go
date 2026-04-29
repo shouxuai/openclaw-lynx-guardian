@@ -203,6 +203,17 @@ func (s *Service) parseItem(raw json.RawMessage) (validItem, error) {
 				return s.repository.PersistAuditEvent(tx, item, ingestedAtMs)
 			},
 		}, nil
+	case "qaRecordUpsert":
+		item, err := parseQARecord(base)
+		if err != nil {
+			return validItem{}, err
+		}
+		return validItem{
+			kind: base.Kind,
+			persist: func(tx *sql.Tx, ingestedAtMs int64) (repo.PersistResult, error) {
+				return s.repository.PersistQARecord(tx, item, ingestedAtMs)
+			},
+		}, nil
 	case "toolCallUpsert":
 		item, err := parseToolCall(base)
 		if err != nil {
@@ -304,6 +315,7 @@ func parseSession(base rawItemBase) (repo.SessionUpsertItem, error) {
 func parseAuditEvent(base rawItemBase) (repo.AuditEventItem, error) {
 	var data struct {
 		EventID           string         `json:"eventId"`
+		QARecordID        *string        `json:"qaRecordId"`
 		SessionKey        *string        `json:"sessionKey"`
 		RunID             *string        `json:"runId"`
 		ToolCallID        *string        `json:"toolCallId"`
@@ -360,6 +372,7 @@ func parseAuditEvent(base rawItemBase) (repo.AuditEventItem, error) {
 		IngestBase: repo.IngestBase{ItemID: base.ItemID, OccurredAtMs: *base.OccurredAtMs},
 		Data: repo.AuditEventData{
 			EventID:           data.EventID,
+			QARecordID:        cleanStringPtr(data.QARecordID),
 			SessionKey:        cleanStringPtr(data.SessionKey),
 			RunID:             cleanStringPtr(data.RunID),
 			ToolCallID:        cleanStringPtr(data.ToolCallID),
@@ -388,9 +401,82 @@ func parseAuditEvent(base rawItemBase) (repo.AuditEventItem, error) {
 	}, nil
 }
 
+func parseQARecord(base rawItemBase) (repo.QARecordUpsertItem, error) {
+	var data struct {
+		QARecordID         string         `json:"qaRecordId"`
+		SessionKey         *string        `json:"sessionKey"`
+		RunID              *string        `json:"runId"`
+		AgentID            *string        `json:"agentId"`
+		UserPromptExcerpt  *string        `json:"userPromptExcerpt"`
+		UserPromptHash     *string        `json:"userPromptHash"`
+		FinalAnswerExcerpt *string        `json:"finalAnswerExcerpt"`
+		FinalAnswerHash    *string        `json:"finalAnswerHash"`
+		Status             string         `json:"status"`
+		RiskLevel          *string        `json:"riskLevel"`
+		RiskScore          *int64         `json:"riskScore"`
+		ToolCallCount      *int64         `json:"toolCallCount"`
+		ApprovalCount      *int64         `json:"approvalCount"`
+		DetectionCount     *int64         `json:"detectionCount"`
+		TotalTokens        *int64         `json:"totalTokens"`
+		StartedAtMs        *int64         `json:"startedAtMs"`
+		CompletedAtMs      *int64         `json:"completedAtMs"`
+		LinkOrigin         *string        `json:"linkOrigin"`
+		PayloadJSON        map[string]any `json:"payloadJson"`
+	}
+	if err := json.Unmarshal(base.Data, &data); err != nil {
+		return repo.QARecordUpsertItem{}, err
+	}
+	if err := requireStrings(map[string]string{
+		"qaRecordId": data.QARecordID,
+		"status":     data.Status,
+	}); err != nil {
+		return repo.QARecordUpsertItem{}, err
+	}
+	if data.StartedAtMs == nil {
+		return repo.QARecordUpsertItem{}, fmt.Errorf("startedAtMs is required")
+	}
+	if data.RiskLevel != nil && !allowed(*data.RiskLevel, riskLevels) {
+		return repo.QARecordUpsertItem{}, fmt.Errorf("invalid riskLevel")
+	}
+	linkOrigin := "legacy"
+	if data.LinkOrigin != nil {
+		switch *data.LinkOrigin {
+		case "runtime", "inferred", "legacy":
+			linkOrigin = *data.LinkOrigin
+		default:
+			return repo.QARecordUpsertItem{}, fmt.Errorf("invalid linkOrigin")
+		}
+	}
+	return repo.QARecordUpsertItem{
+		IngestBase: repo.IngestBase{ItemID: base.ItemID, OccurredAtMs: *base.OccurredAtMs},
+		Data: repo.QARecordUpsertData{
+			QARecordID:         data.QARecordID,
+			SessionKey:         cleanStringPtr(data.SessionKey),
+			RunID:              cleanStringPtr(data.RunID),
+			AgentID:            cleanStringPtr(data.AgentID),
+			UserPromptExcerpt:  cleanStringPtr(data.UserPromptExcerpt),
+			UserPromptHash:     cleanStringPtr(data.UserPromptHash),
+			FinalAnswerExcerpt: cleanStringPtr(data.FinalAnswerExcerpt),
+			FinalAnswerHash:    cleanStringPtr(data.FinalAnswerHash),
+			Status:             data.Status,
+			RiskLevel:          cleanStringPtr(data.RiskLevel),
+			RiskScore:          data.RiskScore,
+			ToolCallCount:      int64OrZero(data.ToolCallCount),
+			ApprovalCount:      int64OrZero(data.ApprovalCount),
+			DetectionCount:     int64OrZero(data.DetectionCount),
+			TotalTokens:        int64OrZero(data.TotalTokens),
+			StartedAtMs:        *data.StartedAtMs,
+			CompletedAtMs:      data.CompletedAtMs,
+			LinkOrigin:         linkOrigin,
+			PayloadJSON:        data.PayloadJSON,
+		},
+	}, nil
+}
+
 func parseToolCall(base rawItemBase) (repo.ToolCallUpsertItem, error) {
 	var data struct {
 		ToolCallID        string         `json:"toolCallId"`
+		QARecordID        *string        `json:"qaRecordId"`
 		SessionKey        *string        `json:"sessionKey"`
 		RunID             *string        `json:"runId"`
 		ApprovalID        *string        `json:"approvalId"`
@@ -433,6 +519,7 @@ func parseToolCall(base rawItemBase) (repo.ToolCallUpsertItem, error) {
 		IngestBase: repo.IngestBase{ItemID: base.ItemID, OccurredAtMs: *base.OccurredAtMs},
 		Data: repo.ToolCallUpsertData{
 			ToolCallID:        data.ToolCallID,
+			QARecordID:        cleanStringPtr(data.QARecordID),
 			SessionKey:        cleanStringPtr(data.SessionKey),
 			RunID:             cleanStringPtr(data.RunID),
 			ApprovalID:        cleanStringPtr(data.ApprovalID),
@@ -458,6 +545,7 @@ func parseToolCall(base rawItemBase) (repo.ToolCallUpsertItem, error) {
 func parseApproval(base rawItemBase) (repo.ApprovalUpsertItem, error) {
 	var data struct {
 		ApprovalID             string         `json:"approvalId"`
+		QARecordID             *string        `json:"qaRecordId"`
 		PendingID              *string        `json:"pendingId"`
 		SessionKey             *string        `json:"sessionKey"`
 		RunID                  *string        `json:"runId"`
@@ -509,6 +597,7 @@ func parseApproval(base rawItemBase) (repo.ApprovalUpsertItem, error) {
 		IngestBase: repo.IngestBase{ItemID: base.ItemID, OccurredAtMs: *base.OccurredAtMs},
 		Data: repo.ApprovalUpsertData{
 			ApprovalID:             data.ApprovalID,
+			QARecordID:             cleanStringPtr(data.QARecordID),
 			PendingID:              cleanStringPtr(data.PendingID),
 			SessionKey:             cleanStringPtr(data.SessionKey),
 			RunID:                  cleanStringPtr(data.RunID),
@@ -539,6 +628,7 @@ func parseApproval(base rawItemBase) (repo.ApprovalUpsertItem, error) {
 func parseLynxCheck(base rawItemBase) (repo.LynxCheckUpsertItem, error) {
 	var data struct {
 		RequestID            string           `json:"requestId"`
+		QARecordID           *string          `json:"qaRecordId"`
 		Source               string           `json:"source"`
 		Trigger              string           `json:"trigger"`
 		PreferredTargetKind  string           `json:"preferredTargetKind"`
@@ -551,6 +641,7 @@ func parseLynxCheck(base rawItemBase) (repo.LynxCheckUpsertItem, error) {
 		SendSucceeded        *bool            `json:"sendSucceeded"`
 		Transport            *string          `json:"transport"`
 		ReportPath           *string          `json:"reportPath"`
+		ReportMarkdown       *string          `json:"reportMarkdown"`
 		ErrorMessage         *string          `json:"errorMessage"`
 		DeliveryAttemptsJSON []map[string]any `json:"deliveryAttemptsJson"`
 		CreatedAtMs          *int64           `json:"createdAtMs"`
@@ -587,6 +678,7 @@ func parseLynxCheck(base rawItemBase) (repo.LynxCheckUpsertItem, error) {
 		IngestBase: repo.IngestBase{ItemID: base.ItemID, OccurredAtMs: *base.OccurredAtMs},
 		Data: repo.LynxCheckUpsertData{
 			RequestID:            data.RequestID,
+			QARecordID:           cleanStringPtr(data.QARecordID),
 			Source:               data.Source,
 			Trigger:              data.Trigger,
 			PreferredTargetKind:  data.PreferredTargetKind,
@@ -599,6 +691,7 @@ func parseLynxCheck(base rawItemBase) (repo.LynxCheckUpsertItem, error) {
 			SendSucceeded:        data.SendSucceeded,
 			Transport:            cleanStringPtr(data.Transport),
 			ReportPath:           cleanStringPtr(data.ReportPath),
+			ReportMarkdown:       preserveStringPtr(data.ReportMarkdown),
 			ErrorMessage:         cleanStringPtr(data.ErrorMessage),
 			DeliveryAttemptsJSON: data.DeliveryAttemptsJSON,
 			CreatedAtMs:          *data.CreatedAtMs,
@@ -610,11 +703,13 @@ func parseLynxCheck(base rawItemBase) (repo.LynxCheckUpsertItem, error) {
 func parseTokenUsage(base rawItemBase) (repo.TokenUsageItem, error) {
 	var data struct {
 		UsageEventID       string         `json:"usageEventId"`
+		QARecordID         *string        `json:"qaRecordId"`
 		SessionKey         *string        `json:"sessionKey"`
 		RunID              *string        `json:"runId"`
 		AgentID            *string        `json:"agentId"`
 		Provider           string         `json:"provider"`
 		Model              string         `json:"model"`
+		SourceType         *string        `json:"sourceType"`
 		InputTokens        *int64         `json:"inputTokens"`
 		OutputTokens       *int64         `json:"outputTokens"`
 		CacheReadTokens    *int64         `json:"cacheReadTokens"`
@@ -641,11 +736,13 @@ func parseTokenUsage(base rawItemBase) (repo.TokenUsageItem, error) {
 		IngestBase: repo.IngestBase{ItemID: base.ItemID, OccurredAtMs: *base.OccurredAtMs},
 		Data: repo.TokenUsageData{
 			UsageEventID:       data.UsageEventID,
+			QARecordID:         cleanStringPtr(data.QARecordID),
 			SessionKey:         cleanStringPtr(data.SessionKey),
 			RunID:              cleanStringPtr(data.RunID),
 			AgentID:            cleanStringPtr(data.AgentID),
 			Provider:           data.Provider,
 			Model:              data.Model,
+			SourceType:         cleanStringPtr(data.SourceType),
 			InputTokens:        data.InputTokens,
 			OutputTokens:       data.OutputTokens,
 			CacheReadTokens:    data.CacheReadTokens,
@@ -696,6 +793,20 @@ func cleanStringPtr(value *string) *string {
 	return &trimmed
 }
 
+func preserveStringPtr(value *string) *string {
+	if value == nil || *value == "" {
+		return nil
+	}
+	return value
+}
+
+func int64OrZero(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
 func optionalThreadID(value any) *string {
 	switch v := value.(type) {
 	case nil:
@@ -727,6 +838,7 @@ var itemKinds = map[string]struct{}{
 	"approvalUpsert":  {},
 	"lynxCheckUpsert": {},
 	"tokenUsage":      {},
+	"qaRecordUpsert":  {},
 }
 
 var riskLevels = map[string]struct{}{

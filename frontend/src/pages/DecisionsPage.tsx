@@ -184,6 +184,7 @@ export function DecisionsPage() {
             { key: "score", label: "评分轨迹", maxWidth: 320, minWidth: 230, width: 280 },
             { key: "degraded", label: "降级原因", maxWidth: 240, minWidth: 180, width: 210 },
           ]}
+          loading={loading}
           rows={items.map((decision) => ({
             id: decision.decisionId,
             decision: decision.decisionId,
