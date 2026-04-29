@@ -42,6 +42,20 @@ var inputEvidenceRules = []evidenceRule{
 		HardAction:    "deny",
 	},
 	{
+		ID:            "input.concealed_execution_high_confidence",
+		Module:        "concealed_execution",
+		Kind:          "encoded_execute_evasion",
+		Source:        "input",
+		Severity:      "critical",
+		ScoreDelta:    90,
+		Reason:        "input combines encoded payload, execution sink, and detector evasion",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(_ api.DecisionRequest, text string) bool {
+			return detectConcealedIntentGo(text).ScoreDelta >= 4
+		},
+	},
+	{
 		ID:            "input.evasive_cn_high_confidence",
 		Module:        "evasive_intent_cn",
 		Kind:          "high_confidence_combo",

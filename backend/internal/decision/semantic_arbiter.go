@@ -17,6 +17,7 @@ func (semanticArbiter) Evaluate(
 	chain ChainSummary,
 ) (api.ArbiterResult, error) {
 	text := requestText(req)
+	concealed := detectConcealedIntentGo(text)
 	chineseEvasive := detectChineseEvasiveIntentGo(text)
 	switch {
 	case asksSecurityEducationWithoutCode(text):
@@ -27,6 +28,10 @@ func (semanticArbiter) Evaluate(
 		return semanticResult("L2", "warn", 45, "chain_context.sensitive_followup", "chain context has recent denial, evasion, or taint signals"), nil
 	case asksForProtectedPrompt(text):
 		return semanticResult("L4", "deny", 100, "semantic.protected_prompt_extraction", "request asks for protected prompt, developer instruction, or raw safety rules"), nil
+	case concealed.Detected && concealed.ScoreDelta >= 4:
+		return semanticResult("L4", "deny", 98, "concealed_execution", "request combines concealed payload, execution sink, and detector evasion"), nil
+	case concealed.Detected:
+		return semanticResult("L3", "require_approval", 72, "concealed_execution", "request contains concealed execution chain"), nil
 	case chineseEvasive.Detected && chineseEvasive.ScoreDelta >= 3:
 		return semanticResult("L4", "deny", 95, "evasive_intent_cn", "request combines Chinese evasive intent families: "+strings.Join(chineseEvasive.MatchedFamilies, ",")), nil
 	case chineseEvasive.Detected && chineseEvasive.ScoreDelta >= 2:

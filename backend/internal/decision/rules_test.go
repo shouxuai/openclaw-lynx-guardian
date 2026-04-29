@@ -95,6 +95,7 @@ func TestEvidenceRuleHiddenExecutionChain(t *testing.T) {
 	})
 
 	assertRule(t, result, "input.hidden_execution_chain")
+	assertRule(t, result, "input.concealed_execution_high_confidence")
 	assertRule(t, result, "input.evasive_cn_high_confidence")
 	if result.RiskLevel != "L4" || result.Action != "deny" {
 		t.Fatalf("risk/action = %s/%s, want L4/deny", result.RiskLevel, result.Action)

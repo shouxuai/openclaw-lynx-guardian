@@ -671,7 +671,7 @@ git commit -m "feat: port evasive intent detection to go"
 - Modify: `backend/internal/decision/semantic_arbiter.go`
 - Modify: `backend/internal/decision/rules_input.go`
 
-- [ ] **Step 1: Write concealed intent tests**
+- [x] **Step 1: Write concealed intent tests**
 
 Create `backend/internal/decision/concealed_intent_test.go`:
 
@@ -699,7 +699,7 @@ func TestDetectConcealedIntentGoBenignEncodingExplanation(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run concealed tests and confirm failure**
+- [x] **Step 2: Run concealed tests and confirm failure**
 
 Run:
 
@@ -711,7 +711,7 @@ Pop-Location
 
 Expected: FAIL because `detectConcealedIntentGo` does not exist.
 
-- [ ] **Step 3: Implement concealed intent detector**
+- [x] **Step 3: Implement concealed intent detector**
 
 Create `backend/internal/decision/concealed_intent.go` with deterministic family detection:
 
@@ -780,7 +780,7 @@ func concealedIntentScore(families []string) float64 {
 }
 ```
 
-- [ ] **Step 4: Wire semantic and evidence rules**
+- [x] **Step 4: Wire semantic and evidence rules**
 
 Modify `backend/internal/decision/semantic_arbiter.go` to return:
 
@@ -810,7 +810,7 @@ Modify `backend/internal/decision/rules_input.go` to add:
 },
 ```
 
-- [ ] **Step 5: Verify Task 4**
+- [x] **Step 5: Verify Task 4**
 
 Run:
 
@@ -822,7 +822,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```powershell
 git add backend/internal/decision/concealed_intent.go backend/internal/decision/concealed_intent_test.go backend/internal/decision/semantic_arbiter.go backend/internal/decision/rules_input.go
