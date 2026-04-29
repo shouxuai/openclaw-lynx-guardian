@@ -108,8 +108,6 @@ test-results/
 # Repo-local development material not packaged as extension source
 /test-temp
 /tests/
-/docs
-/docs/**
 .worktrees/
 /scripts-dev
 /AGENTS.md
