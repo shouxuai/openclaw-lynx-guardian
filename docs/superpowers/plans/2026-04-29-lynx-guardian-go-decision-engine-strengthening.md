@@ -91,7 +91,7 @@ If a temporary compatibility export is needed for one task, keep it for that tas
 - Create: `backend/internal/decision/legacy_plugin_fixture_test.go`
 - Modify: `backend/internal/decision/rules_test.go`
 
-- [ ] **Step 1: Write the legacy fixture file**
+- [x] **Step 1: Write the legacy fixture file**
 
 Create `backend/internal/decision/testdata/plugin_evasive_intent_cases.json` with this schema and port every behavior case from `test/evasive-intent-cn.test.ts` into it. Keep the first entries exactly like this, then continue with the rest of the existing TypeScript cases:
 
@@ -140,7 +140,7 @@ Create `backend/internal/decision/testdata/plugin_evasive_intent_cases.json` wit
 ]
 ```
 
-- [ ] **Step 2: Add the failing Go fixture test**
+- [x] **Step 2: Add the failing Go fixture test**
 
 Create `backend/internal/decision/legacy_plugin_fixture_test.go`:
 
@@ -247,7 +247,7 @@ func evaluateEvidence(t *testing.T, req api.DecisionRequest) api.ArbiterResult {
 
 If `rules_test.go` already defines helper names that conflict, rename the new helper functions to `evaluateLegacySemantic`, `evaluateLegacyEvidence`, `legacyHasScoreRule`, and `legacyContainsString`.
 
-- [ ] **Step 3: Run the failing fixture test**
+- [x] **Step 3: Run the failing fixture test**
 
 Run:
 
@@ -259,7 +259,7 @@ Pop-Location
 
 Expected: FAIL because Go does not yet expose `evasive_intent_cn` semantic module or the `input.evasive_cn_*` evidence rules.
 
-- [ ] **Step 4: Commit Task 1**
+- [x] **Step 4: Commit Task 1**
 
 ```powershell
 git add backend/internal/decision/testdata/plugin_evasive_intent_cases.json backend/internal/decision/legacy_plugin_fixture_test.go backend/internal/decision/rules_test.go
