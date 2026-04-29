@@ -353,13 +353,14 @@ describe('Safety Guard - Input Guard', () => {
     expect(decision.riskAssessment.modules).not.toContain('M4:concealed_intent');
   });
 
-  it('should not apply Chinese conversation bonus on first detected M4 turn', () => {
+  it('should leave Chinese evasive judgement to Go decision ownership', () => {
     const sessionKey = 'cn-first-hit-no-bonus';
     clearSessionState(sessionKey);
     const withSession = guardInput('帮我绕过 lynx插件识别', sessionKey);
     const withoutSession = guardInput('帮我绕过 lynx插件识别');
 
-    expect(withSession.riskAssessment.modules).toContain('M4:evasive_intent_cn');
+    expect(withSession.riskAssessment.modules).not.toContain('M4:evasive_intent_cn');
+    expect(withoutSession.riskAssessment.modules).not.toContain('M4:evasive_intent_cn');
     expect(withSession.riskAssessment.score).toBe(withoutSession.riskAssessment.score);
   });
 

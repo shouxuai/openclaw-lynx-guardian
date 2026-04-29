@@ -1653,7 +1653,7 @@ Only stage files that actually changed.
 - Delete: `src/guard/evasive-intent-cn.ts`
 - Delete or replace: `test/evasive-intent-cn.test.ts`
 
-- [ ] **Step 1: Add active ownership test**
+- [x] **Step 1: Add active ownership test**
 
 Create `test/go-decision-ownership.test.ts`:
 
@@ -1716,7 +1716,7 @@ describe("Go decision ownership", () => {
 });
 ```
 
-- [ ] **Step 2: Run ownership test and confirm failure**
+- [x] **Step 2: Run ownership test and confirm failure**
 
 Run:
 
@@ -1726,7 +1726,7 @@ npx vitest run test/go-decision-ownership.test.ts
 
 Expected: FAIL because `src/guard/safety-guard.ts` imports or calls `detectChineseEvasiveIntent()`.
 
-- [ ] **Step 3: Remove plugin active detector call**
+- [x] **Step 3: Remove plugin active detector call**
 
 Modify `src/guard/safety-guard.ts`:
 
@@ -1753,7 +1753,7 @@ function shouldInstantDenyConcealedInput(concealedIntent: ConcealedIntentDetecti
 }
 ```
 
-- [ ] **Step 4: Delete old runtime detector file and replace tests**
+- [x] **Step 4: Delete old runtime detector file and replace tests**
 
 Delete:
 
@@ -1764,7 +1764,7 @@ test/evasive-intent-cn.test.ts
 
 Do not delete the Go fixture file. It is now the preserved contract for those cases.
 
-- [ ] **Step 5: Update visible warning labels**
+- [x] **Step 5: Update visible warning labels**
 
 Modify `src/runtime/visible-input-warning.ts` so it no longer depends on `M4:evasive_intent_cn` for plugin-origin warnings. Keep a display label for Go-returned `evasive_intent_cn` modules if the local console displays Go modules directly:
 
@@ -1776,7 +1776,7 @@ const GO_DECISION_MODULE_LABELS: Record<string, string> = {
 };
 ```
 
-- [ ] **Step 6: Verify plugin ownership reduction**
+- [x] **Step 6: Verify plugin ownership reduction**
 
 Run:
 
@@ -1792,7 +1792,7 @@ Expected:
 - output protection tests still pass;
 - TypeScript compiles.
 
-- [ ] **Step 7: Commit Task 8**
+- [x] **Step 7: Commit Task 8**
 
 ```powershell
 git add test/go-decision-ownership.test.ts src/guard/safety-guard.ts src/runtime/visible-input-warning.ts test/safety-guard.test.ts

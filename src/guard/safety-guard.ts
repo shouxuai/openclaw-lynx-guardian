@@ -8,7 +8,6 @@
 
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
-import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
 import {
   detectConcealedIntent,
   detectOperationGradeConcealedExecution,
@@ -212,7 +211,6 @@ interface SessionState {
   lastTopicCategory: string;
   lastActiveTime: number;
   operationHistory: OperationCategory[];  // last N operation categories for sequence detection
-  evasiveIntentCnFamilies: string[][];
   execMasquerade?: ExecMasqueradeState;
 }
 
@@ -248,7 +246,6 @@ function getSessionState(sessionKey: string): SessionState {
       lastTopicCategory: "normal",
       lastActiveTime: Date.now(),
       operationHistory: [],
-      evasiveIntentCnFamilies: [],
       execMasquerade: undefined,
     };
     sessionStates.set(sessionKey, state);
@@ -383,63 +380,6 @@ function computeAnomalyAdjustment(sessionKey: string, baseScore: number, trigger
   }
 
   return adjustment;
-}
-
-const EVASIVE_CN_HISTORY_MAX = 4;
-
-function computeChineseEvasiveConversationAdjustment(sessionKey: string, families: string[]): number {
-  if (!sessionKey || families.length === 0) return 0;
-
-  const state = getSessionState(sessionKey);
-  const currentFamilies = [...new Set(families)];
-  const history = state.evasiveIntentCnFamilies.slice(-EVASIVE_CN_HISTORY_MAX);
-  const recent = history.slice(-3);
-  const unionFamilies = new Set<string>(recent.flat());
-  const has = (family: string): boolean => unionFamilies.has(family);
-
-  let adjustment = 0;
-
-  if (
-    has("bypass_goal")
-    && has("masquerade_method")
-    && (has("wildcard_obfuscation") || has("dangerous_outcome"))
-  ) {
-    adjustment += 2;
-  } else if (
-    (has("bypass_goal") && has("masquerade_method"))
-    || (has("bypass_goal") && has("detector_target"))
-  ) {
-    adjustment += 1;
-  }
-
-  const detectorFocusTurns = recent.filter((turn) => turn.includes("detector_target")).length;
-  if (detectorFocusTurns >= 2) {
-    adjustment += 1;
-  }
-
-  if (recent.length >= 2) {
-    const firstBreadth = new Set(recent[0]).size;
-    const lastBreadth = new Set(recent[recent.length - 1]).size;
-    if (lastBreadth >= 3 && lastBreadth > firstBreadth) {
-      adjustment += 1;
-    }
-  }
-
-  state.evasiveIntentCnFamilies.push(currentFamilies);
-  if (state.evasiveIntentCnFamilies.length > EVASIVE_CN_HISTORY_MAX) {
-    state.evasiveIntentCnFamilies.shift();
-  }
-
-  return Math.min(adjustment, 2);
-}
-
-function isStandaloneWildcardLowSignal(
-  result: ReturnType<typeof detectChineseEvasiveIntent>,
-): boolean {
-  if (!result.detected) return false;
-  if (result.severity !== "low" || result.scoreDelta !== 1) return false;
-  return result.matchedFamilies.length === 1
-    && result.matchedFamilies[0] === "wildcard_obfuscation";
 }
 
 function isBenignFullwidthPunctuationOnlyConcealment(
@@ -1276,37 +1216,16 @@ function shouldPersistOutputAttackEvent(input: {
   return input.priorChainState?.stage !== input.chainProgress.stage;
 }
 
-function shouldInstantDenyConcealedInput(
-  concealedIntent: ConcealedIntentDetection,
-  chineseEvasiveIntent: ReturnType<typeof detectChineseEvasiveIntent>,
-): boolean {
+function shouldInstantDenyConcealedInput(concealedIntent: ConcealedIntentDetection): boolean {
   if (!concealedIntent.matchedFamilies.includes("intent_concealment")) {
     return false;
   }
 
-  if (concealedIntent.matchedFamilies.includes("execute_sink")) {
-    return true;
-  }
-
-  if (concealedIntent.matchedFamilies.includes("staged_loader_chain")) {
-    return true;
-  }
-
-  if (concealedIntent.matchedFamilies.includes("detector_evasion")) {
-    return true;
-  }
-
-  if (concealedIntent.matchedFamilies.includes("approval_bypass")) {
-    return true;
-  }
-
-  if (chineseEvasiveIntent.matchedFamilies.includes("approval_evasion")) {
-    return true;
-  }
-
   return (
-    chineseEvasiveIntent.matchedFamilies.includes("bypass_goal")
-    && chineseEvasiveIntent.matchedFamilies.includes("detector_target")
+    concealedIntent.matchedFamilies.includes("execute_sink")
+    || concealedIntent.matchedFamilies.includes("staged_loader_chain")
+    || concealedIntent.matchedFamilies.includes("detector_evasion")
+    || concealedIntent.matchedFamilies.includes("approval_bypass")
   );
 }
 
@@ -1394,17 +1313,14 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     }
   }
 
-  // M4: 中文规避意图（输入侧）
-  const evasiveIntentCn = detectChineseEvasiveIntent(text);
   const concealedIntent = detectConcealedIntent(text);
 
-  if (shouldInstantDenyConcealedInput(concealedIntent, evasiveIntentCn)) {
+  if (shouldInstantDenyConcealedInput(concealedIntent)) {
     return finalizeInputDecision(
       buildInstantDeny("M4:concealed_intent", "attempt to conceal bypass intent with encoding or obfuscation"),
     );
   }
 
-  const suppressVisibleM4 = isStandaloneWildcardLowSignal(evasiveIntentCn);
   const suppressConcealedM4 = isBenignFullwidthPunctuationOnlyConcealment(text, concealedIntent);
 
   // === 评分通道 ===
@@ -1476,35 +1392,6 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     pushDim(accum, "clarity", 2);
   }
 
-  // M4: 中文规避意图（模块化加权 + 有界增益）
-  if (evasiveIntentCn.detected && !suppressVisibleM4) {
-    modules.push("M4:evasive_intent_cn");
-    if (evasiveIntentCn.severity === "high") {
-      pushDim(accum, "harm", 2);
-      pushDim(accum, "rev", 1);
-      pushDim(accum, "auth", 2);
-      pushDim(accum, "pattern", 2);
-      pushDim(accum, "clarity", 2);
-    } else if (evasiveIntentCn.severity === "medium") {
-      pushDim(accum, "harm", 2);
-      pushDim(accum, "auth", 1);
-      pushDim(accum, "pattern", 2);
-      pushDim(accum, "clarity", 2);
-    } else {
-      pushDim(accum, "harm", 1);
-      pushDim(accum, "pattern", 1);
-      pushDim(accum, "clarity", 1);
-    }
-
-    if (evasiveIntentCn.matchedFamilies.includes("dangerous_outcome")) {
-      pushDim(accum, "harm", 2);
-      pushDim(accum, "rev", 2);
-    }
-    if (evasiveIntentCn.matchedFamilies.length >= 3) {
-      pushDim(accum, "pattern", 2);
-    }
-  }
-
   // M0 + M2/M3 组合：叠加额外 auth 信号
   if (!verifiedOwner && identityClaims.detected && (
     modules.includes("M2:protected_file_access") || modules.includes("M3:over_agency")
@@ -1553,21 +1440,10 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   let score = computeWeightedScore(accum);
-  if (evasiveIntentCn.detected && !suppressVisibleM4) {
-    score = Math.min(score + Math.min(evasiveIntentCn.scoreDelta, 2), 10);
-  }
 
   if (sessionKey) {
-    const sharedAnomalyModules = modules.filter((m) => m !== "M4:evasive_intent_cn");
-    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, sharedAnomalyModules);
+    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
     score = Math.min(score + anomalyAdj, 10);
-    if (evasiveIntentCn.detected && !suppressVisibleM4) {
-      const cnConversationAdj = computeChineseEvasiveConversationAdjustment(
-        sessionKey,
-        evasiveIntentCn.matchedFamilies,
-      );
-      score = Math.min(score + cnConversationAdj, 10);
-    }
   }
 
   if (verifiedOwner && score > 0) {
@@ -2029,7 +1905,6 @@ function buildDescription(modules: string[], level: RiskLevel): string {
     "M2:protected_file_access": "核心配置文件访问",
     "M2:system_prompt_leak": "系统提示泄露",
     "M3:over_agency": "过度代理/权限提升",
-    "M4:evasive_intent_cn": "中文规避意图输入",
     "M4:concealed_intent": "隐藏意图/内容混淆",
     "M5:credential_theft": "凭证窃取风险",
     "M6:malicious_code": "恶意代码请求",
