@@ -9,6 +9,23 @@ import (
 
 var installEvidenceRules = []evidenceRule{
 	{
+		ID:            "install.remote_plugin_tamper",
+		Module:        "skill_supply_chain",
+		Kind:          "remote_plugin_tamper",
+		Source:        "install",
+		Severity:      "critical",
+		ScoreDelta:    90,
+		Reason:        "install request combines remote source with Lynx Guardian plugin mutation",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, text string) bool {
+			flatText := text + " " + toolsArgsText(req)
+			return containsAny(flatText, "http://", "https://", "unknown", "remote", "远程") &&
+				containsAny(flatText, "openclaw-lynx-guardian", "lynx guardian", "插件") &&
+				containsAny(flatText, "modify", "modifies", "mutate", "delete", "disable", "tamper", "修改", "删除", "禁用")
+		},
+	},
+	{
 		ID:            "install.suspicious_skill_source",
 		Module:        "skill_supply_chain",
 		Kind:          "suspicious_install_source",

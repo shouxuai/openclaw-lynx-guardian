@@ -19,6 +19,9 @@ func (semanticArbiter) Evaluate(
 	text := requestText(req)
 	concealed := detectConcealedIntentGo(text)
 	chineseEvasive := detectChineseEvasiveIntentGo(text)
+	if result, ok := evaluateToolSemantic(req, chain); ok {
+		return result, nil
+	}
 	switch {
 	case asksSecurityEducationWithoutCode(text):
 		return semanticResult("L1", "log_only", 10, "semantic.security_education", "security education request without code generation"), nil

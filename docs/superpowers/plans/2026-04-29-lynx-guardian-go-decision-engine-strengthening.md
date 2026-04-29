@@ -846,7 +846,7 @@ git commit -m "feat: strengthen go concealed execution decisions"
 - Modify: `backend/internal/decision/rules_install.go`
 - Modify: `backend/internal/decision/rules_test.go`
 
-- [ ] **Step 1: Add structured tool request view tests**
+- [x] **Step 1: Add structured tool request view tests**
 
 Create `backend/internal/decision/tool_request_test.go`:
 
@@ -944,7 +944,7 @@ func assertLacks(t *testing.T, values []string, wants ...string) {
 }
 ```
 
-- [ ] **Step 2: Run structured tool request tests and confirm failure**
+- [x] **Step 2: Run structured tool request tests and confirm failure**
 
 Run:
 
@@ -956,7 +956,7 @@ Pop-Location
 
 Expected: FAIL because `buildToolRequestView` does not exist.
 
-- [ ] **Step 3: Implement structured tool request view**
+- [x] **Step 3: Implement structured tool request view**
 
 Create `backend/internal/decision/tool_request.go` with a typed request view. The implementation must normalize `req.Content`, `req.ToolName`, `req.TargetURI`, and `req.ToolArgs`, then derive these fields without calling either arbiter:
 
@@ -1002,7 +1002,7 @@ Sink kinds: external_network, clipboard, chat_output, file_write, process_exec, 
 Command flags: encoded_execution, shell_pipeline, download_execute, recursive_delete, permission_weakening, history_cleanup, wildcard_mutation, background_execution, silent_mode, config_disable
 ```
 
-- [ ] **Step 4: Verify structured tool request tests**
+- [x] **Step 4: Verify structured tool request tests**
 
 Run:
 
@@ -1014,7 +1014,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 5: Add tool semantic arbiter tests**
+- [x] **Step 5: Add tool semantic arbiter tests**
 
 Create `backend/internal/decision/tool_semantics_test.go`:
 
@@ -1073,7 +1073,7 @@ func TestSemanticToolIntentSafeBuildAllow(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Implement tool semantic evaluator**
+- [x] **Step 6: Implement tool semantic evaluator**
 
 Create `backend/internal/decision/tool_semantics.go` with:
 
@@ -1117,7 +1117,7 @@ Modify `backend/internal/decision/semantic_arbiter.go` so `Evaluate()` calls it 
 	}
 ```
 
-- [ ] **Step 7: Add and implement structured tool evidence tests**
+- [x] **Step 7: Add and implement structured tool evidence tests**
 
 Create `backend/internal/decision/tool_evidence_test.go`:
 
@@ -1280,7 +1280,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 8: Add output/install compatibility tests**
+- [x] **Step 8: Add output/install compatibility tests**
 
 Append tests to `backend/internal/decision/rules_test.go`:
 
@@ -1320,7 +1320,7 @@ func TestEvidenceRuleInstallSuspiciousRemoteSkill(t *testing.T) {
 }
 ```
 
-- [ ] **Step 9: Run output/install tests and confirm failure**
+- [x] **Step 9: Run output/install tests and confirm failure**
 
 Run:
 
@@ -1332,7 +1332,7 @@ Pop-Location
 
 Expected: FAIL because the new rule IDs are missing or managed report metadata is not honored.
 
-- [ ] **Step 10: Keep legacy high-confidence tool evidence as compatibility rules**
+- [x] **Step 10: Keep legacy high-confidence tool evidence as compatibility rules**
 
 Add to `backend/internal/decision/rules_tool.go`:
 
@@ -1354,7 +1354,7 @@ Add to `backend/internal/decision/rules_tool.go`:
 },
 ```
 
-- [ ] **Step 11: Implement output evidence managed-report guard**
+- [x] **Step 11: Implement output evidence managed-report guard**
 
 Modify `backend/internal/decision/rules_output.go` so protected prompt wording is not enough to deny trusted managed reports. Add a helper in the same file:
 
@@ -1370,7 +1370,7 @@ func isTrustedManagedReport(req api.DecisionRequest) bool {
 
 Wrap L4 output prompt-leak rules so they skip when `isTrustedManagedReport(req)` is true and the text does not contain raw protected prompt markers such as `BEGIN SYSTEM PROMPT`, `developer message:`, or PEM/API key material.
 
-- [ ] **Step 12: Implement install evidence**
+- [x] **Step 12: Implement install evidence**
 
 Add to `backend/internal/decision/rules_install.go`:
 
@@ -1393,7 +1393,7 @@ Add to `backend/internal/decision/rules_install.go`:
 },
 ```
 
-- [ ] **Step 13: Verify Task 5**
+- [x] **Step 13: Verify Task 5**
 
 Run:
 

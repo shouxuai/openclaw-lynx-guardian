@@ -56,8 +56,40 @@ var outputEvidenceRules = []evidenceRule{
 		Severity:      "critical",
 		ScoreDelta:    90,
 		Reason:        "output contains raw protected prompt text",
-		AnyTerms:      []string{"system prompt", "developer instruction", "系统提示词", "开发者指令", "安全规则原文"},
 		HardRiskLevel: "L4",
 		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, text string) bool {
+			if isTrustedManagedReport(req) && !containsRawProtectedPromptMarker(text) {
+				return false
+			}
+			return containsAny(text,
+				"system prompt",
+				"developer instruction",
+				"系统提示词",
+				"开发者指令",
+				"安全规则原文",
+			)
+		},
 	},
+}
+
+func isTrustedManagedReport(req api.DecisionRequest) bool {
+	if req.ProviderSafety == nil {
+		return false
+	}
+	value, ok := req.ProviderSafety["trustedManagedReport"].(bool)
+	return ok && value
+}
+
+func containsRawProtectedPromptMarker(text string) bool {
+	return containsAny(text,
+		"begin system prompt",
+		"developer message:",
+		"-----begin",
+		"private key",
+		"api_key",
+		"api key",
+		"bearer ",
+		"sk-",
+	)
 }

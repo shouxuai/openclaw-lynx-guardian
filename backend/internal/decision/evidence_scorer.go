@@ -26,7 +26,7 @@ func (evidenceArbiter) Evaluate(
 	hard := api.ArbiterResult{RiskLevel: "L0", Action: "allow"}
 
 	for _, rule := range rules {
-		if !rule.matches(req) {
+		if !rule.matchesWithChain(req, chain) {
 			continue
 		}
 		score += rule.ScoreDelta
@@ -185,6 +185,17 @@ func (r evidenceRule) matches(req api.DecisionRequest) bool {
 		return false
 	}
 	return len(r.AnyTerms) > 0 || len(r.AllTerms) > 0
+}
+
+func (r evidenceRule) matchesWithChain(req api.DecisionRequest, chain ChainSummary) bool {
+	switch r.ID {
+	case "tool.flow.taint_to_external":
+		return toolRuleMatches(req, chain, func(view toolRequestView) bool {
+			return hasAnyString(view.SourceKinds, "tainted_artifact") && hasAnyString(view.SinkKinds, "external_network")
+		})
+	default:
+		return r.matches(req)
+	}
 }
 
 func (r evidenceRule) evidenceItem() api.EvidenceItem {
