@@ -46,7 +46,7 @@ func normalizeDecisionText(text string) string {
 	normalized = spaceBeforePunctuation.ReplaceAllString(normalized, "$1")
 	normalized = strings.ToLower(strings.TrimSpace(normalized))
 	normalized = strings.ReplaceAll(normalized, " lynx插件", "lynx插件")
-	normalized = hanSeparatedBySpace.ReplaceAllString(normalized, "$1$2")
+	normalized = collapseHanSpaces(normalized)
 	return normalized
 }
 
@@ -57,4 +57,14 @@ func normalizeFullwidthASCII(text string) string {
 		}
 		return r
 	}, text)
+}
+
+func collapseHanSpaces(text string) string {
+	for {
+		next := hanSeparatedBySpace.ReplaceAllString(text, "$1$2")
+		if next == text {
+			return next
+		}
+		text = next
+	}
 }

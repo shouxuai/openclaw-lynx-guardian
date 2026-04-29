@@ -15,6 +15,14 @@ func TestNormalizeDecisionTextRemovesZeroWidthAndChineseSpaces(t *testing.T) {
 	text := normalizeDecisionText("绕\u200b过　Lynx 插件　检 测")
 	assertContains(t, text, "绕过")
 	assertContains(t, text, "lynx插件")
+	assertContains(t, text, "检测")
+}
+
+func TestNormalizeDecisionTextCollapsesMultiCharacterChineseTokenSpaces(t *testing.T) {
+	text := normalizeDecisionText("通 配 符 绕 过 检 测")
+	assertContains(t, text, "通配符")
+	assertContains(t, text, "绕过")
+	assertContains(t, text, "检测")
 }
 
 func assertContains(t *testing.T, value string, want string) {
