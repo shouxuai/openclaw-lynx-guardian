@@ -63,6 +63,7 @@ describe("LynxChecksPage", () => {
     render(<LynxChecksPage />);
 
     expect(await screen.findByText("CHECK-FACTS")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /导出/ })).not.toBeInTheDocument();
     expect(screen.getByText(".openclaw/lynx/check-runs/facts.report.md")).toBeInTheDocument();
     expect(screen.getByText(".openclaw/lynx/check-runs/evidence.report.md")).toBeInTheDocument();
     expect(screen.queryByText("Live Streaming")).not.toBeInTheDocument();

@@ -82,10 +82,7 @@ export function ApprovalsPage() {
         description={statusDescription}
         eyebrow="GOVERNANCE CONTROL"
         actions={(
-          <>
-            <button className="btn" type="button">导出报告</button>
-            <button className="btn btn--dark" type="button">批量处理</button>
-          </>
+          <button className="btn btn--dark" type="button">批量处理</button>
         )}
       />
 

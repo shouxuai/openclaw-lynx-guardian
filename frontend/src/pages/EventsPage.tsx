@@ -399,19 +399,14 @@ export function EventsPage() {
         description={statusText}
         eyebrow="SYSTEM INTEGRITY"
         actions={(
-          <>
-            <Button className="console-action-button" type="default">
-              导出 CSV
-            </Button>
-            <Button
-              className="console-action-button"
-              htmlType="button"
-              type="primary"
-              onClick={() => setRefreshKey((value) => value + 1)}
-            >
-              立即刷新
-            </Button>
-          </>
+          <Button
+            className="console-action-button"
+            htmlType="button"
+            type="primary"
+            onClick={() => setRefreshKey((value) => value + 1)}
+          >
+            立即刷新
+          </Button>
         )}
       />
 

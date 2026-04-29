@@ -231,6 +231,8 @@ export interface TokenSummaryDto {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  actualTokens?: number;
+  estimatedTokens?: number;
   estimatedCount: number;
   unavailableCount: number;
   topModels: Array<{

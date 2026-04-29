@@ -16,10 +16,12 @@ describe("TokensPage", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(Date, "now").mockReturnValue(1_777_420_800_000);
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -32,6 +34,9 @@ describe("TokensPage", () => {
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
         estimatedCount: 1,
+        unavailableCount: 0,
+        actualTokens: 0,
+        estimatedTokens: 1_322,
         topModels: [{ model: "glm-5", totalTokens: 1_322 }],
       }))
       .mockResolvedValueOnce(createJsonResponse({
@@ -76,9 +81,13 @@ describe("TokensPage", () => {
 
     expect(screen.getByText("Token 统计报表")).toBeInTheDocument();
     expect(screen.getByText("今日消耗总数")).toBeInTheDocument();
+    expect(screen.getByText("可计量总量")).toBeInTheDocument();
     expect(screen.getByText("输入/输出比例")).toBeInTheDocument();
     expect(screen.getByText("7 日消耗趋势分析")).toBeInTheDocument();
     expect(screen.getByText("实时审计数据流")).toBeInTheDocument();
+    expect(screen.getByLabelText("时间范围")).toHaveValue("last24h");
+    expect(screen.getByRole("option", { name: "最近 7 天" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /导出/ })).not.toBeInTheDocument();
     await screen.findByText("bailian / glm-5");
     expect(screen.getAllByText("1,322").length).toBeGreaterThan(0);
     expect(screen.getAllByText("估算").length).toBeGreaterThan(0);
@@ -98,14 +107,14 @@ describe("TokensPage", () => {
       expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/tokens/summary");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/tokens/usage?limit=20");
-    expect(fetchMock.mock.calls[2]?.[0]).toBe("/lynx/tokens/trend?bucket=hour");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/tokens/summary?fromMs=1777334400000&toMs=1777420800000");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/tokens/usage?limit=20&fromMs=1777334400000&toMs=1777420800000");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/lynx/tokens/trend?bucket=hour&fromMs=1777334400000&toMs=1777420800000");
 
     fireEvent.click(screen.getByTitle(/Next Page|下一页/));
 
     await screen.findByText("#LX-90821-BF");
-    expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/tokens/usage?limit=20&cursor=cursor-token-page-2");
+    expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/tokens/usage?limit=20&cursor=cursor-token-page-2&fromMs=1777334400000&toMs=1777420800000");
   });
 
   it("keeps the trend panel in an empty state when trend points are unavailable", async () => {
@@ -117,6 +126,8 @@ describe("TokensPage", () => {
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
         estimatedCount: 0,
+        actualTokens: 0,
+        estimatedTokens: 0,
         unavailableCount: 0,
         topModels: [],
       }))

@@ -1201,6 +1201,22 @@ button {
   background: var(--table-row-hover-bg);
 }
 
+.data-table__sticky-cell {
+  position: sticky;
+  z-index: 2;
+  background: var(--panel);
+  box-shadow: -1px 0 0 var(--line), -10px 0 14px -14px rgba(15, 23, 42, 0.45);
+}
+
+.data-table th.data-table__sticky-cell {
+  z-index: 3;
+  background: var(--table-header-bg);
+}
+
+.data-table tbody tr:hover .data-table__sticky-cell {
+  background: var(--table-row-hover-bg);
+}
+
 .row-stack {
   display: grid;
   gap: 4px;
@@ -1692,6 +1708,38 @@ button {
   margin-top: 8px;
   color: #8aa0bd;
   font-size: var(--font-size-md);
+}
+
+.token-range-control {
+  display: inline-grid;
+  gap: 6px;
+  color: var(--muted-strong);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.token-range-control select {
+  min-width: 148px;
+  min-height: 38px;
+  border: 1px solid #cfe3ff;
+  border-radius: var(--radius-md);
+  appearance: none;
+  background-color: var(--input-bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 12px center;
+  background-repeat: no-repeat;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--font-size-md);
+  line-height: 1.2;
+  padding: 0 38px 0 12px;
+}
+
+.token-range-control select:focus {
+  border-color: var(--accent);
+  background-color: var(--control-bg);
+  box-shadow: 0 0 0 3px rgba(11, 99, 246, 0.12);
+  outline: none;
 }
 
 .summary-card {

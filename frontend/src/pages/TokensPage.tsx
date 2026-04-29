@@ -1,12 +1,14 @@
 import { startTransition, useEffect, useMemo, useState, type CSSProperties } from "react";
 import type {
   TokenSummaryDto,
+  TokenTrendBucket,
   TokenTrendDto,
   TokenTrendPointDto,
   TokenUsageListItemDto,
 } from "@lynx/local-console-shared";
 
 import { getTokenSummary, getTokenTrend, getTokenUsage } from "../api/tokens";
+import type { TokenTimeRangeQuery } from "../api/tokens";
 import { DataTable } from "../components/tables/DataTable";
 import { DEFAULT_TABLE_PAGE_SIZE, DEFAULT_TABLE_PAGE_SIZE_OPTIONS, TablePagination } from "../components/tables/TablePagination";
 import { mockTokenSummary, mockTokenTrend, mockTokenUsage } from "../data/mock-console";
@@ -19,6 +21,8 @@ const EMPTY_TOKEN_SUMMARY: TokenSummaryDto = {
   outputTokens: 0,
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
+  actualTokens: 0,
+  estimatedTokens: 0,
   estimatedCount: 0,
   unavailableCount: 0,
   topModels: [],
@@ -30,6 +34,23 @@ const EMPTY_TOKEN_TREND: TokenTrendDto = {
 };
 
 const TOKEN_TREND_POINT_LIMIT = 7;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+type TokenTimeRangeKey = "last1h" | "last24h" | "last7d" | "last30d" | "all";
+
+const TOKEN_TIME_RANGE_OPTIONS: Array<{
+  bucket: TokenTrendBucket;
+  durationMs?: number;
+  key: TokenTimeRangeKey;
+  label: string;
+}> = [
+  { key: "last1h", label: "最近 1 小时", durationMs: HOUR_MS, bucket: "hour" },
+  { key: "last24h", label: "最近 24 小时", durationMs: DAY_MS, bucket: "hour" },
+  { key: "last7d", label: "最近 7 天", durationMs: 7 * DAY_MS, bucket: "day" },
+  { key: "last30d", label: "最近 30 天", durationMs: 30 * DAY_MS, bucket: "day" },
+  { key: "all", label: "全部时间", bucket: "day" },
+];
 
 function percent(value: number, total: number): number {
   if (total === 0) {
@@ -88,6 +109,22 @@ function buildTrendSegmentStyle(value: number, totalTokens: number, background: 
   };
 }
 
+function resolveTokenTimeRange(key: TokenTimeRangeKey): { bucket: TokenTrendBucket; query: TokenTimeRangeQuery } {
+  const option = TOKEN_TIME_RANGE_OPTIONS.find((item) => item.key === key) ?? TOKEN_TIME_RANGE_OPTIONS[1];
+  if (!option.durationMs) {
+    return { bucket: option.bucket, query: {} };
+  }
+
+  const toMs = Date.now();
+  return {
+    bucket: option.bucket,
+    query: {
+      fromMs: toMs - option.durationMs,
+      toMs,
+    },
+  };
+}
+
 export function TokensPage() {
   const [summary, setSummary] = useState<TokenSummaryDto>(EMPTY_TOKEN_SUMMARY);
   const [trend, setTrend] = useState<TokenTrendDto>(EMPTY_TOKEN_TREND);
@@ -100,15 +137,21 @@ export function TokensPage() {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(DEFAULT_TABLE_PAGE_SIZE);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [timeRangeKey, setTimeRangeKey] = useState<TokenTimeRangeKey>("last24h");
 
   const currentCursor = pageCursors[pageIndex];
+  const selectedTimeRange = useMemo(() => resolveTokenTimeRange(timeRangeKey), [timeRangeKey]);
 
   useEffect(() => {
     const abortController = new AbortController();
 
     async function loadSummary() {
+      startTransition(() => {
+        setSummaryLoading(true);
+      });
+
       try {
-        const nextSummary = await getTokenSummary();
+        const nextSummary = await getTokenSummary(selectedTimeRange.query);
         if (abortController.signal.aborted) {
           return;
         }
@@ -136,7 +179,7 @@ export function TokensPage() {
     return () => {
       abortController.abort();
     };
-  }, []);
+  }, [selectedTimeRange.query]);
 
   useEffect(() => {
     let active = true;
@@ -150,6 +193,7 @@ export function TokensPage() {
         const nextUsage = await getTokenUsage({
           limit: pageSize,
           cursor: currentCursor,
+          ...selectedTimeRange.query,
         });
         if (!active) {
           return;
@@ -181,14 +225,18 @@ export function TokensPage() {
     return () => {
       active = false;
     };
-  }, [currentCursor, pageIndex, pageSize]);
+  }, [currentCursor, pageIndex, pageSize, selectedTimeRange.query]);
 
   useEffect(() => {
     const abortController = new AbortController();
 
     async function loadTrend() {
+      startTransition(() => {
+        setTrendLoading(true);
+      });
+
       try {
-        const nextTrend = await getTokenTrend("hour");
+        const nextTrend = await getTokenTrend(selectedTimeRange.bucket, selectedTimeRange.query);
         if (abortController.signal.aborted) {
           return;
         }
@@ -216,13 +264,15 @@ export function TokensPage() {
     return () => {
       abortController.abort();
     };
-  }, []);
+  }, [selectedTimeRange.bucket, selectedTimeRange.query]);
 
   const totalTransferTokens = summary.inputTokens + summary.outputTokens;
   const inputPercent = percent(summary.inputTokens, totalTransferTokens);
   const outputPercent = percent(summary.outputTokens, totalTransferTokens);
   const estimatedCount = summary.estimatedCount ?? 0;
   const unavailableCount = summary.unavailableCount ?? 0;
+  const actualTokens = summary.actualTokens ?? 0;
+  const estimatedTokens = summary.estimatedTokens ?? 0;
   const visibleTrendPoints = useMemo(() => trend.points.slice(-TOKEN_TREND_POINT_LIMIT), [trend.points]);
   const trendLabels = useMemo(() => {
     if (visibleTrendPoints.length > 0) {
@@ -280,6 +330,11 @@ export function TokensPage() {
     resetUsagePaging();
   }
 
+  function handleTimeRangeChange(nextTimeRangeKey: TokenTimeRangeKey): void {
+    setTimeRangeKey(nextTimeRangeKey);
+    resetUsagePaging();
+  }
+
   return (
     <div className="page-stack">
       <section className="token-hero">
@@ -288,20 +343,32 @@ export function TokensPage() {
           <p className="token-hero__subtitle">实时量化模型消耗与基础设施负载</p>
         </div>
         <div className="page-header__actions">
-          <button className="btn" type="button">过去 24 小时</button>
-          <button className="btn btn--dark" type="button">导出报告</button>
+          <label className="token-range-control">
+            <span>时间范围</span>
+            <select
+              aria-label="时间范围"
+              value={timeRangeKey}
+              onChange={(event) => handleTimeRangeChange(event.target.value as TokenTimeRangeKey)}
+            >
+              {TOKEN_TIME_RANGE_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>{option.label}</option>
+              ))}
+            </select>
+          </label>
         </div>
       </section>
 
       <section className="summary-card-grid">
         <article className="summary-card">
           <p className="summary-card__label">今日消耗总数</p>
-          <p className="summary-card__label">{loading ? "正在刷新 actual usage" : "实际总量"}</p>
+          <p className="summary-card__label">{loading ? "正在刷新 token usage" : "可计量总量"}</p>
           <strong className="summary-card__value">
             {formatInteger(summary.totalTokens)}
             <span className="summary-card__unit">Tokens</span>
           </strong>
-          <p className="summary-card__delta">仅统计 provider/OpenClaw 返回的 actual usage</p>
+          <p className="summary-card__delta">
+            实际 {formatInteger(actualTokens)} · 估算 {formatInteger(estimatedTokens)}
+          </p>
         </article>
 
         <article className="summary-card ratio-card">

@@ -218,4 +218,36 @@ describe("DataTable", () => {
 
     expect(detailColumn).toHaveStyle({ maxWidth: "160px", minWidth: "120px", width: "132px" });
   });
+
+  it("pins operation columns to the right edge of the scrollable table", () => {
+    const { container } = render(
+      <ConfigProvider locale={zhCN}>
+        <DataTable
+          columns={[
+            { key: "summary", label: "Summary" },
+            { key: "detail", label: "Detail" },
+          ]}
+          rows={[
+            {
+              id: "row-1",
+              summary: "A row with horizontal overflow",
+              detail: <button className="btn btn--compact" type="button">View detail</button>,
+            },
+          ]}
+        />
+      </ConfigProvider>,
+    );
+
+    const headerCells = Array.from(container.querySelectorAll("th"));
+    const dataCells = Array.from(container.querySelectorAll("td"));
+    const detailHeader = headerCells[1];
+    const detailCell = dataCells[1];
+
+    expect(detailHeader).toHaveClass("data-table__sticky-cell");
+    expect(detailHeader).toHaveClass("data-table__sticky-cell--right");
+    expect(detailHeader).toHaveStyle({ right: "0px" });
+    expect(detailCell).toHaveClass("data-table__sticky-cell");
+    expect(detailCell).toHaveClass("data-table__sticky-cell--right");
+    expect(detailCell).toHaveStyle({ right: "0px" });
+  });
 });

@@ -208,7 +208,6 @@ export function LynxChecksPage() {
               <strong>{formatInteger(failedCount)}</strong>
             </div>
           </div>
-          <button className="btn" type="button">导出安全审计报告</button>
         </article>
       </section>
     </div>

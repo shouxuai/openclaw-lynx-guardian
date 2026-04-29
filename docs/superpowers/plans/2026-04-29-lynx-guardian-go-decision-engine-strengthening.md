@@ -1865,7 +1865,7 @@ git commit -m "test: audit go decision engine ownership"
 
 - Modify only scripts if runtime sync exposes a real packaging or readiness gap.
 
-- [ ] **Step 1: Verify sync readiness**
+- [x] **Step 1: Verify sync readiness**
 
 Run:
 

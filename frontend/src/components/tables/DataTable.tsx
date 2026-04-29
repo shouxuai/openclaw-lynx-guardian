@@ -82,6 +82,7 @@ export interface DataTableColumn {
   maxWidth?: number;
   minWidth?: number;
   overflowTooltip?: boolean;
+  sticky?: "right" | false;
   width?: number;
 }
 
@@ -177,6 +178,38 @@ function buildColumnStyle(column: DataTableColumn): CSSProperties {
   };
 }
 
+function isStickyRightColumn(column: DataTableColumn): boolean {
+  return column.sticky === "right" || (
+    column.sticky !== false && (column.key === "action" || column.key === "detail")
+  );
+}
+
+function resolveStickyRightOffset(columns: DataTableColumn[], columnIndex: number): number {
+  return columns
+    .slice(columnIndex + 1)
+    .filter(isStickyRightColumn)
+    .reduce((total, column) => total + resolveColumnSize(column).width, 0);
+}
+
+function buildColumnCellStyle(
+  columns: DataTableColumn[],
+  column: DataTableColumn,
+  columnIndex: number,
+): CSSProperties {
+  const style = buildColumnStyle(column);
+  if (isStickyRightColumn(column)) {
+    style.right = resolveStickyRightOffset(columns, columnIndex);
+  }
+  return style;
+}
+
+function buildColumnCellClassName(column: DataTableColumn): string | undefined {
+  if (!isStickyRightColumn(column)) {
+    return undefined;
+  }
+  return "data-table__sticky-cell data-table__sticky-cell--right";
+}
+
 function resolveTableMinWidth(columns: DataTableColumn[]): number {
   return columns.reduce((total, column) => total + resolveColumnSize(column).width, 0);
 }
@@ -192,16 +225,28 @@ export function DataTable({ columns, rows }: DataTableProps) {
         </colgroup>
         <thead>
           <tr>
-            {columns.map((column) => (
-              <th key={column.key} style={buildColumnStyle(column)}>{column.label}</th>
+            {columns.map((column, columnIndex) => (
+              <th
+                className={buildColumnCellClassName(column)}
+                key={column.key}
+                style={buildColumnCellStyle(columns, column, columnIndex)}
+              >
+                {column.label}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.id}>
-              {columns.map((column) => (
-                <td key={column.key} style={buildColumnStyle(column)}>{renderCellContent(column, row[column.key])}</td>
+              {columns.map((column, columnIndex) => (
+                <td
+                  className={buildColumnCellClassName(column)}
+                  key={column.key}
+                  style={buildColumnCellStyle(columns, column, columnIndex)}
+                >
+                  {renderCellContent(column, row[column.key])}
+                </td>
               ))}
             </tr>
           ))}

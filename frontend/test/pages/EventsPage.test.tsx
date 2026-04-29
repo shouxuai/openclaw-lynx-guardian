@@ -85,6 +85,7 @@ describe("EventsPage", () => {
     const { container } = renderEventsPage();
 
     await screen.findByText("EVT-001");
+    expect(screen.queryByRole("button", { name: /导出/ })).not.toBeInTheDocument();
     expect(container.querySelectorAll(".audit-filter-form .ant-select")).toHaveLength(3);
     expect(container.querySelector(".audit-filter-form .ant-picker")).not.toBeNull();
     expect(screen.getByTestId("audit-events-table-panel")).toHaveClass("audit-events-table-panel");

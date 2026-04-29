@@ -8,8 +8,13 @@ import type {
 
 import { buildQueryString, fetchJson } from "./client";
 
-export function getTokenSummary(): Promise<TokenSummaryDto> {
-  return fetchJson<TokenSummaryDto>("/tokens/summary");
+export interface TokenTimeRangeQuery {
+  fromMs?: number;
+  toMs?: number;
+}
+
+export function getTokenSummary(query: TokenTimeRangeQuery = {}): Promise<TokenSummaryDto> {
+  return fetchJson<TokenSummaryDto>(`/tokens/summary${buildQueryString(query)}`);
 }
 
 export interface TokenUsageListQuery extends CommonListQuery {
@@ -24,6 +29,9 @@ export function getTokenUsage(query: TokenUsageListQuery = {}): Promise<TokenUsa
   return fetchJson<TokenUsageListResponse>(`/tokens/usage${buildQueryString(query)}`);
 }
 
-export function getTokenTrend(bucket: TokenTrendBucket = "hour"): Promise<TokenTrendDto> {
-  return fetchJson<TokenTrendDto>(`/tokens/trend${buildQueryString({ bucket })}`);
+export function getTokenTrend(
+  bucket: TokenTrendBucket = "hour",
+  query: TokenTimeRangeQuery = {},
+): Promise<TokenTrendDto> {
+  return fetchJson<TokenTrendDto>(`/tokens/trend${buildQueryString({ bucket, ...query })}`);
 }

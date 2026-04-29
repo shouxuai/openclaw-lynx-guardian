@@ -76,6 +76,7 @@ describe("ApprovalsPage", () => {
     render(<ApprovalsPage />);
 
     expect(await screen.findByText("APR-001")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /导出/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "查看详情" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "查看 APR-001 审批详情" }));
