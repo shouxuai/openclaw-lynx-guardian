@@ -123,9 +123,39 @@ describe("EventsPage", () => {
     expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
     expect(screen.getByText("M2:protected_file_access")).toBeInTheDocument();
     expect(screen.getByText(/"toolName": "exec"/)).toBeInTheDocument();
+    expect(screen.queryByText("block:false 说明")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "关闭详情" }));
     expect(screen.queryByRole("dialog", { name: "初始审计事件" })).not.toBeInTheDocument();
+  });
+
+  it("shows the complete redacted security audit report in event details", async () => {
+    const fullReport = [
+      "# 安全审计报告",
+      "第一段完整内容。",
+      "中间内容不应被截断。",
+      "END-OF-SECURITY-AUDIT-REPORT",
+    ].join("\n");
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(createPage([
+        createEvent("EVT-REPORT", "安全审计报告事件", {
+          contentExcerpt: fullReport,
+        }),
+      ])))
+      .mockResolvedValueOnce(createJsonResponse({
+        ...createEventDetail("EVT-REPORT", "安全审计报告事件"),
+        contentExcerpt: fullReport,
+        contentKind: "report",
+      }));
+
+    renderEventsPage();
+
+    await screen.findByText("EVT-REPORT");
+    fireEvent.click(screen.getByRole("button", { name: "查看 EVT-REPORT 详情" }));
+
+    expect(await screen.findByText("完整脱敏摘要 / 安全审计报告")).toBeInTheDocument();
+    expect(screen.getByText("# 安全审计报告")).toBeInTheDocument();
+    expect(screen.getByText("END-OF-SECURITY-AUDIT-REPORT")).toBeInTheDocument();
   });
 
   it("summarizes control-plane evidence from real list fields and optional top-level evidence", async () => {

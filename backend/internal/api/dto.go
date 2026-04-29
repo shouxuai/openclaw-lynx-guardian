@@ -48,9 +48,11 @@ type EvidenceSource string
 
 type DecisionRequest struct {
 	RequestID      string         `json:"requestId"`
+	QARecordID     string         `json:"qaRecordId"`
 	Stage          DecisionStage  `json:"stage"`
 	Hook           string         `json:"hook"`
 	SessionKey     string         `json:"sessionKey"`
+	RunID          string         `json:"runId"`
 	ChannelProfile string         `json:"channelProfile"`
 	ChannelID      string         `json:"channelId"`
 	ConversationID string         `json:"conversationId"`

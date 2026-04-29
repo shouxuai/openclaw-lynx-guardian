@@ -1,15 +1,14 @@
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useState, type FormEvent } from "react";
 import type { SessionDetailDto, SessionListItemDto } from "@lynx/local-console-shared";
+import { Button, Input, Select } from "antd";
 
 import { getSessionDetail, listSessions, type SessionListQuery } from "../api/sessions";
 import { MetricCard } from "../components/cards/MetricCard";
 import { DetailPanel } from "../components/detail/DetailPanel";
 import { StatusBadge } from "../components/feedback/StatusBadge";
-import { FilterBar } from "../components/filters/FilterBar";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
-import { filterPresets } from "../data/filter-presets";
 import { usePagedListResource } from "../hooks/usePagedListResource";
 import { formatInteger, formatTimestamp } from "../utils/format";
 import { formatDomainLabel, renderRiskBadge } from "../utils/status";
@@ -26,14 +25,45 @@ function formatTokenSummary(summary: SessionDetailDto["tokenSummary"] | undefine
   ].join("\n");
 }
 
+interface SessionFilters {
+  channelProfile: string;
+  isGroup: string;
+  q: string;
+  requesterOuId: string;
+}
+
+const EMPTY_FILTERS: SessionFilters = {
+  channelProfile: "",
+  isGroup: "",
+  q: "",
+  requesterOuId: "",
+};
+
+const GROUP_OPTIONS = [
+  { label: "群聊", value: "true" },
+  { label: "单聊", value: "false" },
+];
+
+function buildSessionQuery(filters: SessionFilters): Omit<SessionListQuery, "pageNum" | "pageSize"> {
+  return {
+    q: filters.q.trim() || undefined,
+    requesterOuId: filters.requesterOuId.trim() || undefined,
+    channelProfile: filters.channelProfile.trim() || undefined,
+    isGroup: filters.isGroup ? filters.isGroup === "true" : undefined,
+  };
+}
+
 export function SessionsPage() {
-  const { items, loading, error, paginationProps } = usePagedListResource<SessionListItemDto, SessionListQuery>({
-    loadPage: listSessions,
-    query: {},
-  });
+  const [draftFilters, setDraftFilters] = useState<SessionFilters>(EMPTY_FILTERS);
+  const [appliedQuery, setAppliedQuery] = useState<Omit<SessionListQuery, "pageNum" | "pageSize">>({});
   const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionDetailDto | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const { items, loading, error, paginationProps, resetPaging, retry } = usePagedListResource<SessionListItemDto, SessionListQuery>({
+    loadPage: listSessions,
+    onPageBoundaryChange: () => setSelectedSessionKey(null),
+    query: appliedQuery,
+  });
 
   useEffect(() => {
     const firstSession = items[0];
@@ -100,6 +130,20 @@ export function SessionsPage() {
   const headerTone = error || detailError ? "danger" : loading ? "info" : "success";
   const headerLabel = error || detailError ? "请求失败" : loading ? "加载中" : "实时数据";
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    setSelectedSessionKey(null);
+    resetPaging();
+    setAppliedQuery(buildSessionQuery(draftFilters));
+  }
+
+  function handleReset(): void {
+    setDraftFilters(EMPTY_FILTERS);
+    setSelectedSessionKey(null);
+    resetPaging();
+    setAppliedQuery({});
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -114,7 +158,55 @@ export function SessionsPage() {
         <MetricCard label="群聊会话" value={`${groupCount}`} note="按 isGroup 聚合" />
         <MetricCard label="高风险会话" value={`${highRiskCount}`} note="包含高风险事件的会话" />
       </section>
-      <FilterBar chips={filterPresets.sessions} />
+      <section className="filter-panel">
+        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索会话、渠道、请求人"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>请求人</span>
+            <Input
+              allowClear
+              aria-label="请求人"
+              placeholder="输入请求人 OU ID"
+              value={draftFilters.requesterOuId}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, requesterOuId: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>渠道</span>
+            <Input
+              allowClear
+              aria-label="渠道"
+              placeholder="例如 webchat / feishu"
+              value={draftFilters.channelProfile}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, channelProfile: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>会话类型</span>
+            <Select
+              allowClear
+              aria-label="会话类型"
+              options={GROUP_OPTIONS}
+              placeholder="全部类型"
+              value={draftFilters.isGroup || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, isGroup: value ?? "" }))}
+            />
+          </label>
+          <div className="audit-filter-form__actions">
+            <Button htmlType="submit" type="primary">应用筛选</Button>
+            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
+          </div>
+        </form>
+      </section>
       <section className="split-grid">
         <article className="panel">
           <div className="panel__header">
@@ -131,7 +223,9 @@ export function SessionsPage() {
               { key: "risk", label: "风险" },
               { key: "lastSeen", label: "最近活动" },
             ]}
+            error={error}
             loading={loading}
+            onRetry={retry}
             rows={items.map((session) => ({
               id: session.sessionKey,
               session: session.sessionKey,

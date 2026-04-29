@@ -10,6 +10,7 @@ import { LOCAL_CONSOLE_API_BASE_PATH } from "../../shared/src/enums.js";
 import type {
   AuditEventItem,
   IngestItemV1,
+  QaRecordUpsertItem,
   SessionUpsertItem,
   TokenUsageItem,
   ToolCallUpsertItem,
@@ -1014,6 +1015,16 @@ function hasSecuritySignal(item: IngestItemV1): boolean {
     );
   }
 
+  if (item.kind === "qaRecordUpsert") {
+    const data = item.data;
+    return Boolean(
+      data.riskLevel
+      || data.riskScore !== undefined
+      || data.status === "blocked"
+      || data.status === "failed",
+    );
+  }
+
   return false;
 }
 
@@ -1064,6 +1075,17 @@ function isRoutineHeartbeatTokenUsageItem(item: TokenUsageItem): boolean {
   return isRoutineHeartbeatText(item.data.payloadJson);
 }
 
+function isRoutineHeartbeatQARecordItem(item: QaRecordUpsertItem): boolean {
+  if (hasSecuritySignal(item)) {
+    return false;
+  }
+  return [
+    item.data.userPromptExcerpt,
+    item.data.finalAnswerExcerpt,
+    item.data.payloadJson,
+  ].some((value) => isRoutineHeartbeatText(value));
+}
+
 function resolveHeartbeatToolCallIds(items: IngestItemV1[]): Set<string> {
   const ids = new Set<string>();
   for (const item of items) {
@@ -1084,6 +1106,8 @@ function isRoutineHeartbeatItem(item: IngestItemV1, heartbeatToolCallIds: Set<st
       return isHeartbeatSession(item);
     case "tokenUsage":
       return isRoutineHeartbeatTokenUsageItem(item);
+    case "qaRecordUpsert":
+      return isRoutineHeartbeatQARecordItem(item);
     default:
       return false;
   }
@@ -1156,22 +1180,65 @@ type BuilderMethodName = keyof LocalConsoleEventBuilder;
 
 export function createLocalConsoleHookHandlers(options: LocalConsoleHookHandlersOptions): LocalConsoleHookHandlers {
   const defaultBuilder = createLocalConsoleEventBuilder();
+  const activeQaRecordBySession = new Map<string, string>();
   const builder: LocalConsoleEventBuilder = {
     ...defaultBuilder,
     ...(options.builder ?? {}),
   };
+
+  function shouldInheritActiveQaRecord(methodName: BuilderMethodName): boolean {
+    return methodName === "beforeMessageWrite"
+      || methodName === "toolResultPersist"
+      || methodName === "messageSending";
+  }
+
+  function withActiveQaRecord<K extends BuilderMethodName>(
+    methodName: K,
+    input: Parameters<LocalConsoleEventBuilder[K]>[0],
+  ): Parameters<LocalConsoleEventBuilder[K]>[0] {
+    if (!shouldInheritActiveQaRecord(methodName) || !isRecord(input)) {
+      return input;
+    }
+    if (normalizeText(input.qaRecordId) || normalizeText(input.runId)) {
+      return input;
+    }
+    const sessionKey = normalizeText(input.sessionKey);
+    const qaRecordId = sessionKey ? activeQaRecordBySession.get(sessionKey) : undefined;
+    return qaRecordId
+      ? { ...input, qaRecordId } as Parameters<LocalConsoleEventBuilder[K]>[0]
+      : input;
+  }
+
+  function rememberActiveQaRecord(methodName: BuilderMethodName, items: IngestItemV1[]): void {
+    for (const item of items) {
+      if (item.kind !== "qaRecordUpsert") {
+        continue;
+      }
+      const sessionKey = item.data.sessionKey?.trim();
+      if (!sessionKey) {
+        continue;
+      }
+      if (methodName === "agentEnd") {
+        activeQaRecordBySession.delete(sessionKey);
+        continue;
+      }
+      activeQaRecordBySession.set(sessionKey, item.data.qaRecordId);
+    }
+  }
 
   function emit<K extends BuilderMethodName>(
     methodName: K,
     input: Parameters<LocalConsoleEventBuilder[K]>[0],
   ): void {
     try {
-      const items = filterRoutineHeartbeatIngestItems(builder[methodName](input as never));
+      const enrichedInput = withActiveQaRecord(methodName, input);
+      const items = filterRoutineHeartbeatIngestItems(builder[methodName](enrichedInput as never));
       if (!items || items.length === 0) {
         return;
       }
 
       const acceptedCount = options.client.enqueueMany(items);
+      rememberActiveQaRecord(methodName, items);
       if (acceptedCount < items.length) {
         options.logger.warn(
           `[lynx-guardian] local console accepted ${acceptedCount}/${items.length} items for ${String(methodName)}`,

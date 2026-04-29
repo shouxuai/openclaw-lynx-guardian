@@ -208,6 +208,21 @@ function formatEvidenceSummary(value: unknown): string {
     .join("；");
 }
 
+function renderReportContent(value: string | undefined) {
+  const report = value?.trim();
+  if (!report) {
+    return <pre className="code-panel code-panel--report">暂无</pre>;
+  }
+
+  return (
+    <div className="code-panel code-panel--report">
+      {report.split(/\r?\n/).map((line, index) => (
+        <p key={`${index}:${line}`}>{line || "\u00a0"}</p>
+      ))}
+    </div>
+  );
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -305,7 +320,7 @@ export function EventsPage() {
     setDetailLoadingId(null);
   }
 
-  const { items, loading, error, paginationProps, resetPaging } = usePagedListResource<
+  const { items, loading, error, paginationProps, resetPaging, retry } = usePagedListResource<
     AuditEventListItemDto,
     EventListQuery
   >({
@@ -533,7 +548,9 @@ export function EventsPage() {
             { key: "time", label: "发生时间" },
             { key: "detail", label: "操作" },
           ]}
+          error={error}
           loading={loading}
+          onRetry={retry}
           rows={items.map((event) => ({
             id: event.eventId,
             event: (
@@ -585,7 +602,10 @@ export function EventsPage() {
           {[
             { label: "触发点", value: formatHookLabel(selectedDetail?.hookName) },
             { label: "关联问答记录", value: formatQaRecordId(selectedDetail?.qaRecordId) },
-            { label: "完整脱敏摘要", value: selectedDetail?.contentExcerpt ?? "暂无" },
+            {
+              label: "完整脱敏摘要 / 安全审计报告",
+              value: renderReportContent(selectedDetail?.contentExcerpt),
+            },
             { label: "处置建议", value: selectedDetail?.recommendation ?? selectedDetail?.summary ?? "暂无" },
             { label: "模块", value: selectedDetail?.modules?.join(", ") || selectedDetail?.primaryModule || "暂无" },
             {
@@ -605,7 +625,6 @@ export function EventsPage() {
             },
             { label: "Matched Rules", value: formatUnknownList(selectedDetail?.payloadJson?.matchedRules ?? selectedDetail?.payloadJson?.matchedModules) },
             { label: "Score Breakdown", value: formatScoreBreakdown(selectedDetail?.payloadJson?.scoreBreakdown) },
-            { label: "block:false 说明", value: "block:false 只表示未阻断，不等于安全" },
             { label: "内容类型", value: selectedDetail?.contentKind ?? "暂无" },
             { label: "内容哈希", value: selectedDetail?.contentHash ?? "暂无" },
             { label: "入库时间", value: selectedDetail ? formatTimestamp(selectedDetail.ingestedAtMs) : "暂无" },

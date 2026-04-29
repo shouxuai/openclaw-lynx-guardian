@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SkillsPage } from "./SkillsPage";
@@ -8,7 +8,7 @@ afterEach(() => {
 });
 
 describe("SkillsPage", () => {
-  it("renders skill inventory with hash mismatch findings", async () => {
+  it("renders skill inventory with hash mismatch details behind the row action", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       items: [
         {
@@ -43,7 +43,14 @@ describe("SkillsPage", () => {
     render(<SkillsPage />);
 
     expect(await screen.findByText("Payment Export")).toBeInTheDocument();
-    expect(screen.getByText("hash_mismatch")).toBeInTheDocument();
+    expect(screen.getAllByText("哈希不一致").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Baseline Hash")).not.toBeInTheDocument();
+    expect(screen.queryByText("Current Hash")).not.toBeInTheDocument();
+    expect(screen.queryByText("aaa111")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 payment-export Skill 详情" }));
+
+    expect(screen.getByRole("dialog", { name: "Skill 详情" })).toBeInTheDocument();
     expect(screen.getByText("aaa111")).toBeInTheDocument();
     expect(screen.getByText("bbb222")).toBeInTheDocument();
   });

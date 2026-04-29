@@ -128,7 +128,7 @@ describe("App", () => {
       "href",
       "/webview/grants",
     );
-    expect(screen.getByRole("link", { name: "检测" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "检测报告" })).toHaveAttribute(
       "href",
       "/webview/lynx-checks",
     );

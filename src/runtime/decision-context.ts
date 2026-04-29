@@ -1,10 +1,13 @@
 import type { DecisionRequest, DecisionStage } from "../../shared/src/decision.js";
+import { resolveLocalConsoleQaRecordId } from "../console/event-builder.js";
 
 export interface DecisionContext {
   stage: DecisionStage;
   hook: string;
   requestId?: string;
+  qaRecordId?: string;
   sessionKey?: string;
+  runId?: string;
   channelProfile?: string;
   channelId?: string;
   conversationId?: string;
@@ -20,11 +23,18 @@ export interface DecisionContext {
 }
 
 export function decisionRequestFromContext(context: DecisionContext): DecisionRequest {
+  const qaRecordId = resolveLocalConsoleQaRecordId({
+    qaRecordId: context.qaRecordId,
+    runId: context.runId,
+    sessionKey: context.sessionKey,
+  });
   return {
     requestId: context.requestId ?? `${context.stage}-${Date.now()}`,
+    qaRecordId,
     stage: context.stage,
     hook: context.hook,
     sessionKey: context.sessionKey,
+    runId: context.runId,
     channelProfile: context.channelProfile,
     channelId: context.channelId,
     conversationId: context.conversationId,

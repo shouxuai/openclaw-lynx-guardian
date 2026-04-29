@@ -1,8 +1,10 @@
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useState, type FormEvent } from "react";
 import type { LynxCheckDetailDto, LynxCheckListItemDto } from "@lynx/local-console-shared";
+import { Button, Input, Select } from "antd";
 
 import { getLynxCheckDetail, listLynxChecks, type LynxCheckListQuery } from "../api/lynx-checks";
 import { mockLynxChecks } from "../data/mock-console";
+import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
 import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListResource";
@@ -23,20 +25,37 @@ function isRunningTask(status: string): boolean {
   ].includes(status);
 }
 
-function formatTaskEvidence(item: LynxCheckListItemDto): string {
-  const extended = item as LynxCheckListItemDto & {
-    evidence?: unknown;
-    evidenceBundle?: unknown;
-    facts?: unknown;
+interface CheckFilters {
+  q: string;
+  status: string;
+  trigger: string;
+}
+
+const EMPTY_FILTERS: CheckFilters = {
+  q: "",
+  status: "",
+  trigger: "",
+};
+
+const STATUS_OPTIONS = [
+  { label: "已完成", value: "completed" },
+  { label: "运行中", value: "running" },
+  { label: "失败", value: "failed" },
+  { label: "等待中", value: "pending" },
+];
+
+const TRIGGER_OPTIONS = [
+  { label: "手动触发", value: "manual" },
+  { label: "命令触发", value: "lynx_command" },
+  { label: "定时任务", value: "scheduled" },
+];
+
+function buildCheckQuery(filters: CheckFilters): Omit<LynxCheckListQuery, "pageNum" | "pageSize"> {
+  return {
+    q: filters.q.trim() || undefined,
+    status: filters.status || undefined,
+    trigger: filters.trigger || undefined,
   };
-  const evidence = extended.evidenceBundle ?? extended.evidence ?? extended.facts;
-  if (!evidence) {
-    return item.errorMessage || "暂无";
-  }
-  if (typeof evidence === "string") {
-    return evidence;
-  }
-  return JSON.stringify(evidence);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -70,28 +89,16 @@ function resolveTaskDuration(item: LynxCheckListItemDto): number | undefined {
   return item.completedAtMs - item.createdAtMs;
 }
 
-function formatTaskLogLine(item: LynxCheckListItemDto): string {
-  const reportPath = resolveReportPath(item);
-  return [
-    `[${formatTimestamp(item.createdAtMs)}]`,
-    item.status,
-    item.requestId,
-    reportPath !== "--" ? `report:${reportPath}` : undefined,
-    item.errorMessage ? `error:${item.errorMessage}` : undefined,
-  ].filter(Boolean).join(" ");
-}
-
 function renderReportMarkdown(reportMarkdown: string | undefined) {
-  if (!reportMarkdown) {
+  if (!reportMarkdown?.trim()) {
     return <p className="small-note">当前检测记录暂无完整 Markdown 报告。</p>;
   }
 
   return (
-    <div className="code-panel">
-      {reportMarkdown.split(/\r?\n/).map((line, index) => (
-        <p key={`${index}:${line}`}>{line || "\u00a0"}</p>
-      ))}
-    </div>
+    <section className="report-side-panel__body" aria-label="检测报告 Markdown 正文">
+      <span className="report-side-panel__bodyTitle">报告正文</span>
+      <pre className="code-panel code-panel--report report-side-panel__markdown" data-testid="lynx-check-report-markdown">{reportMarkdown}</pre>
+    </section>
   );
 }
 
@@ -99,12 +106,15 @@ export function LynxChecksPage() {
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<LynxCheckDetailDto | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const { items, loading, error, paginationProps } = usePagedListResource<LynxCheckListItemDto, LynxCheckListQuery>({
+  const [draftFilters, setDraftFilters] = useState<CheckFilters>(EMPTY_FILTERS);
+  const [appliedQuery, setAppliedQuery] = useState<Omit<LynxCheckListQuery, "pageNum" | "pageSize">>({});
+  const { items, loading, error, paginationProps, resetPaging, retry } = usePagedListResource<LynxCheckListItemDto, LynxCheckListQuery>({
     fallbackPage: import.meta.env.DEV
       ? (_query, pageIndex, pageSize) => paginateMockPage(mockLynxChecks, pageIndex, pageSize)
       : undefined,
     loadPage: listLynxChecks,
-    query: {},
+    onPageBoundaryChange: () => setSelectedRequestId(null),
+    query: appliedQuery,
   });
 
   const runningCount = items.filter((item) => isRunningTask(item.status)).length;
@@ -117,15 +127,29 @@ export function LynxChecksPage() {
     ? Math.round(durations.reduce((total, value) => total + value, 0) / durations.length)
     : undefined;
   const failRate = attemptedCount === 0 ? "0%" : `${(((attemptedCount - successCount) / attemptedCount) * 100).toFixed(2)}%`;
-  const taskLogText = loading
-    ? "正在加载检查任务列表"
-    : items.length > 0
-      ? items.map(formatTaskLogLine).join("\n")
-      : "当前列表暂无检查任务日志";
-  const statusText = error ? `检查任务加载失败：${error}` : loading ? "正在加载 lynx_checks 数据流" : "基于当前列表展示 lynx_checks 任务状态、通知结果和报告路径。";
+  const statusText = error ? `检查任务加载失败：${error}` : loading ? "正在加载 lynx_checks 数据流" : "左侧筛选检测任务，右侧直接查看最近检测报告。";
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    setSelectedRequestId(null);
+    resetPaging();
+    setAppliedQuery(buildCheckQuery(draftFilters));
+  }
+
+  function handleReset(): void {
+    setDraftFilters(EMPTY_FILTERS);
+    setSelectedRequestId(null);
+    resetPaging();
+    setAppliedQuery({});
+  }
 
   useEffect(() => {
-    if (selectedRequestId || items.length === 0) {
+    if (items.length === 0) {
+      setSelectedRequestId(null);
+      return;
+    }
+
+    if (selectedRequestId && items.some((item) => item.requestId === selectedRequestId)) {
       return;
     }
 
@@ -172,15 +196,22 @@ export function LynxChecksPage() {
     };
   }, [selectedRequestId]);
 
+  const selectedListItem = items.find((item) => item.requestId === selectedRequestId) ?? null;
+  const reportEntries = items
+    .map((item) => ({
+      requestId: item.requestId,
+      reportPath: resolveReportPath(item),
+    }))
+    .filter((entry) => entry.reportPath !== "--");
+
   return (
     <div className="page-stack">
-      <section className="page-header">
-        <div>
-          <h1 className="page-header__title">检测</h1>
-          <p className="page-header__description">{statusText}</p>
-        </div>
-        <button className="btn btn--dark" type="button">刷新数据</button>
-      </section>
+      <PageHeader
+        title="检测报告"
+        description={statusText}
+        eyebrow="LYNX CHECKS"
+        actions={<button className="btn btn--dark" type="button" onClick={retry}>刷新数据</button>}
+      />
 
       <section className="metric-grid metric-grid--compact">
         <article className="metric-card">
@@ -207,75 +238,121 @@ export function LynxChecksPage() {
         </article>
       </section>
 
-      <section className="table-panel">
-        <div className="table-panel__header">
-          <h2 className="panel__title">任务执行列表</h2>
-          <div className="page-header__actions">
-            <button className="btn" type="button">搜索请求 ID...</button>
-            <button className="btn" type="button">筛选</button>
+      <section className="filter-panel">
+        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索请求 ID、会话、问答记录"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>处理状态</span>
+            <Select
+              allowClear
+              aria-label="处理状态"
+              options={STATUS_OPTIONS}
+              placeholder="全部状态"
+              value={draftFilters.status || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, status: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>触发方式</span>
+            <Select
+              allowClear
+              aria-label="触发方式"
+              options={TRIGGER_OPTIONS}
+              placeholder="全部方式"
+              value={draftFilters.trigger || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, trigger: value ?? "" }))}
+            />
+          </label>
+          <div className="audit-filter-form__actions">
+            <Button htmlType="submit" type="primary">应用筛选</Button>
+            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
           </div>
-        </div>
-        <DataTable
-          columns={[
-            { key: "request", label: "请求 ID" },
-            { key: "qaRecord", label: "问答记录", maxWidth: 220, minWidth: 150, width: 180 },
-            { key: "source", label: "触发源" },
-            { key: "status", label: "处理状态" },
-            { key: "taskState", label: "Task State", maxWidth: 180, minWidth: 140, width: 160 },
-            { key: "evidence", label: "证据", maxWidth: 320, minWidth: 230, width: 280 },
-            { key: "delivery", label: "通知状态" },
-            { key: "report", label: "报告路径" },
-            { key: "created", label: "创建时间" },
-            { key: "action", label: "操作" },
-          ]}
-          loading={loading}
-          rows={items.map((item) => ({
-            id: item.requestId,
-            request: <code>{item.requestId}</code>,
-            qaRecord: formatQaRecordId(item.qaRecordId),
-            source: formatDomainLabel(item.trigger),
-            status: renderStateBadge(item.status),
-            taskState: item.status,
-            evidence: formatTaskEvidence(item),
-            delivery: renderStateBadge(item.sendSucceeded ? "completed" : item.sendAttempted ? "failed" : "pending"),
-            report: resolveReportPath(item),
-            created: formatTimestamp(item.createdAtMs),
-            action: (
-              <button
-                aria-label={`查看 ${item.requestId} 检测报告`}
-                className="btn btn--compact"
-                type="button"
-                onClick={() => setSelectedRequestId(item.requestId)}
-              >
-                查看报告
-              </button>
-            ),
-          }))}
-        />
-        <TablePagination {...paginationProps} />
+        </form>
       </section>
 
-      <section className="split-grid split-grid--equal">
-        <article className="panel">
-          <div className="panel__header">
-            <h2 className="panel__title">当前列表事件</h2>
-            <span className="status-badge status-badge--info">
-              {runningCount > 0 ? `${runningCount} 个运行中` : "无运行中任务"}
-            </span>
+      <section className="split-grid split-grid--report" data-testid="lynx-checks-workspace">
+        <article className="table-panel">
+          <div className="table-panel__header">
+            <div>
+              <h2 className="panel__title">任务执行列表</h2>
+              <p className="panel__subtitle">只保留排查时第一眼需要看的状态字段。</p>
+            </div>
           </div>
-          <pre className="code-panel">{taskLogText}</pre>
+          <DataTable
+            columns={[
+              { key: "request", label: "请求" },
+              { key: "status", label: "处理状态" },
+              { key: "source", label: "触发方式" },
+              { key: "delivery", label: "通知" },
+              { key: "created", label: "创建时间" },
+              { key: "action", label: "操作" },
+            ]}
+            error={error}
+            loading={loading}
+            onRetry={retry}
+            rows={items.map((item) => ({
+              id: item.requestId,
+              request: (
+                <div className="row-stack">
+                  <strong>{item.requestId}</strong>
+                  <span>{formatQaRecordId(item.qaRecordId)}</span>
+                </div>
+              ),
+              source: formatDomainLabel(item.trigger),
+              status: renderStateBadge(item.status),
+              delivery: renderStateBadge(item.sendSucceeded ? "completed" : item.sendAttempted ? "failed" : "pending"),
+              created: formatTimestamp(item.createdAtMs),
+              action: (
+                <button
+                  aria-label={`查看 ${item.requestId} 检测报告`}
+                  className="btn btn--compact"
+                  type="button"
+                  onClick={() => setSelectedRequestId(item.requestId)}
+                >
+                  查看报告
+                </button>
+              ),
+            }))}
+          />
+          <TablePagination {...paginationProps} />
         </article>
 
-        <article className="panel">
+        <article className="panel report-side-panel">
           <div className="panel__header">
-            <h2 className="panel__title">最近检测报告</h2>
+            <div>
+              <h2 className="panel__title">最近检测报告</h2>
+              <p className="panel__subtitle">
+                {selectedDetail?.requestId || selectedRequestId ? `报告：${selectedDetail?.requestId ?? selectedRequestId}` : "暂无记录"}
+              </p>
+            </div>
             <span className="status-badge status-badge--info">
-              {selectedDetail?.requestId || selectedRequestId ? `报告: ${selectedDetail?.requestId ?? selectedRequestId}` : "暂无记录"}
+              {runningCount > 0 ? `${runningCount} 个运行中` : "最近记录"}
             </span>
+          </div>
+          <div className="report-side-panel__meta">
+            <span>问答记录：{formatQaRecordId(selectedDetail?.qaRecordId ?? selectedListItem?.qaRecordId)}</span>
+            <span>当前报告：{selectedDetail?.requestId ?? selectedListItem?.requestId ?? "暂无"}</span>
           </div>
           {detailError ? (
             <p className="small-note">检测报告详情加载失败：{detailError}</p>
           ) : renderReportMarkdown(selectedDetail?.reportMarkdown)}
+          {reportEntries.length > 0 ? (
+            <div className="report-side-panel__paths" aria-label="本页报告索引">
+              <span>本页报告索引</span>
+              {reportEntries.map((entry) => (
+                <code key={entry.requestId}>{entry.reportPath}</code>
+              ))}
+            </div>
+          ) : null}
         </article>
       </section>
     </div>

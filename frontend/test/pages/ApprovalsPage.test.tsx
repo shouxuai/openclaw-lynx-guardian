@@ -110,4 +110,38 @@ describe("ApprovalsPage", () => {
     expect(screen.getByText("fingerprint-001")).toBeInTheDocument();
     expect(screen.getByText(/"decisionId": "decision-001"/)).toBeInTheDocument();
   });
+
+  it("uses real filters and keeps grant internals in the detail dialog", async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(createPage([createApproval()], 1, 20, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([
+        {
+          ...createApproval(),
+          approvalId: "APR-FILTERED",
+          requesterOuId: "ou-filtered",
+          resolution: "approved",
+        },
+      ])));
+
+    render(<ApprovalsPage />);
+
+    await screen.findByText("APR-001");
+    expect(screen.getByLabelText("关键词")).toBeInTheDocument();
+    expect(screen.getByLabelText("处理状态")).toBeInTheDocument();
+    expect(screen.getByLabelText("申请人")).toBeInTheDocument();
+    expect(screen.queryByText("Grant 范围")).not.toBeInTheDocument();
+    expect(screen.queryByText("撤销原因")).not.toBeInTheDocument();
+    expect(screen.queryByText("范围类型")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("关键词"), {
+      target: { value: "protected" },
+    });
+    fireEvent.change(screen.getByLabelText("申请人"), {
+      target: { value: "ou-filtered" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
+
+    expect(await screen.findByText("APR-FILTERED")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/approvals?q=protected&requesterOuId=ou-filtered&pageNum=1&pageSize=20");
+  });
 });

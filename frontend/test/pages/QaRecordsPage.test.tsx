@@ -117,6 +117,8 @@ describe("QaRecordsPage", () => {
 
     expect(screen.getByText("问答记录")).toBeInTheDocument();
     expect(await screen.findByText("qa-1")).toBeInTheDocument();
+    expect(screen.getByLabelText("关键词")).toBeInTheDocument();
+    expect(screen.getByLabelText("状态")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.map((call) => call[0])).toContain("/lynx/qa-records?pageNum=1&pageSize=20");
@@ -125,6 +127,7 @@ describe("QaRecordsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /展开.*工具链/ }));
 
+    expect(screen.getByTestId("qa-detail-flow")).toBeInTheDocument();
     expect(await screen.findByText("用户提示词")).toBeInTheDocument();
     expect(screen.getByText("工具调用")).toBeInTheDocument();
     expect(screen.getByText("最终回复")).toBeInTheDocument();
@@ -132,6 +135,7 @@ describe("QaRecordsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /终端.*命令/ }));
 
     expect(await screen.findByText("执行命令")).toBeInTheDocument();
+    expect(screen.getByTestId("qa-node-detail")).toBeInTheDocument();
     expect(screen.getByText("npm test")).toBeInTheDocument();
     expect(screen.getByText("C:/repo")).toBeInTheDocument();
     expect(screen.getByText("PASS")).toBeInTheDocument();

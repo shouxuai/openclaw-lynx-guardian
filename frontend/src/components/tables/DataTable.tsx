@@ -1,10 +1,11 @@
 import { useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Tooltip } from "antd";
+import { Empty, Spin, Tooltip } from "antd";
 
 const DEFAULT_COLUMN_WIDTH = 168;
 const DEFAULT_COLUMN_MIN_WIDTH = 112;
 const DEFAULT_COLUMN_MAX_WIDTH = 320;
+const SKELETON_ROW_COUNT = 5;
 
 const COLUMN_SIZE_BY_KEY: Record<string, Partial<DataTableColumnSize>> = {
   action: { maxWidth: 128, minWidth: 96, width: 108 },
@@ -93,9 +94,14 @@ export interface DataTableRow {
 
 export interface DataTableProps {
   columns: DataTableColumn[];
+  emptyDescription?: string;
+  error?: string | null;
+  errorTitle?: string;
   loading?: boolean;
   loadingLabel?: string;
   onRowClick?: (row: DataTableRow) => void;
+  onRetry?: () => void;
+  refreshingLabel?: string;
   rows: DataTableRow[];
   selectedRowId?: string;
 }
@@ -227,16 +233,125 @@ function buildRowClassName(clickable: boolean, selected: boolean): string | unde
   return classes.length > 0 ? classes.join(" ") : undefined;
 }
 
+function DataTableSkeletonRows({ columns }: { columns: DataTableColumn[] }) {
+  return Array.from({ length: SKELETON_ROW_COUNT }, (_, rowIndex) => (
+    <tr aria-hidden="true" className="data-table__skeleton-row" key={`skeleton-${rowIndex}`}>
+      {columns.map((column, columnIndex) => (
+        <td
+          className={buildColumnCellClassName(column)}
+          key={column.key}
+          style={buildColumnCellStyle(columns, column, columnIndex)}
+        >
+          <span className="data-table__skeleton" />
+        </td>
+      ))}
+    </tr>
+  ));
+}
+
+function DataTableStateRow({
+  label,
+  columns,
+}: {
+  label: string;
+  columns: DataTableColumn[];
+}) {
+  return (
+    <tr className="data-table__state-row">
+      <td className="data-table__state-cell" colSpan={columns.length}>
+        <span className="sr-only">{label}</span>
+      </td>
+    </tr>
+  );
+}
+
+function DataTableStateSurface({
+  emptyDescription,
+  error,
+  errorTitle,
+  loadingLabel,
+  onRetry,
+  state,
+}: {
+  emptyDescription: string;
+  error?: string | null;
+  errorTitle: string;
+  loadingLabel: string;
+  onRetry?: () => void;
+  state: "empty" | "error" | "loading";
+}) {
+  if (state === "loading") {
+    return (
+      <div className="data-table__state-surface data-table__state-surface--loading">
+        <span className="data-table__loading-status" role="status">
+          <Spin size="small" />
+          {loadingLabel}
+        </span>
+      </div>
+    );
+  }
+
+  if (state === "error") {
+    return (
+      <div className="data-table__state-surface">
+        <div className="data-table__state data-table__state--error">
+          <strong>{errorTitle}</strong>
+          <span>{error}</span>
+          {onRetry ? (
+            <button className="btn btn--compact data-table__retry" type="button" onClick={onRetry}>
+              重试
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="data-table__state-surface">
+      <Empty
+        className="data-table__empty"
+        description={emptyDescription}
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+      />
+    </div>
+  );
+}
+
 export function DataTable({
   columns,
+  emptyDescription = "暂无数据",
+  error,
+  errorTitle = "列表加载失败",
   loading = false,
   loadingLabel = "正在加载列表数据",
   onRowClick,
+  onRetry,
+  refreshingLabel = "正在更新列表",
   rows,
   selectedRowId,
 }: DataTableProps) {
+  const hasRows = rows.length > 0;
+  const showInitialLoading = loading && !hasRows && !error;
+  const showRefreshOverlay = loading && hasRows;
+  const showErrorState = Boolean(error) && !hasRows;
+  const showErrorOverlay = Boolean(error) && hasRows && !loading;
+  const showEmptyState = !loading && !error && !hasRows;
+  const tableState = showInitialLoading
+    ? "loading"
+    : showErrorState
+      ? "error"
+      : showEmptyState
+        ? "empty"
+        : undefined;
+  const tableWrapClassName = [
+    "table-wrap",
+    showRefreshOverlay ? "table-wrap--refreshing" : undefined,
+    !hasRows ? "table-wrap--stateful" : undefined,
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className="table-wrap">
+    <div className={tableWrapClassName}>
       <table className="data-table" style={{ minWidth: resolveTableMinWidth(columns) }}>
         <colgroup>
           {columns.map((column) => (
@@ -257,12 +372,17 @@ export function DataTable({
           </tr>
         </thead>
         <tbody>
-          {loading ? (
-            <tr className="data-table__loading-row">
-              <td className="data-table__loading-cell" colSpan={columns.length}>
-                <span className="data-table__loading-status" role="status">{loadingLabel}</span>
-              </td>
-            </tr>
+          {showInitialLoading ? (
+            <>
+              <DataTableStateRow columns={columns} label={loadingLabel} />
+              <DataTableSkeletonRows columns={columns} />
+            </>
+          ) : null}
+          {showErrorState ? (
+            <DataTableStateRow columns={columns} label={`${errorTitle}：${error}`} />
+          ) : null}
+          {showEmptyState ? (
+            <DataTableStateRow columns={columns} label={emptyDescription} />
           ) : null}
           {rows.map((row) => (
             <tr
@@ -291,6 +411,33 @@ export function DataTable({
           ))}
         </tbody>
       </table>
+      {tableState ? (
+        <DataTableStateSurface
+          emptyDescription={emptyDescription}
+          error={error}
+          errorTitle={errorTitle}
+          loadingLabel={loadingLabel}
+          onRetry={onRetry}
+          state={tableState}
+        />
+      ) : null}
+      {showRefreshOverlay ? (
+        <div className="data-table__loading-overlay" role="status">
+          <Spin size="small" />
+          <span>{refreshingLabel}</span>
+        </div>
+      ) : null}
+      {showErrorOverlay ? (
+        <div className="data-table__error-overlay" role="alert">
+          <strong>{errorTitle}</strong>
+          <span>{error}</span>
+          {onRetry ? (
+            <button className="btn btn--compact data-table__retry" type="button" onClick={onRetry}>
+              重试
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

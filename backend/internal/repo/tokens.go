@@ -118,6 +118,7 @@ func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, 
 	filter := tokenCommonFilter(query)
 	var totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64
 	var actualTokens, estimatedTokens, measurableTokens, estimatedCount, unavailableCount int64
+	var measurableInputTokens, measurableOutputTokens, measurableCacheReadTokens, measurableCacheWriteTokens int64
 	if err := r.db.QueryRow(
 		`
 		SELECT
@@ -130,27 +131,31 @@ func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, 
 			COALESCE(SUM(CASE WHEN source_type = 'estimated' THEN total_tokens ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN source_type IN ('actual', 'estimated') THEN total_tokens ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN source_type = 'estimated' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN source_type = 'unavailable' THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN source_type = 'unavailable' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type IN ('actual', 'estimated') THEN input_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type IN ('actual', 'estimated') THEN output_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type IN ('actual', 'estimated') THEN cache_read_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN source_type IN ('actual', 'estimated') THEN cache_write_tokens ELSE 0 END), 0)
 		FROM token_usage `+filter.Where(),
 		filter.Params()...,
 	).Scan(
 		&totalTokens, &inputTokens, &outputTokens, &cacheReadTokens, &cacheWriteTokens,
 		&actualTokens, &estimatedTokens, &measurableTokens, &estimatedCount, &unavailableCount,
+		&measurableInputTokens, &measurableOutputTokens, &measurableCacheReadTokens, &measurableCacheWriteTokens,
 	); err != nil {
 		return nil, err
 	}
 
-	actualFilter := tokenCommonFilter(query)
-	actualSource := "actual"
-	actualFilter.AppendEquals("source_type", &actualSource)
+	measurableFilter := tokenCommonFilter(query)
+	measurableFilter.AppendIn("source_type", []string{"actual", "estimated"})
 	rows, err := r.db.Query(
 		`
 		SELECT model, COALESCE(SUM(total_tokens), 0)
-		FROM token_usage `+actualFilter.Where()+`
+		FROM token_usage `+measurableFilter.Where()+`
 		GROUP BY model
 		ORDER BY 2 DESC, model ASC
 		LIMIT 5`,
-		actualFilter.Params()...,
+		measurableFilter.Params()...,
 	)
 	if err != nil {
 		return nil, err
@@ -174,17 +179,21 @@ func (r *TokensRepository) GetSummary(query TokenSummaryQuery) (map[string]any, 
 	}
 
 	return map[string]any{
-		"totalTokens":      totalTokens,
-		"inputTokens":      inputTokens,
-		"outputTokens":     outputTokens,
-		"cacheReadTokens":  cacheReadTokens,
-		"cacheWriteTokens": cacheWriteTokens,
-		"actualTokens":     actualTokens,
-		"estimatedTokens":  estimatedTokens,
-		"measurableTokens": measurableTokens,
-		"estimatedCount":   estimatedCount,
-		"unavailableCount": unavailableCount,
-		"topModels":        topModels,
+		"totalTokens":                totalTokens,
+		"inputTokens":                inputTokens,
+		"outputTokens":               outputTokens,
+		"cacheReadTokens":            cacheReadTokens,
+		"cacheWriteTokens":           cacheWriteTokens,
+		"actualTokens":               actualTokens,
+		"estimatedTokens":            estimatedTokens,
+		"measurableTokens":           measurableTokens,
+		"measurableInputTokens":      measurableInputTokens,
+		"measurableOutputTokens":     measurableOutputTokens,
+		"measurableCacheReadTokens":  measurableCacheReadTokens,
+		"measurableCacheWriteTokens": measurableCacheWriteTokens,
+		"estimatedCount":             estimatedCount,
+		"unavailableCount":           unavailableCount,
+		"topModels":                  topModels,
 	}, nil
 }
 
@@ -198,8 +207,7 @@ func (r *TokensRepository) GetTrend(query TokenTrendQuery) (map[string]any, erro
 		bucketSizeMs = 86400000
 	}
 	filter := tokenCommonFilter(query.TokenSummaryQuery)
-	actualSource := "actual"
-	filter.AppendEquals("source_type", &actualSource)
+	filter.AppendIn("source_type", []string{"actual", "estimated"})
 
 	rows, err := r.db.Query(
 		`

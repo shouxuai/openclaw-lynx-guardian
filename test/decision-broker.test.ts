@@ -81,6 +81,25 @@ describe("DecisionBroker", () => {
     expect(goClient.decideInput).toHaveBeenCalledTimes(1);
   });
 
+  it("includes the active QA record identity in Go decision requests", async () => {
+    const goClient = client({
+      decideInput: vi.fn(async () => response({ decisionId: "with-qa" })),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    await broker.waitInputDecision(context({
+      sessionKey: "session-a",
+      runId: "run-a",
+      content: "normal request",
+    }), 100);
+
+    expect(goClient.decideInput).toHaveBeenCalledWith(expect.objectContaining({
+      sessionKey: "session-a",
+      runId: "run-a",
+      qaRecordId: expect.stringMatching(/^qa:/),
+    }));
+  });
+
   it("returns degraded warn for ordinary input timeout", async () => {
     const goClient = client({
       decideInput: vi.fn(() => new Promise(() => {})),

@@ -4,13 +4,31 @@ import { useLocation } from "react-router-dom";
 import type { ConsoleThemeMode } from "../../app/App";
 import { PRIMARY_NAV_ITEMS } from "../../app/nav-config";
 
-function resolvePageTitle(pathname: string): string {
+const TOPBAR_EYEBROWS: Record<string, string> = {
+  "dashboard": "SECURITY OVERVIEW",
+  "qa-records": "QA RECORDS",
+  "events": "AUDIT LOGS",
+  "decisions": "DECISION CONTROL PLANE",
+  "tool-calls": "TOOL CALLS MONITOR",
+  "approvals": "APPROVAL GOVERNANCE",
+  "chains": "CHAIN STATE",
+  "grants": "GRANT LEDGER",
+  "lynx-checks": "LYNX CHECK RUNS",
+  "sessions": "SESSION INDEX",
+  "skills": "SKILL INVENTORY",
+  "tokens": "TOKEN USAGE",
+};
+
+function resolveTopBarContext(pathname: string): { eyebrow?: string; title: string } {
   const match = PRIMARY_NAV_ITEMS
     .slice()
     .sort((left, right) => right.path.length - left.path.length)
     .find((item) => item.path === "/" ? pathname === "/" : pathname.startsWith(item.path));
 
-  return match?.pageTitle ?? "Lynx Guardian";
+  return {
+    eyebrow: match ? TOPBAR_EYEBROWS[match.id] : undefined,
+    title: match?.pageTitle ?? "Lynx Guardian",
+  };
 }
 
 interface TopBarProps {
@@ -66,7 +84,7 @@ export function TopBar({
   const location = useLocation();
   const themeMenuRef = useRef<HTMLDivElement>(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
-  const title = resolvePageTitle(location.pathname);
+  const { eyebrow, title } = resolveTopBarContext(location.pathname);
   const activeTheme = THEME_OPTIONS.find((option) => option.mode === themeMode) ?? THEME_OPTIONS[0];
 
   useEffect(() => {
@@ -100,8 +118,8 @@ export function TopBar({
       <div className="topbar__left">
         <div className="topbar__titleGroup">
           <h2 className="topbar__title">{title}</h2>
-          {title === "工具调用审计" ? <span className="topbar__divider">|</span> : null}
-          {title === "工具调用审计" ? <span className="topbar__eyebrow">TOOL CALLS MONITOR</span> : null}
+          {eyebrow ? <span className="topbar__divider">|</span> : null}
+          {eyebrow ? <span className="topbar__eyebrow">{eyebrow}</span> : null}
         </div>
       </div>
 

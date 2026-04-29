@@ -1,5 +1,6 @@
-import { useState } from "react";
-import type { ApprovalDetailDto, ApprovalListItemDto } from "@lynx/local-console-shared";
+import { useState, type FormEvent } from "react";
+import type { ApprovalDetailDto, ApprovalListItemDto, RiskLevel } from "@lynx/local-console-shared";
+import { Button, Input, Select } from "antd";
 
 import { getApprovalDetail, listApprovals, type ApprovalListQuery } from "../api/approvals";
 import { mockApprovals } from "../data/mock-console";
@@ -11,6 +12,45 @@ import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListRes
 import { formatTimestamp } from "../utils/format";
 import { formatQaRecordId } from "../utils/qa-records";
 import { renderRiskBadge, renderStateBadge } from "../utils/status";
+
+interface ApprovalFilters {
+  q: string;
+  requesterOuId: string;
+  resolution: string;
+  riskLevel: string;
+}
+
+const EMPTY_FILTERS: ApprovalFilters = {
+  q: "",
+  requesterOuId: "",
+  resolution: "",
+  riskLevel: "",
+};
+
+const RESOLUTION_OPTIONS = [
+  { label: "待处理", value: "pending" },
+  { label: "已批准", value: "approved" },
+  { label: "已完成", value: "completed" },
+  { label: "已阻断", value: "blocked" },
+  { label: "失败", value: "failed" },
+];
+
+const RISK_OPTIONS: Array<{ label: string; value: RiskLevel }> = [
+  { label: "L0 基础", value: "L0" },
+  { label: "L1 关注", value: "L1" },
+  { label: "L2 中危", value: "L2" },
+  { label: "L3 高危", value: "L3" },
+  { label: "L4 严重", value: "L4" },
+];
+
+function buildApprovalQuery(filters: ApprovalFilters): Omit<ApprovalListQuery, "pageNum" | "pageSize"> {
+  return {
+    q: filters.q.trim() || undefined,
+    resolution: filters.resolution || undefined,
+    requesterOuId: filters.requesterOuId.trim() || undefined,
+    riskLevel: filters.riskLevel ? [filters.riskLevel as RiskLevel] : undefined,
+  };
+}
 
 function formatApprovalScope(approval: ApprovalListItemDto): string {
   const metadata = (approval as ApprovalListItemDto & { metadataJson?: Record<string, unknown> }).metadataJson;
@@ -39,15 +79,17 @@ function formatList(values: string[] | undefined): string {
 }
 
 export function ApprovalsPage() {
+  const [draftFilters, setDraftFilters] = useState<ApprovalFilters>(EMPTY_FILTERS);
+  const [appliedQuery, setAppliedQuery] = useState<Omit<ApprovalListQuery, "pageNum" | "pageSize">>({});
   const [selectedDetail, setSelectedDetail] = useState<ApprovalDetailDto | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const { items, loading, error, paginationProps } = usePagedListResource<ApprovalListItemDto, ApprovalListQuery>({
+  const { items, loading, error, paginationProps, resetPaging, retry } = usePagedListResource<ApprovalListItemDto, ApprovalListQuery>({
     fallbackPage: import.meta.env.DEV
       ? (_query, pageIndex, pageSize) => paginateMockPage(mockApprovals, pageIndex, pageSize)
       : undefined,
     loadPage: listApprovals,
-    query: {},
+    query: appliedQuery,
   });
 
   const pendingCount = items.filter((item) => item.resolution === "pending" || !item.resolution).length;
@@ -55,6 +97,18 @@ export function ApprovalsPage() {
   const blockedCount = items.filter((item) => item.resolution === "blocked" || item.resolution === "failed").length;
   const statusDescription = error ? `审批数据加载失败：${error}` : loading ? "正在加载审批队列" : "治理控制台聚合所有待复核与已决策请求。";
   const isDetailDialogOpen = Boolean(selectedDetail || detailError);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    resetPaging();
+    setAppliedQuery(buildApprovalQuery(draftFilters));
+  }
+
+  function handleReset(): void {
+    setDraftFilters(EMPTY_FILTERS);
+    resetPaging();
+    setAppliedQuery({});
+  }
 
   function handleCloseDetail(): void {
     setSelectedDetail(null);
@@ -87,55 +141,105 @@ export function ApprovalsPage() {
         )}
       />
 
-      <section className="summary-card-grid">
-        <article className="summary-card">
-          <p className="summary-card__label">待处理申请数</p>
-          <strong className="summary-card__value">{pendingCount}</strong>
+      <section className="metric-grid metric-grid--three">
+        <article className="metric-card">
+          <p className="metric-card__label">待处理申请数</p>
+          <strong className="metric-card__value">{pendingCount}</strong>
         </article>
-        <article className="summary-card">
-          <p className="summary-card__label">今日已核准</p>
-          <strong className="summary-card__value">{approvedCount}</strong>
+        <article className="metric-card">
+          <p className="metric-card__label">今日已核准</p>
+          <strong className="metric-card__value">{approvedCount}</strong>
         </article>
-        <article className="summary-card">
-          <p className="summary-card__label">风险拦截数</p>
-          <strong className="summary-card__value">{blockedCount}</strong>
+        <article className="metric-card">
+          <p className="metric-card__label">风险拦截数</p>
+          <strong className="metric-card__value">{blockedCount}</strong>
         </article>
+      </section>
+
+      <section className="filter-panel">
+        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索审批 ID、请求摘要、模块"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>处理状态</span>
+            <Select
+              allowClear
+              aria-label="处理状态"
+              options={RESOLUTION_OPTIONS}
+              placeholder="全部状态"
+              value={draftFilters.resolution || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, resolution: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>风险等级</span>
+            <Select
+              allowClear
+              aria-label="风险等级"
+              options={RISK_OPTIONS}
+              placeholder="全部级别"
+              value={draftFilters.riskLevel || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, riskLevel: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>申请人</span>
+            <Input
+              allowClear
+              aria-label="申请人"
+              placeholder="输入申请人 OU ID"
+              value={draftFilters.requesterOuId}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, requesterOuId: event.target.value }))}
+            />
+          </label>
+          <div className="audit-filter-form__actions">
+            <Button htmlType="submit" type="primary">应用筛选</Button>
+            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
+          </div>
+        </form>
       </section>
 
       <section className="table-panel">
         <div className="table-panel__header">
-          <h2 className="panel__title">活跃审核流</h2>
-          <div className="page-header__actions">
-            <button className="btn btn--dark" type="button">待审核</button>
-            <button className="btn" type="button">历史记录</button>
-            <button className="btn" type="button">搜索 ID 或申请人...</button>
+          <div>
+            <h2 className="panel__title">活跃审核流</h2>
+            <p className="panel__subtitle">列表只展示审核判断所需的关键字段，授权范围与撤销原因收纳在详情里。</p>
           </div>
         </div>
         <DataTable
           columns={[
-            { key: "approvalId", label: "审批 ID", maxWidth: 220, minWidth: 170, width: 190 },
-            { key: "qaRecord", label: "问答记录", maxWidth: 220, minWidth: 150, width: 180 },
+            { key: "approval", label: "审批", maxWidth: 280, minWidth: 210, width: 240 },
             { key: "requester", label: "申请人", maxWidth: 220, minWidth: 160, width: 180 },
-            { key: "risk", label: "风险权重", maxWidth: 150, minWidth: 112, width: 128 },
-            { key: "scope", label: "范围类型", maxWidth: 190, minWidth: 140, width: 160 },
-            { key: "grantScope", label: "Grant 范围", maxWidth: 260, minWidth: 190, width: 230 },
-            { key: "revokedReason", label: "撤销原因", maxWidth: 220, minWidth: 160, width: 190 },
-            { key: "summary", label: "请求摘要", maxWidth: 360, minWidth: 260, width: 320 },
+            { key: "risk", label: "风险", maxWidth: 150, minWidth: 112, width: 128 },
             { key: "status", label: "状态", maxWidth: 150, minWidth: 112, width: 128 },
+            { key: "summary", label: "请求摘要", maxWidth: 420, minWidth: 260, width: 340 },
+            { key: "requested", label: "申请时间", maxWidth: 190, minWidth: 150, width: 170 },
             { key: "action", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
           ]}
+          error={error}
           loading={loading}
+          onRetry={retry}
           rows={items.map((approval) => ({
             id: approval.approvalId,
-            approvalId: approval.approvalId,
-            qaRecord: formatQaRecordId(approval.qaRecordId),
+            approval: (
+              <div className="row-stack">
+                <strong>{approval.approvalId}</strong>
+                <span>{formatQaRecordId(approval.qaRecordId)}</span>
+              </div>
+            ),
             requester: approval.requesterOuId ?? "未知申请人",
             risk: renderRiskBadge(approval.riskLevel),
-            scope: approval.scopeType,
-            grantScope: formatApprovalScope(approval),
-            revokedReason: formatRevokedReason(approval),
-            summary: approval.promptExcerpt ?? "暂无审批摘要",
             status: renderStateBadge(approval.resolution ?? "pending"),
+            summary: approval.promptExcerpt ?? "暂无审批摘要",
+            requested: formatTimestamp(approval.requestedAtMs),
             action: (
               <button
                 aria-label={`查看 ${approval.approvalId} 审批详情`}
@@ -193,6 +297,8 @@ export function ApprovalsPage() {
             { label: "模块", value: selectedDetail?.module ?? "暂无" },
             { label: "工具", value: selectedDetail?.toolName ?? "暂无" },
             { label: "范围类型", value: selectedDetail?.scopeType ?? "暂无" },
+            { label: "授权范围", value: selectedDetail ? formatApprovalScope(selectedDetail) : "暂无" },
+            { label: "撤销原因", value: selectedDetail ? formatRevokedReason(selectedDetail) : "暂无" },
             { label: "渠道", value: selectedDetail?.channelProfile ?? selectedDetail?.transport ?? "暂无" },
             { label: "会话", value: selectedDetail?.sessionKey ?? "暂无" },
             { label: "Run ID", value: selectedDetail?.runId ?? "暂无" },

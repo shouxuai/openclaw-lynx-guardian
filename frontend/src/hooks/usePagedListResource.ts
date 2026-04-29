@@ -24,6 +24,7 @@ interface UsePagedListResourceResult<Item> {
   items: Item[];
   loading: boolean;
   paginationProps: TablePaginationProps;
+  retry: () => void;
   resetPaging: () => void;
   total: number;
   totalPages: number;
@@ -72,6 +73,7 @@ export function usePagedListResource<Item, Query extends PagedListQuery>({
   const [error, setError] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(initialPageSize);
+  const [retryKey, setRetryKey] = useState(0);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const queryKey = JSON.stringify(query);
@@ -101,6 +103,10 @@ export function usePagedListResource<Item, Query extends PagedListQuery>({
     resetPaging();
   }
 
+  function retry(): void {
+    setRetryKey((current) => current + 1);
+  }
+
   useEffect(() => {
     let active = true;
     const requestQuery = {
@@ -111,6 +117,7 @@ export function usePagedListResource<Item, Query extends PagedListQuery>({
 
     async function loadItems() {
       startTransition(() => {
+        setError(null);
         setLoading(true);
       });
 
@@ -147,9 +154,11 @@ export function usePagedListResource<Item, Query extends PagedListQuery>({
           : 0;
         const message = loadError instanceof Error ? loadError.message : "请求失败";
         startTransition(() => {
-          setItems(fallback?.items ?? []);
-          setTotal(fallbackTotal);
-          setTotalPages(fallbackTotalPages);
+          setItems((current) => fallback?.items ?? current);
+          if (fallback) {
+            setTotal(fallbackTotal);
+            setTotalPages(fallbackTotalPages);
+          }
           setError(fallback ? null : message);
           setLoading(false);
         });
@@ -161,7 +170,7 @@ export function usePagedListResource<Item, Query extends PagedListQuery>({
     return () => {
       active = false;
     };
-  }, [pageIndex, pageSize, queryKey, refreshKey]);
+  }, [pageIndex, pageSize, queryKey, refreshKey, retryKey]);
 
   const paginationProps = useMemo<TablePaginationProps>(() => ({
     hasNextPage: totalPages === 0 ? false : pageIndex + 1 < totalPages,
@@ -184,6 +193,7 @@ export function usePagedListResource<Item, Query extends PagedListQuery>({
     items,
     loading,
     paginationProps,
+    retry,
     resetPaging,
     total,
     totalPages,

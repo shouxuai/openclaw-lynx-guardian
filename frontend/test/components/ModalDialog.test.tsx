@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ModalDialog } from "../../src/components/feedback/ModalDialog";
 
@@ -28,5 +28,19 @@ describe("ModalDialog", () => {
     );
 
     expect(document.body.style.overflow).toBe("auto");
+  });
+
+  it("does not close when the backdrop is clicked unless explicitly enabled", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <ModalDialog open title="事件详情" onClose={onClose}>
+        <p>弹框内容</p>
+      </ModalDialog>,
+    );
+
+    fireEvent.mouseDown(container.querySelector(".modal-backdrop")!);
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "事件详情" })).toBeInTheDocument();
   });
 });

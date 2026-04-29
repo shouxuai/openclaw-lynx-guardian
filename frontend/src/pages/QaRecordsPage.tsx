@@ -1,12 +1,12 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useState, type FormEvent } from "react";
 import type {
   QaChainNodeDto,
   QaRecordDetailDto,
   QaRecordListItemDto,
 } from "@lynx/local-console-shared";
+import { Button, Empty, Input, Select, Spin } from "antd";
 
 import { getQaRecordDetail, listQaRecords, type QaRecordListQuery } from "../api/qa-records";
-import { DetailPanel } from "../components/detail/DetailPanel";
 import { StatusBadge } from "../components/feedback/StatusBadge";
 import { PageHeader } from "../components/layout/PageHeader";
 import { TablePagination } from "../components/tables/TablePagination";
@@ -26,6 +26,40 @@ const NODE_TYPE_LABELS: Record<QaChainNodeDto["type"], string> = {
   finalAnswer: "答复",
 };
 
+interface QaRecordFilters {
+  q: string;
+  riskLevel: string;
+  status: string;
+}
+
+const EMPTY_FILTERS: QaRecordFilters = {
+  q: "",
+  riskLevel: "",
+  status: "",
+};
+
+const STATUS_OPTIONS = [
+  { label: "已完成", value: "completed" },
+  { label: "运行中", value: "running" },
+  { label: "失败", value: "failed" },
+];
+
+const RISK_OPTIONS = [
+  { label: "L0 基础", value: "L0" },
+  { label: "L1 关注", value: "L1" },
+  { label: "L2 中危", value: "L2" },
+  { label: "L3 高危", value: "L3" },
+  { label: "L4 严重", value: "L4" },
+];
+
+function buildQaRecordQuery(filters: QaRecordFilters): Omit<QaRecordListQuery, "pageNum" | "pageSize"> {
+  return {
+    q: filters.q.trim() || undefined,
+    riskLevel: filters.riskLevel ? [filters.riskLevel as NonNullable<QaRecordListQuery["riskLevel"]>[number]] : undefined,
+    status: filters.status || undefined,
+  };
+}
+
 function valueAsText(value: unknown): string | undefined {
   if (value === null || value === undefined) {
     return undefined;
@@ -41,6 +75,10 @@ function valueAsText(value: unknown): string | undefined {
 
 function getNodeDetailText(node: QaChainNodeDto | null, key: string): string | undefined {
   return valueAsText(node?.detailJson?.[key]);
+}
+
+function renderCodeBlock(value: string | undefined, fallback = "暂无") {
+  return <pre className="code-panel">{value && value.trim().length > 0 ? value : fallback}</pre>;
 }
 
 function summarizeRecord(record: QaRecordListItemDto): string {
@@ -80,8 +118,8 @@ function buildNodeFields(node: QaChainNodeDto | null) {
       { label: "状态", value: node.status ?? "暂无" },
       { label: "退出码", value: getNodeDetailText(node, "exitCode") ?? "暂无" },
       { label: "耗时", value: getNodeDetailText(node, "durationMs") ?? formatDuration(node.completedAtMs ? node.completedAtMs - node.occurredAtMs : undefined) },
-      { label: "标准输出", value: getNodeDetailText(node, "stdout") ?? getNodeDetailText(node, "result") ?? "暂无" },
-      { label: "标准错误", value: getNodeDetailText(node, "stderr") ?? "暂无" },
+      { label: "标准输出", value: renderCodeBlock(getNodeDetailText(node, "stdout") ?? getNodeDetailText(node, "result")) },
+      { label: "标准错误", value: renderCodeBlock(getNodeDetailText(node, "stderr")) },
     ];
   }
 
@@ -95,12 +133,14 @@ function buildNodeFields(node: QaChainNodeDto | null) {
 }
 
 export function QaRecordsPage() {
-  const { items, loading, error, paginationProps } = usePagedListResource<
+  const [draftFilters, setDraftFilters] = useState<QaRecordFilters>(EMPTY_FILTERS);
+  const [appliedQuery, setAppliedQuery] = useState<Omit<QaRecordListQuery, "pageNum" | "pageSize">>({});
+  const { items, loading, error, paginationProps, resetPaging, retry } = usePagedListResource<
     QaRecordListItemDto,
     QaRecordListQuery
   >({
     loadPage: listQaRecords,
-    query: {},
+    query: appliedQuery,
   });
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [detail, setDetail] = useState<QaRecordDetailDto | null>(null);
@@ -173,6 +213,18 @@ export function QaRecordsPage() {
   const headerTone = error || detailError ? "danger" : loading ? "info" : "success";
   const headerLabel = error || detailError ? "请求失败" : loading ? "加载中" : "实时数据";
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    resetPaging();
+    setAppliedQuery(buildQaRecordQuery(draftFilters));
+  }
+
+  function handleReset(): void {
+    setDraftFilters(EMPTY_FILTERS);
+    resetPaging();
+    setAppliedQuery({});
+  }
+
   function handleSelectRecord(recordId: string): void {
     setSelectedRecordId(recordId);
     setChainExpanded(false);
@@ -211,6 +263,47 @@ export function QaRecordsPage() {
         </article>
       </section>
 
+      <section className="filter-panel">
+        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索问题、回答、会话或记录 ID"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>状态</span>
+            <Select
+              allowClear
+              aria-label="状态"
+              options={STATUS_OPTIONS}
+              placeholder="全部状态"
+              value={draftFilters.status || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, status: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>风险等级</span>
+            <Select
+              allowClear
+              aria-label="风险等级"
+              options={RISK_OPTIONS}
+              placeholder="全部级别"
+              value={draftFilters.riskLevel || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, riskLevel: value ?? "" }))}
+            />
+          </label>
+          <div className="audit-filter-form__actions">
+            <Button htmlType="submit" type="primary">应用筛选</Button>
+            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
+          </div>
+        </form>
+      </section>
+
       <section className="split-grid">
         <article className="panel">
           <div className="panel__header">
@@ -219,7 +312,22 @@ export function QaRecordsPage() {
               <p className="panel__subtitle">选择一条记录查看完整工具链。</p>
             </div>
           </div>
-          <div className="list-stack">
+          <div className="list-stack list-stack--stable">
+            {loading && items.length === 0 ? (
+              <div className="list-state" role="status">
+                <Spin size="small" />
+                <span>正在加载问答记录</span>
+              </div>
+            ) : null}
+            {error && items.length === 0 ? (
+              <div className="list-state list-state--error">
+                <strong>列表加载失败</strong>
+                <span>{error}</span>
+                <button className="btn btn--compact" type="button" onClick={retry}>
+                  重试
+                </button>
+              </div>
+            ) : null}
             {items.map((record) => (
               <button
                 className="list-item"
@@ -234,7 +342,13 @@ export function QaRecordsPage() {
                 </span>
               </button>
             ))}
-            {items.length === 0 ? <p className="small-note">暂无问答记录。</p> : null}
+            {!loading && !error && items.length === 0 ? (
+              <Empty
+                className="list-state list-state--empty"
+                description="暂无问答记录"
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              />
+            ) : null}
           </div>
           <TablePagination {...paginationProps} />
         </article>
@@ -249,20 +363,24 @@ export function QaRecordsPage() {
             </div>
           </div>
 
-          <dl className="detail-panel__grid">
-            {[
-              { label: "用户问题", value: detail?.userPromptExcerpt ?? selectedRecord?.userPromptExcerpt ?? "暂无" },
-              { label: "答复摘要", value: detail?.finalAnswerExcerpt ?? selectedRecord?.finalAnswerExcerpt ?? "暂无" },
-              { label: "状态", value: renderStateBadge(detail?.status ?? selectedRecord?.status) },
-              { label: "风险", value: renderRiskBadge(detail?.riskLevel ?? selectedRecord?.riskLevel) },
-              { label: "Token", value: formatInteger(detail?.totalTokens ?? selectedRecord?.totalTokens ?? 0) },
-            ].map((field) => (
-              <div key={field.label} className="detail-panel__field">
-                <dt>{field.label}</dt>
-                <dd>{field.value}</dd>
+          <div className="qa-record-summary">
+            <article>
+              <span>用户问题</span>
+              <strong>{detail?.userPromptExcerpt ?? selectedRecord?.userPromptExcerpt ?? "暂无"}</strong>
+            </article>
+            <article>
+              <span>最终答复</span>
+              <strong>{detail?.finalAnswerExcerpt ?? selectedRecord?.finalAnswerExcerpt ?? "暂无"}</strong>
+            </article>
+            <article>
+              <span>状态 / 风险 / Token</span>
+              <div className="qa-record-summary__badges">
+                {renderStateBadge(detail?.status ?? selectedRecord?.status)}
+                {renderRiskBadge(detail?.riskLevel ?? selectedRecord?.riskLevel)}
+                <span className="status-badge status-badge--info">{formatInteger(detail?.totalTokens ?? selectedRecord?.totalTokens ?? 0)} Token</span>
               </div>
-            ))}
-          </dl>
+            </article>
+          </div>
 
           <button
             className="btn"
@@ -274,18 +392,19 @@ export function QaRecordsPage() {
           </button>
 
           {chainExpanded ? (
-            <div className="list-stack">
+            <div className="qa-detail-flow" data-testid="qa-detail-flow">
               {detail?.chainNodes.map((node) => (
                 <button
-                  className="list-item"
+                  className="qa-flow-node"
                   key={node.nodeId}
                   type="button"
                   aria-label={`${node.title} ${node.summary ?? ""}`}
                   onClick={() => setSelectedNodeId(node.nodeId)}
                 >
+                  <span className="qa-flow-node__type">{NODE_TYPE_LABELS[node.type]}</span>
                   <strong>{node.title}</strong>
-                  <span>{NODE_TYPE_LABELS[node.type]}</span>
-                  <span className="small-note">{formatTimestamp(node.occurredAtMs)}</span>
+                  <span>{node.type === "terminal" ? (node.status ?? "命令执行记录") : (node.summary ?? "暂无摘要")}</span>
+                  <small>{formatTimestamp(node.occurredAtMs)}</small>
                 </button>
               ))}
             </div>
@@ -293,11 +412,24 @@ export function QaRecordsPage() {
         </article>
       </section>
 
-      <DetailPanel
-        title={selectedNode?.title ?? "工具链节点详情"}
-        subtitle={selectedNode ? `${NODE_TYPE_LABELS[selectedNode.type]} · ${formatTimestamp(selectedNode.occurredAtMs)}` : "点击工具链节点查看具体执行内容。"}
-        fields={buildNodeFields(selectedNode)}
-      />
+      {selectedNode ? (
+        <section className="panel detail-panel" data-testid="qa-node-detail">
+          <div className="panel__header">
+            <div>
+              <h2 className="panel__title">{selectedNode.title}</h2>
+              <p className="panel__subtitle">{`${NODE_TYPE_LABELS[selectedNode.type]} · ${formatTimestamp(selectedNode.occurredAtMs)}`}</p>
+            </div>
+          </div>
+          <dl className="detail-panel__grid">
+            {buildNodeFields(selectedNode).map((field) => (
+              <div key={field.label} className="detail-panel__field">
+                <dt>{field.label}</dt>
+                <dd>{field.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
     </div>
   );
 }

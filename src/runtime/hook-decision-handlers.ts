@@ -75,6 +75,7 @@ export async function handleBeforeToolCallDecision(
     stage: "tool_call",
     hook: "before_tool_call",
     sessionKey: ctx.sessionKey,
+    runId: optionalString(event.runId) ?? optionalString(ctx.runId),
     content: JSON.stringify(event.params ?? {}),
     toolName: event.toolName,
     toolArgs: event.params,
@@ -137,6 +138,7 @@ function skillInstallDecisionContext(event: ToolCallEvent, ctx: EventContext): D
     stage: "install",
     hook: "before_install",
     sessionKey: ctx.sessionKey,
+    runId: optionalString(ctx.runId),
     channelId: ctx.channelId,
     requesterId: ctx.userId ?? ctx.senderId,
     content: JSON.stringify(params),
@@ -173,6 +175,7 @@ export function handleLlmOutputDecision(
     stage: "assistant_output",
     hook: "llm_output",
     sessionKey: ctx.sessionKey,
+    runId: optionalString(event.runId) ?? optionalString(ctx.runId),
     content: event.assistantTexts?.join("\n") ?? "",
   }));
 }
@@ -187,6 +190,7 @@ export async function handleMessageSendingDecision(
     stage: "outbound_message",
     hook: "message_sending",
     sessionKey: ctx.sessionKey,
+    runId: optionalString(ctx.runId),
     content: event.content,
     targetUri: event.to,
   }), timeoutMs);
@@ -216,6 +220,7 @@ export async function handleBeforeInstallEventDecision(
     stage: "install",
     hook: "before_install",
     sessionKey: ctx.sessionKey,
+    runId: optionalString(ctx.runId),
     channelId: ctx.channelId,
     requesterId: ctx.userId ?? ctx.senderId,
     content: JSON.stringify(event ?? {}),
@@ -244,10 +249,15 @@ function inputContext(hook: string, content: string, ctx: EventContext): Decisio
     stage: "input",
     hook,
     sessionKey: ctx.sessionKey,
+    runId: optionalString(ctx.runId),
     channelId: ctx.channelId,
     requesterId: ctx.userId ?? ctx.senderId,
     content,
   });
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function extractContent(content: MessageReceivedEvent["content"]): string {

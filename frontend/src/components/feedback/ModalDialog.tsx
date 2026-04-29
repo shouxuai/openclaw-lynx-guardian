@@ -2,6 +2,7 @@ import { useEffect, useId, type ReactNode } from "react";
 
 export interface ModalDialogProps {
   children: ReactNode;
+  closeOnBackdropClick?: boolean;
   closeLabel?: string;
   open: boolean;
   subtitle?: ReactNode;
@@ -11,6 +12,7 @@ export interface ModalDialogProps {
 
 export function ModalDialog({
   children,
+  closeOnBackdropClick = false,
   closeLabel = "关闭",
   open,
   subtitle,
@@ -50,7 +52,7 @@ export function ModalDialog({
       className="modal-backdrop"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
+        if (closeOnBackdropClick && event.target === event.currentTarget) {
           onClose();
         }
       }}
@@ -73,7 +75,7 @@ export function ModalDialog({
             type="button"
             onClick={onClose}
           >
-            关闭
+            <span aria-hidden="true">×</span>
           </button>
         </div>
         <div className="modal-dialog__body">{children}</div>

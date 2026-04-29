@@ -101,4 +101,38 @@ describe("ToolCallsPage", () => {
     expect(screen.getByText("M2:protected_file_access")).toBeInTheDocument();
     expect(screen.getByText(/"decisionId": "decision-001"/)).toBeInTheDocument();
   });
+
+  it("uses real filters and keeps control-plane metadata out of the table columns", async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(createPage([createToolCall()], 1, 20, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([
+        {
+          ...createToolCall(),
+          toolCallId: "TOOL-FILTERED",
+          toolName: "read_file",
+          resultStatus: "success",
+        },
+      ])));
+
+    render(<ToolCallsPage />);
+
+    await screen.findByText("TOOL-001");
+    expect(screen.getByLabelText("关键词")).toBeInTheDocument();
+    expect(screen.getByLabelText("工具名称")).toBeInTheDocument();
+    expect(screen.getByLabelText("状态")).toBeInTheDocument();
+    expect(screen.queryByText("决策 / Grant")).not.toBeInTheDocument();
+    expect(screen.queryByText("Taint / 外传")).not.toBeInTheDocument();
+    expect(screen.queryByText("参数摘要")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("关键词"), {
+      target: { value: "blocked" },
+    });
+    fireEvent.change(screen.getByLabelText("工具名称"), {
+      target: { value: "read_file" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
+
+    expect(await screen.findByText("TOOL-FILTERED")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/tool-calls?q=blocked&toolName=read_file&pageNum=1&pageSize=20");
+  });
 });

@@ -24,6 +24,7 @@ interface UseCursorListResourceResult<Item> {
   items: Item[];
   loading: boolean;
   paginationProps: TablePaginationProps;
+  retry: () => void;
   resetPaging: () => void;
 }
 
@@ -57,6 +58,7 @@ export function useCursorListResource<Item, Query extends CursorListQuery>({
   const [pageCursors, setPageCursors] = useState<Array<string | undefined>>([undefined]);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(initialPageSize);
+  const [retryKey, setRetryKey] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
 
   const currentCursor = pageCursors[pageIndex];
@@ -109,6 +111,10 @@ export function useCursorListResource<Item, Query extends CursorListQuery>({
     resetPaging();
   }
 
+  function retry(): void {
+    setRetryKey((current) => current + 1);
+  }
+
   useEffect(() => {
     let active = true;
     const requestQuery = {
@@ -119,6 +125,7 @@ export function useCursorListResource<Item, Query extends CursorListQuery>({
 
     async function loadItems() {
       startTransition(() => {
+        setError(null);
         setLoading(true);
       });
 
@@ -142,8 +149,10 @@ export function useCursorListResource<Item, Query extends CursorListQuery>({
         const fallback = fallbackPage?.(requestQuery, pageIndex, pageSize);
         const message = loadError instanceof Error ? loadError.message : "请求失败";
         startTransition(() => {
-          setItems(fallback?.items ?? []);
-          setNextCursor(fallback?.nextCursor);
+          setItems((current) => fallback?.items ?? current);
+          if (fallback) {
+            setNextCursor(fallback.nextCursor);
+          }
           setError(fallback ? null : message);
           setLoading(false);
         });
@@ -155,7 +164,7 @@ export function useCursorListResource<Item, Query extends CursorListQuery>({
     return () => {
       active = false;
     };
-  }, [currentCursor, pageIndex, pageSize, queryKey, refreshKey]);
+  }, [currentCursor, pageIndex, pageSize, queryKey, refreshKey, retryKey]);
 
   const paginationProps = useMemo<TablePaginationProps>(() => ({
     hasNextPage: Boolean(nextCursor),
@@ -176,6 +185,7 @@ export function useCursorListResource<Item, Query extends CursorListQuery>({
     items,
     loading,
     paginationProps,
+    retry,
     resetPaging,
   };
 }

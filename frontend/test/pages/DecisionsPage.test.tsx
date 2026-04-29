@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DecisionsPage } from "../../src/pages/DecisionsPage";
@@ -54,19 +54,26 @@ function createDecision(overrides: Record<string, unknown>) {
 }
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
 });
 
 describe("DecisionsPage tone mapping", () => {
   it("renders block false approval and degraded decisions as warning instead of safe", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      items: [
       createDecision({ decisionId: "decision-approval-1", requiresApproval: true }),
       createDecision({
         decisionId: "decision-degraded-1",
         requiresApproval: false,
         degraded: { reason: "backend fallback" },
       }),
-    ]), { status: 200 })));
+      ],
+      total: 2,
+      pageNum: 1,
+      pageSize: 20,
+      totalPages: 1,
+    }), { status: 200 })));
 
     render(<DecisionsPage />);
 
@@ -80,19 +87,68 @@ describe("DecisionsPage tone mapping", () => {
   });
 
   it("shows control-plane audit action, approval, matched rules, and score evidence", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      items: [
       createDecision({ decisionId: "decision-evidence-1" }),
-    ]), { status: 200 })));
+      ],
+      total: 1,
+      pageNum: 1,
+      pageSize: 20,
+      totalPages: 1,
+    }), { status: 200 })));
 
     render(<DecisionsPage />);
 
     const row = (await screen.findByText("decision-evidence-1")).closest("tr");
 
     expect(row).not.toBeNull();
-    expect(within(row!).getAllByText("审批")).toHaveLength(2);
-    expect(within(row!).getAllByText("需要审批")).toHaveLength(2);
-    expect(within(row!).getByText("approval.bypass_phrase")).toBeInTheDocument();
-    expect(within(row!).getByText("approval.bypass_phrase +30")).toBeInTheDocument();
-    expect(within(row!).getByText("evidence_score")).toBeInTheDocument();
+    expect(within(row!).getByText("审批")).toBeInTheDocument();
+    expect(within(row!).getByText("需要审批")).toBeInTheDocument();
+    fireEvent.click(within(row!).getByRole("button", { name: "查看 decision-evidence-1 裁决详情" }));
+
+    expect(screen.getByRole("dialog", { name: "裁决详情" })).toBeInTheDocument();
+    expect(screen.getByText("approval.bypass_phrase")).toBeInTheDocument();
+    expect(screen.getByText("approval.bypass_phrase +30")).toBeInTheDocument();
+    expect(screen.getByText("evidence_score")).toBeInTheDocument();
+  });
+
+  it("uses pagination and filter controls instead of exposing every internal decision field in the table", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [createDecision({ decisionId: "decision-page-1" })],
+        total: 41,
+        pageNum: 1,
+        pageSize: 20,
+        totalPages: 3,
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [createDecision({ decisionId: "decision-filtered" })],
+        total: 1,
+        pageNum: 1,
+        pageSize: 20,
+        totalPages: 1,
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DecisionsPage />);
+
+    await screen.findByText("decision-page-1");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/decisions?pageNum=1&pageSize=20");
+    expect(screen.getByTitle("3")).toBeInTheDocument();
+    expect(screen.getByLabelText("关键词")).toBeInTheDocument();
+    expect(screen.queryByText("Matched Rules")).not.toBeInTheDocument();
+    expect(screen.queryByText("Score Breakdown")).not.toBeInTheDocument();
+    expect(screen.queryByText("block:false")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("关键词"), {
+      target: { value: "approval" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
+
+    await screen.findByText("decision-filtered");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/decisions?q=approval&pageNum=1&pageSize=20");
   });
 });

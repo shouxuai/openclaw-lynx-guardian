@@ -11,6 +11,7 @@ import type {
   AuditEventItem,
   IngestItemV1,
   LynxCheckUpsertItem,
+  QaRecordUpsertItem,
   SessionUpsertItem,
   ToolCallUpsertItem,
 } from "../../shared/src/ingest.js";
@@ -24,8 +25,10 @@ const RESULT_STATUS_MAX_CHARS = 64;
 
 interface BaseHookInput {
   occurredAtMs?: number;
+  qaRecordId?: string;
   sessionKey?: string;
   runId?: string;
+  agentId?: string;
   approvalId?: string;
   requestId?: string;
   summary?: string;
@@ -72,6 +75,7 @@ export interface MessageReceivedInput extends BaseHookInput {
 
 export interface LynxCheckSnapshotInput {
   requestId: string;
+  qaRecordId?: string;
   source: "manual" | "scheduled";
   trigger: "lynx_command" | "scheduled_lynx_check";
   preferredTargetKind: "current" | "recent";
@@ -264,6 +268,22 @@ function buildStableId(prefix: string, parts: Array<string | number | undefined>
   return `${prefix}:${digest}`;
 }
 
+export function resolveLocalConsoleQaRecordId(input: {
+  qaRecordId?: string;
+  runId?: string;
+  sessionKey?: string;
+}): string | undefined {
+  const explicit = input.qaRecordId?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const runId = input.runId?.trim();
+  if (!runId) {
+    return undefined;
+  }
+  return buildStableId("qa", [input.sessionKey, runId]);
+}
+
 function cleanRecord<T extends JsonRecord>(value: T): T | undefined {
   const nextEntries = Object.entries(value).filter(([, entryValue]) => entryValue !== undefined);
   if (nextEntries.length === 0) {
@@ -278,6 +298,7 @@ function resolveEnforcementAction(value: EnforcementAction | undefined, fallback
 
 function createAuditItem(input: AuditSeed): AuditEventItem {
   const occurredAtMs = normalizeOccurredAtMs(input.occurredAtMs);
+  const qaRecordId = resolveLocalConsoleQaRecordId(input);
   const payloadJson = cleanRecord({
     ...(input.payloadJson ?? {}),
   });
@@ -301,6 +322,7 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
     occurredAtMs,
     data: {
       eventId,
+      qaRecordId,
       sessionKey: input.sessionKey,
       runId: input.runId,
       toolCallId: input.toolCallId,
@@ -325,6 +347,65 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
       contentExcerpt,
       contentHash: hashValue(contentExcerpt),
       payloadJson,
+    },
+  };
+}
+
+interface QARecordSeed extends BaseHookInput {
+  userPrompt?: unknown;
+  finalAnswer?: unknown;
+  status: "running" | "completed" | "blocked" | "failed";
+  startedAtMs?: number;
+  completedAtMs?: number;
+  toolCallCount?: number;
+  approvalCount?: number;
+  detectionCount?: number;
+  totalTokens?: number;
+}
+
+function createQARecordUpsert(input: QARecordSeed): QaRecordUpsertItem | null {
+  const qaRecordId = resolveLocalConsoleQaRecordId(input);
+  if (!qaRecordId) {
+    return null;
+  }
+
+  const occurredAtMs = normalizeOccurredAtMs(input.occurredAtMs);
+  const userPromptExcerpt = redactAuditExcerpt(input.userPrompt, STORED_EXCERPT_MAX_CHARS);
+  const finalAnswerExcerpt = redactAuditExcerpt(input.finalAnswer, STORED_EXCERPT_MAX_CHARS);
+  const itemId = buildStableId("qa-item", [
+    qaRecordId,
+    input.status,
+    userPromptExcerpt ? "prompt" : undefined,
+    finalAnswerExcerpt ? "answer" : undefined,
+    occurredAtMs,
+  ]);
+
+  return {
+    kind: "qaRecordUpsert",
+    itemId,
+    occurredAtMs,
+    data: {
+      qaRecordId,
+      sessionKey: input.sessionKey,
+      runId: input.runId,
+      agentId: input.agentId,
+      userPromptExcerpt,
+      userPromptHash: hashValue(input.userPrompt),
+      finalAnswerExcerpt,
+      finalAnswerHash: hashValue(input.finalAnswer),
+      status: input.status,
+      riskLevel: input.riskLevel,
+      riskScore: input.riskScore,
+      toolCallCount: input.toolCallCount,
+      approvalCount: input.approvalCount,
+      detectionCount: input.detectionCount,
+      totalTokens: input.totalTokens,
+      startedAtMs: input.startedAtMs ?? occurredAtMs,
+      completedAtMs: input.completedAtMs,
+      linkOrigin: "runtime",
+      payloadJson: cleanRecord({
+        ...(input.payloadJson ?? {}),
+      }),
     },
   };
 }
@@ -373,6 +454,7 @@ function createDerivedSessionUpsert(input: BaseHookInput): SessionUpsertItem | n
 
 function createToolCallUpsert(input: BeforeToolCallInput | AfterToolCallInput, phase: "before" | "after"): ToolCallUpsertItem {
   const occurredAtMs = normalizeOccurredAtMs(input.occurredAtMs);
+  const qaRecordId = resolveLocalConsoleQaRecordId(input);
   const toolCallId = input.toolCallId
     ?? buildStableId("tool-call", [
       input.runId,
@@ -387,6 +469,7 @@ function createToolCallUpsert(input: BeforeToolCallInput | AfterToolCallInput, p
     occurredAtMs,
     data: {
       toolCallId,
+      qaRecordId,
       sessionKey: input.sessionKey,
       runId: input.runId,
       approvalId: input.approvalId,
@@ -413,6 +496,11 @@ function createToolCallUpsert(input: BeforeToolCallInput | AfterToolCallInput, p
 
 function createApprovalUpsert(input: ApprovalSnapshotInput, fallback: BaseHookInput): ApprovalUpsertItem {
   const occurredAtMs = normalizeOccurredAtMs(fallback.occurredAtMs ?? input.requestedAtMs);
+  const qaRecordId = resolveLocalConsoleQaRecordId({
+    qaRecordId: fallback.qaRecordId,
+    runId: input.runId ?? fallback.runId,
+    sessionKey: input.sessionKey ?? fallback.sessionKey,
+  });
   const itemId = buildStableId("approval", [input.approvalId, occurredAtMs]);
 
   return {
@@ -421,6 +509,7 @@ function createApprovalUpsert(input: ApprovalSnapshotInput, fallback: BaseHookIn
     occurredAtMs,
     data: {
       approvalId: input.approvalId,
+      qaRecordId,
       pendingId: input.pendingId,
       sessionKey: input.sessionKey ?? fallback.sessionKey,
       runId: input.runId ?? fallback.runId,
@@ -452,8 +541,9 @@ function createApprovalUpsert(input: ApprovalSnapshotInput, fallback: BaseHookIn
   };
 }
 
-function createLynxCheckUpsert(input: LynxCheckSnapshotInput): LynxCheckUpsertItem {
+function createLynxCheckUpsert(input: LynxCheckSnapshotInput, fallback?: BaseHookInput): LynxCheckUpsertItem {
   const occurredAtMs = normalizeOccurredAtMs(input.completedAtMs ?? input.createdAtMs);
+  const qaRecordId = input.qaRecordId ?? (fallback ? resolveLocalConsoleQaRecordId(fallback) : undefined);
   const itemId = buildStableId("lynx-check", [input.requestId, input.status, occurredAtMs]);
 
   return {
@@ -462,6 +552,7 @@ function createLynxCheckUpsert(input: LynxCheckSnapshotInput): LynxCheckUpsertIt
     occurredAtMs,
     data: {
       requestId: input.requestId,
+      qaRecordId,
       source: input.source,
       trigger: input.trigger,
       preferredTargetKind: input.preferredTargetKind,
@@ -602,6 +693,14 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
       if (sessionItem) {
         items.push(sessionItem);
       }
+      const qaRecordItem = createQARecordUpsert({
+        ...input,
+        userPrompt: input.promptText ?? input.contentExcerpt,
+        status: input.enforcementAction === "block" ? "blocked" : "running",
+      });
+      if (qaRecordItem) {
+        items.push(qaRecordItem);
+      }
       items.push(
         createAuditItem({
           ...input,
@@ -617,7 +716,7 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
         }),
       );
       if (input.lynxCheck) {
-        items.push(createLynxCheckUpsert(input.lynxCheck));
+        items.push(createLynxCheckUpsert(input.lynxCheck, input));
       }
       return items;
     },
@@ -627,6 +726,17 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
       const sessionItem = createDerivedSessionUpsert(input);
       if (sessionItem) {
         items.push(sessionItem);
+      }
+      const occurredAtMs = normalizeOccurredAtMs(input.occurredAtMs);
+      const qaRecordItem = createQARecordUpsert({
+        ...input,
+        occurredAtMs,
+        finalAnswer: input.outputText ?? input.contentExcerpt,
+        status: input.enforcementAction === "block" ? "blocked" : "completed",
+        completedAtMs: occurredAtMs,
+      });
+      if (qaRecordItem) {
+        items.push(qaRecordItem);
       }
       items.push(
         createAuditItem({
@@ -641,7 +751,7 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
         }),
       );
       if (input.lynxCheck) {
-        items.push(createLynxCheckUpsert(input.lynxCheck));
+        items.push(createLynxCheckUpsert(input.lynxCheck, input));
       }
       return items;
     },
@@ -727,7 +837,7 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
         }),
       );
       if (input.lynxCheck) {
-        items.push(createLynxCheckUpsert(input.lynxCheck));
+        items.push(createLynxCheckUpsert(input.lynxCheck, input));
       }
       return items;
     },

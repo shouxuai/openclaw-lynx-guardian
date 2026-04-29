@@ -1,15 +1,45 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import type { ToolCallDetailDto, ToolCallListItemDto } from "@lynx/local-console-shared";
+import { Button, Input, Select } from "antd";
 
 import { getToolCallDetail, listToolCalls, type ToolCallListQuery } from "../api/tool-calls";
 import { mockToolCalls } from "../data/mock-console";
 import { ModalDialog } from "../components/feedback/ModalDialog";
+import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
 import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListResource";
 import { formatDuration, formatInteger, formatTimestamp } from "../utils/format";
 import { formatQaRecordId } from "../utils/qa-records";
 import { formatToolLabel, renderStateBadge } from "../utils/status";
+
+interface ToolCallFilters {
+  q: string;
+  resultStatus: string;
+  toolName: string;
+}
+
+const EMPTY_FILTERS: ToolCallFilters = {
+  q: "",
+  resultStatus: "",
+  toolName: "",
+};
+
+const RESULT_STATUS_OPTIONS = [
+  { label: "成功", value: "success" },
+  { label: "已完成", value: "completed" },
+  { label: "失败", value: "failed" },
+  { label: "已阻断", value: "blocked" },
+  { label: "待处理", value: "pending" },
+];
+
+function buildToolCallQuery(filters: ToolCallFilters): Omit<ToolCallListQuery, "pageNum" | "pageSize"> {
+  return {
+    q: filters.q.trim() || undefined,
+    toolName: filters.toolName.trim() || undefined,
+    resultStatus: filters.resultStatus || undefined,
+  };
+}
 
 function readToolMetadata(call: ToolCallListItemDto): Record<string, unknown> {
   const value = (call as ToolCallListItemDto & { metadataJson?: Record<string, unknown> }).metadataJson;
@@ -48,15 +78,17 @@ function formatList(values: string[] | undefined): string {
 }
 
 export function ToolCallsPage() {
+  const [draftFilters, setDraftFilters] = useState<ToolCallFilters>(EMPTY_FILTERS);
+  const [appliedQuery, setAppliedQuery] = useState<Omit<ToolCallListQuery, "pageNum" | "pageSize">>({});
   const [selectedDetail, setSelectedDetail] = useState<ToolCallDetailDto | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const { items, loading, error, paginationProps } = usePagedListResource<ToolCallListItemDto, ToolCallListQuery>({
+  const { items, loading, error, paginationProps, resetPaging, retry } = usePagedListResource<ToolCallListItemDto, ToolCallListQuery>({
     fallbackPage: import.meta.env.DEV
       ? (_query, pageIndex, pageSize) => paginateMockPage(mockToolCalls, pageIndex, pageSize)
       : undefined,
     loadPage: listToolCalls,
-    query: {},
+    query: appliedQuery,
   });
 
   const successCount = items.filter((item) => ["success", "completed", "approved"].includes(item.resultStatus ?? "")).length;
@@ -75,6 +107,18 @@ export function ToolCallsPage() {
   }, [items]);
   const statusText = error ? `工具调用数据加载失败：${error}` : loading ? "正在加载调用流水" : "详细审计记录基于 tool_calls 协议层追踪";
   const isDetailDialogOpen = Boolean(selectedDetail || detailError);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    resetPaging();
+    setAppliedQuery(buildToolCallQuery(draftFilters));
+  }
+
+  function handleReset(): void {
+    setDraftFilters(EMPTY_FILTERS);
+    resetPaging();
+    setAppliedQuery({});
+  }
 
   function handleCloseDetail(): void {
     setSelectedDetail(null);
@@ -98,7 +142,11 @@ export function ToolCallsPage() {
 
   return (
     <div className="page-stack">
-      {statusText ? <p className="small-note">{statusText}</p> : null}
+      <PageHeader
+        title="工具调用"
+        description={statusText}
+        eyebrow="TOOL CALLS MONITOR"
+      />
 
       <section className="metric-grid metric-grid--compact">
         <article className="metric-card">
@@ -123,42 +171,79 @@ export function ToolCallsPage() {
         </article>
       </section>
 
-      <section className="page-header">
-        <div>
-          <h1 className="page-header__title">实时调用流水</h1>
-          <p className="page-header__description">详细审计记录基于 tool_calls 协议层追踪</p>
-        </div>
-        <div className="page-header__actions">
-          <button className="btn" type="button">搜索 ID 或工具名...</button>
-          <button className="btn" type="button">筛选状态</button>
-        </div>
+      <section className="filter-panel">
+        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索调用 ID、问答记录、结果摘要"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>工具名称</span>
+            <Input
+              allowClear
+              aria-label="工具名称"
+              placeholder="例如 exec / read_file"
+              value={draftFilters.toolName}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, toolName: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>状态</span>
+            <Select
+              allowClear
+              aria-label="状态"
+              options={RESULT_STATUS_OPTIONS}
+              placeholder="全部状态"
+              value={draftFilters.resultStatus || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, resultStatus: value ?? "" }))}
+            />
+          </label>
+          <div className="audit-filter-form__actions">
+            <Button htmlType="submit" type="primary">应用筛选</Button>
+            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
+          </div>
+        </form>
       </section>
 
       <section className="table-panel">
+        <div className="table-panel__header">
+          <div>
+            <h2 className="panel__title">实时调用流水</h2>
+            <p className="panel__subtitle">表格保留定位和结果判断字段，决策、授权和外传信号进入详情。</p>
+          </div>
+        </div>
         <DataTable
           columns={[
-            { key: "id", label: "调用 ID" },
-            { key: "qaRecord", label: "问答记录" },
+            { key: "call", label: "调用" },
             { key: "tool", label: "工具名称" },
-            { key: "time", label: "调用时间" },
             { key: "status", label: "状态" },
             { key: "duration", label: "耗时" },
-            { key: "decision", label: "决策 / Grant", maxWidth: 260, minWidth: 190, width: 230 },
-            { key: "signals", label: "Taint / 外传", maxWidth: 260, minWidth: 190, width: 230 },
-            { key: "summary", label: "参数摘要" },
+            { key: "summary", label: "结果摘要" },
+            { key: "time", label: "调用时间" },
             { key: "detail", label: "详情" },
           ]}
+          error={error}
           loading={loading}
+          onRetry={retry}
           rows={items.map((call) => ({
             id: call.toolCallId,
-            qaRecord: formatQaRecordId(call.qaRecordId),
+            call: (
+              <div className="row-stack">
+                <strong>{call.toolCallId}</strong>
+                <span>{formatQaRecordId(call.qaRecordId)}</span>
+              </div>
+            ),
             tool: <strong>{formatToolLabel(call.toolName)}</strong>,
-            time: formatTimestamp(call.startedAtMs),
             status: renderStateBadge(call.resultStatus),
             duration: formatDuration(call.durationMs),
-            decision: formatToolDecision(call),
-            signals: formatToolSignals(call),
             summary: call.resultExcerpt ?? "暂无结果摘要",
+            time: formatTimestamp(call.startedAtMs),
             detail: (
               <button
                 aria-label={`查看 ${call.toolCallId} JSON 详情`}
@@ -196,23 +281,24 @@ export function ToolCallsPage() {
         <article className="panel">
           <div className="panel__header">
             <div>
-              <h2 className="panel__title">审计系统状态</h2>
-              <p className="panel__subtitle">AUDIT ENGINE HEALTH</p>
+              <h2 className="panel__title">当前筛选概览</h2>
+              <p className="panel__subtitle">基于当前页工具调用结果计算。</p>
             </div>
           </div>
-          <h3 className="summary-card__value">Operational</h3>
-          <p className="small-note">All audit hooks connected</p>
           <div className="list-stack">
             <div className="list-item">
-              <span>最后同步时间</span>
-              <strong>{loading ? "同步中" : "刚刚"}</strong>
+              <span>成功调用</span>
+              <strong>{formatInteger(successCount)}</strong>
             </div>
             <div className="list-item">
-              <span>运行窗口</span>
-              <strong>154d 12h 45m</strong>
+              <span>异常调用</span>
+              <strong>{formatInteger(abnormalCount)}</strong>
+            </div>
+            <div className="list-item">
+              <span>最大耗时</span>
+              <strong>{formatDuration(maxDuration)}</strong>
             </div>
           </div>
-          <button className="btn" type="button">执行全量审计</button>
         </article>
       </section>
 
@@ -241,6 +327,8 @@ export function ToolCallsPage() {
             { label: "参数摘要", value: selectedDetail?.paramSummary ?? "暂无" },
             { label: "参数哈希", value: selectedDetail?.paramHash ?? "暂无" },
             { label: "触发模块", value: formatList(selectedDetail?.triggeredModules) },
+            { label: "决策 / Grant", value: selectedDetail ? formatToolDecision(selectedDetail) : "暂无" },
+            { label: "Taint / 外传", value: selectedDetail ? formatToolSignals(selectedDetail) : "暂无" },
             { label: "错误信息", value: selectedDetail?.errorText ?? "暂无" },
             { label: "结果摘要", value: selectedDetail?.resultExcerpt ?? "暂无" },
             {

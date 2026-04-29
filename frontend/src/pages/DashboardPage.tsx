@@ -159,11 +159,17 @@ export function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardOverviewDto>(EMPTY_DASHBOARD);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
 
     async function loadDashboard() {
+      startTransition(() => {
+        setError(null);
+        setLoading(true);
+      });
+
       try {
         const nextDashboard = await getDashboardOverview();
         if (!active) {
@@ -194,7 +200,11 @@ export function DashboardPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadKey]);
+
+  function retryDashboard(): void {
+    setReloadKey((current) => current + 1);
+  }
 
   const riskRingBackground = useMemo(() => buildRiskRingBackground(dashboard), [dashboard]);
   const trendPoints = useMemo(() => buildTrendPoints(dashboard), [dashboard]);
@@ -448,7 +458,9 @@ export function DashboardPage() {
             { key: "recommendation", label: "处置建议" },
             { key: "time", label: "时间" },
           ]}
+          error={error}
           loading={loading}
+          onRetry={retryDashboard}
           rows={dashboard.recentHighRiskEvents.map((event) => ({
             id: event.eventId,
             risk: renderRiskBadge(event.riskLevel),

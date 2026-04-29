@@ -92,4 +92,40 @@ describe("SessionsPage", () => {
     expect(await screen.findByText(/总量：999/)).toBeInTheDocument();
     expect(screen.getByText(/session-b-requester/)).toBeInTheDocument();
   });
+
+  it("uses real filter controls for the session list", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/lynx/sessions/session-filtered") {
+        return createJsonResponse(createSessionDetail("session-filtered", 321));
+      }
+      if (url === "/lynx/sessions/session-a") {
+        return createJsonResponse(createSessionDetail("session-a", 111));
+      }
+      if (url.includes("q=filtered")) {
+        return createJsonResponse(createPage([createSession("session-filtered")]));
+      }
+      return createJsonResponse(createPage([createSession("session-a")]));
+    });
+
+    render(<SessionsPage />);
+
+    await screen.findByText("session-a");
+    expect(screen.getByLabelText("关键词")).toBeInTheDocument();
+    expect(screen.getByLabelText("渠道")).toBeInTheDocument();
+    expect(screen.getByLabelText("请求人")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("关键词"), {
+      target: { value: "filtered" },
+    });
+    fireEvent.change(screen.getByLabelText("请求人"), {
+      target: { value: "ou-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
+
+    await screen.findByText("session-filtered");
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.map((call) => call[0])).toContain("/lynx/sessions?q=filtered&requesterOuId=ou-1&pageNum=1&pageSize=20");
+    });
+  });
 });

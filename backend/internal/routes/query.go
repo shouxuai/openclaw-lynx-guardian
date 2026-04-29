@@ -140,6 +140,7 @@ func RegisterLynxChecks(router gin.IRoutes, repository *repo.LynxChecksRepositor
 	router.GET("/lynx-checks", func(c *gin.Context) {
 		values := c.Request.URL.Query()
 		page, err := repository.List(repo.LynxChecksListQuery{
+			Q:               httpserver.ReadString(values, "q"),
 			FromMs:          httpserver.ReadInt64(values, "fromMs"),
 			ToMs:            httpserver.ReadInt64(values, "toMs"),
 			SessionKey:      httpserver.ReadString(values, "sessionKey"),

@@ -91,9 +91,11 @@ export interface DecisionDegraded {
 
 export interface DecisionRequest {
   requestId: string;
+  qaRecordId?: string;
   stage: DecisionStage;
   hook: string;
   sessionKey?: string;
+  runId?: string;
   channelProfile?: string;
   channelId?: string;
   conversationId?: string;

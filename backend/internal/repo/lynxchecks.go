@@ -8,6 +8,7 @@ import (
 )
 
 type LynxChecksListQuery struct {
+	Q               *string
 	FromMs          *int64
 	ToMs            *int64
 	SessionKey      *string
@@ -50,6 +51,10 @@ type lynxCheckDetailRow struct {
 func (r *LynxChecksRepository) List(query LynxChecksListQuery) (service.PageResponse[map[string]any], error) {
 	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"request_id", "qa_record_id", "session_key", "target_key",
+		"channel_id", "message_provider", "transport", "report_path", "error_message",
+	}, query.Q)
 	filter.AppendRange("created_at", query.FromMs, query.ToMs)
 	filter.AppendEquals("session_key", query.SessionKey)
 	filter.AppendEquals("source", query.Source)

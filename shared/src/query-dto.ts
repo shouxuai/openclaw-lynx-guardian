@@ -250,6 +250,10 @@ export interface TokenSummaryDto {
   actualTokens?: number;
   estimatedTokens?: number;
   measurableTokens?: number;
+  measurableInputTokens?: number;
+  measurableOutputTokens?: number;
+  measurableCacheReadTokens?: number;
+  measurableCacheWriteTokens?: number;
   estimatedCount: number;
   unavailableCount: number;
   topModels: Array<{

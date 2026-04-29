@@ -1,14 +1,60 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
-import type { DecisionResponse, ScoreBreakdown } from "@lynx/local-console-shared";
+import { useMemo, useState, type FormEvent } from "react";
+import type { DecisionResponse, RiskLevel, ScoreBreakdown } from "@lynx/local-console-shared";
+import { Button, Input, Select } from "antd";
 
-import { listDecisions } from "../api/decisions";
+import { listDecisions, type DecisionListQuery } from "../api/decisions";
+import { ModalDialog } from "../components/feedback/ModalDialog";
 import { StatusBadge } from "../components/feedback/StatusBadge";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
+import { TablePagination } from "../components/tables/TablePagination";
+import { usePagedListResource } from "../hooks/usePagedListResource";
 import { formatInteger } from "../utils/format";
 import { getDecisionTone, renderActionBadge, renderPolicyDecisionBadge, renderRiskBadge } from "../utils/status";
 
-const EMPTY_DECISIONS: DecisionResponse[] = [];
+interface DecisionFilters {
+  action: string;
+  q: string;
+  riskLevel: string;
+  stage: string;
+}
+
+const EMPTY_FILTERS: DecisionFilters = {
+  action: "",
+  q: "",
+  riskLevel: "",
+  stage: "",
+};
+
+const RISK_OPTIONS: Array<{ label: string; value: RiskLevel }> = [
+  { label: "L0 基础", value: "L0" },
+  { label: "L1 关注", value: "L1" },
+  { label: "L2 中危", value: "L2" },
+  { label: "L3 高危", value: "L3" },
+  { label: "L4 严重", value: "L4" },
+];
+
+const STAGE_OPTIONS = [
+  { label: "输入", value: "input" },
+  { label: "工具", value: "tool" },
+  { label: "输出", value: "output" },
+];
+
+const ACTION_OPTIONS = [
+  { label: "放行", value: "allow" },
+  { label: "告警", value: "warn" },
+  { label: "需审批", value: "require_approval" },
+  { label: "阻断", value: "deny" },
+];
+
+function buildDecisionQuery(filters: DecisionFilters): Omit<DecisionListQuery, "pageNum" | "pageSize"> {
+  return {
+    action: filters.action ? [filters.action] : undefined,
+    q: filters.q.trim() || undefined,
+    riskLevel: filters.riskLevel ? [filters.riskLevel as RiskLevel] : undefined,
+    stage: filters.stage ? [filters.stage] : undefined,
+  };
+}
 
 function formatBlockState(block: boolean): string {
   return block ? "已阻断" : "未阻断";
@@ -90,39 +136,32 @@ function formatDegradedReason(decision: DecisionResponse): string {
 }
 
 export function DecisionsPage() {
-  const [items, setItems] = useState<DecisionResponse[]>(EMPTY_DECISIONS);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [draftFilters, setDraftFilters] = useState<DecisionFilters>(EMPTY_FILTERS);
+  const [appliedQuery, setAppliedQuery] = useState<Omit<DecisionListQuery, "pageNum" | "pageSize">>({});
+  const [selectedDecision, setSelectedDecision] = useState<DecisionResponse | null>(null);
+  const {
+    items,
+    loading,
+    error,
+    paginationProps,
+    resetPaging,
+    retry,
+  } = usePagedListResource<DecisionResponse, DecisionListQuery>({
+    loadPage: listDecisions,
+    query: appliedQuery,
+  });
 
-  useEffect(() => {
-    const abortController = new AbortController();
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    resetPaging();
+    setAppliedQuery(buildDecisionQuery(draftFilters));
+  }
 
-    async function loadDecisions() {
-      try {
-        const nextItems = await listDecisions();
-        if (abortController.signal.aborted) {
-          return;
-        }
-        startTransition(() => {
-          setItems(nextItems);
-          setError(null);
-          setLoading(false);
-        });
-      } catch (loadError) {
-        if (abortController.signal.aborted) {
-          return;
-        }
-        startTransition(() => {
-          setItems(EMPTY_DECISIONS);
-          setError(loadError instanceof Error ? loadError.message : "决策记录加载失败");
-          setLoading(false);
-        });
-      }
-    }
-
-    void loadDecisions();
-    return () => abortController.abort();
-  }, []);
+  function handleReset(): void {
+    setDraftFilters(EMPTY_FILTERS);
+    resetPaging();
+    setAppliedQuery({});
+  }
 
   const summary = useMemo(() => {
     const warned = items.filter((item) => !item.block && item.audit.eventSeverity === "warn").length;
@@ -135,7 +174,7 @@ export function DecisionsPage() {
     ? `决策记录加载失败：${error}`
     : loading
       ? "正在加载 Go 控制面裁决记录"
-      : "展示每次裁决的风险等级、动作、仲裁器、证据和评分轨迹。";
+      : "展示每次裁决的风险等级、动作和处置结果；证据与评分细节收纳在详情里。";
 
   return (
     <div className="page-stack">
@@ -147,9 +186,9 @@ export function DecisionsPage() {
 
       <section className="summary-card-grid">
         <article className="summary-card">
-          <p className="summary-card__label">未阻断告警</p>
+          <p className="summary-card__label">待复核</p>
           <strong className="summary-card__value">{formatInteger(summary.warned)}</strong>
-          <p className="summary-card__delta">未阻断告警仍需复核风险和证据</p>
+          <p className="summary-card__delta">告警类裁决需要查看详情证据</p>
         </article>
         <article className="summary-card">
           <p className="summary-card__label">已阻断</p>
@@ -163,36 +202,84 @@ export function DecisionsPage() {
         </article>
       </section>
 
+      <section className="filter-panel">
+        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索裁决 ID、规则、模块"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>风险等级</span>
+            <Select
+              allowClear
+              aria-label="风险等级"
+              options={RISK_OPTIONS}
+              placeholder="全部级别"
+              value={draftFilters.riskLevel || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, riskLevel: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>裁决阶段</span>
+            <Select
+              allowClear
+              aria-label="裁决阶段"
+              options={STAGE_OPTIONS}
+              placeholder="全部阶段"
+              value={draftFilters.stage || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, stage: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field">
+            <span>执行动作</span>
+            <Select
+              allowClear
+              aria-label="执行动作"
+              options={ACTION_OPTIONS}
+              placeholder="全部动作"
+              value={draftFilters.action || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, action: value ?? "" }))}
+            />
+          </label>
+          <div className="audit-filter-form__actions">
+            <Button htmlType="submit" type="primary">应用筛选</Button>
+            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
+          </div>
+        </form>
+      </section>
+
       <section className="table-panel">
         <div className="table-panel__header">
           <h2 className="panel__title">裁决记录</h2>
-          <span className="small-note">block:false 只表示未阻断，不等于安全</span>
         </div>
         <DataTable
           columns={[
-            { key: "decision", label: "Decision ID", maxWidth: 260, minWidth: 180, width: 220 },
-            { key: "stage", label: "阶段", maxWidth: 140, minWidth: 110, width: 120 },
+            { key: "decision", label: "裁决", maxWidth: 320, minWidth: 220, width: 260 },
             { key: "risk", label: "风险", maxWidth: 140, minWidth: 110, width: 120 },
             { key: "action", label: "动作", maxWidth: 150, minWidth: 118, width: 132 },
-            { key: "policy", label: "Policy", maxWidth: 160, minWidth: 128, width: 144 },
-            { key: "enforcement", label: "Enforcement", maxWidth: 160, minWidth: 128, width: 144 },
             { key: "approval", label: "审批", maxWidth: 140, minWidth: 110, width: 120 },
-            { key: "block", label: "阻断", maxWidth: 140, minWidth: 110, width: 120 },
-            { key: "arbiter", label: "获胜仲裁器", maxWidth: 180, minWidth: 140, width: 160 },
-            { key: "modules", label: "命中模块", maxWidth: 220, minWidth: 160, width: 190 },
-            { key: "rules", label: "Matched Rules", maxWidth: 260, minWidth: 190, width: 230 },
-            { key: "score", label: "评分轨迹", maxWidth: 320, minWidth: 230, width: 280 },
-            { key: "degraded", label: "降级原因", maxWidth: 240, minWidth: 180, width: 210 },
+            { key: "block", label: "处置结果", maxWidth: 150, minWidth: 118, width: 132 },
+            { key: "detail", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
           ]}
+          error={error}
           loading={loading}
+          onRetry={retry}
           rows={items.map((decision) => ({
             id: decision.decisionId,
-            decision: decision.decisionId,
-            stage: decision.stage,
+            decision: (
+              <div className="row-stack">
+                <strong>{decision.decisionId}</strong>
+                <span>{decision.stage}</span>
+              </div>
+            ),
             risk: renderRiskBadge(decision.riskLevel),
             action: renderActionBadge(decision.action),
-            policy: renderPolicyDecisionBadge(decision.audit.policyDecision, decision.audit.enforcementAction),
-            enforcement: renderActionBadge(decision.audit.enforcementAction),
             approval: formatApprovalState(decision),
             block: (
               <StatusBadge
@@ -200,14 +287,51 @@ export function DecisionsPage() {
                 tone={formatDecisionTone(decision)}
               />
             ),
-            arbiter: decision.winningArbiter,
-            modules: decision.matchedModules.length > 0 ? decision.matchedModules.join(", ") : "暂无",
-            rules: formatMatchedRules(decision),
-            score: formatScoreBreakdown(collectScoreBreakdown(decision)),
-            degraded: formatDegradedReason(decision),
+            detail: (
+              <button
+                aria-label={`查看 ${decision.decisionId} 裁决详情`}
+                className="btn btn--compact"
+                type="button"
+                onClick={() => setSelectedDecision(decision)}
+              >
+                详情
+              </button>
+            ),
           }))}
         />
+        <TablePagination {...paginationProps} />
       </section>
+
+      <ModalDialog
+        closeLabel="关闭详情"
+        open={Boolean(selectedDecision)}
+        title="裁决详情"
+        subtitle={selectedDecision?.decisionId ?? "查看裁决证据、仲裁器和评分轨迹。"}
+        onClose={() => setSelectedDecision(null)}
+      >
+        <dl className="detail-panel__grid">
+          {[
+            { label: "裁决 ID", value: selectedDecision?.decisionId ?? "暂无" },
+            { label: "阶段", value: selectedDecision?.stage ?? "暂无" },
+            { label: "风险等级", value: selectedDecision ? renderRiskBadge(selectedDecision.riskLevel) : "暂无" },
+            { label: "动作", value: selectedDecision ? renderActionBadge(selectedDecision.action) : "暂无" },
+            { label: "审计策略", value: selectedDecision ? renderPolicyDecisionBadge(selectedDecision.audit.policyDecision, selectedDecision.audit.enforcementAction) : "暂无" },
+            { label: "执行动作", value: selectedDecision ? renderActionBadge(selectedDecision.audit.enforcementAction) : "暂无" },
+            { label: "审批状态", value: selectedDecision ? formatApprovalState(selectedDecision) : "暂无" },
+            { label: "处置结果", value: selectedDecision ? formatBlockState(selectedDecision.block) : "暂无" },
+            { label: "获胜仲裁器", value: selectedDecision?.winningArbiter ?? "暂无" },
+            { label: "命中模块", value: selectedDecision && selectedDecision.matchedModules.length > 0 ? selectedDecision.matchedModules.join("；") : "暂无" },
+            { label: "Matched Rules", value: selectedDecision ? formatMatchedRules(selectedDecision) : "暂无" },
+            { label: "Score Breakdown", value: selectedDecision ? formatScoreBreakdown(collectScoreBreakdown(selectedDecision)) : "暂无" },
+            { label: "降级原因", value: selectedDecision ? formatDegradedReason(selectedDecision) : "暂无" },
+          ].map((field) => (
+            <div key={field.label} className="detail-panel__field">
+              <dt>{field.label}</dt>
+              <dd>{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </ModalDialog>
     </div>
   );
 }

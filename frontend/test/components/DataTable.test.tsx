@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DataTable } from "../../src/components/tables/DataTable";
 
@@ -251,8 +251,8 @@ describe("DataTable", () => {
     expect(detailCell).toHaveStyle({ right: "0px" });
   });
 
-  it("renders a table-scoped loading status row while list data is loading", () => {
-    render(
+  it("renders animated skeleton rows for the first table load", () => {
+    const { container } = render(
       <ConfigProvider locale={zhCN}>
         <DataTable
           columns={[
@@ -266,6 +266,68 @@ describe("DataTable", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent("正在加载列表数据");
-    expect(screen.getByRole("cell", { name: "正在加载列表数据" })).toHaveAttribute("colspan", "2");
+    expect(screen.getByRole("cell", { name: /正在加载列表数据/ })).toHaveAttribute("colspan", "2");
+    expect(container.querySelectorAll(".data-table__skeleton-row")).toHaveLength(5);
+    expect(container.querySelectorAll(".data-table__skeleton")).toHaveLength(10);
+  });
+
+  it("keeps existing rows visible behind a light loading overlay during page refreshes", () => {
+    render(
+      <ConfigProvider locale={zhCN}>
+        <DataTable
+          columns={[
+            { key: "id", label: "ID" },
+            { key: "summary", label: "Summary" },
+          ]}
+          loading
+          rows={[{ id: "row-1", summary: "保留旧数据" }]}
+        />
+      </ConfigProvider>,
+    );
+
+    expect(screen.getByText("保留旧数据")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("正在更新列表");
+  });
+
+  it("shows a fixed-height Empty state when the table has no data", () => {
+    const { container } = render(
+      <ConfigProvider locale={zhCN}>
+        <DataTable
+          columns={[
+            { key: "id", label: "ID" },
+            { key: "summary", label: "Summary" },
+          ]}
+          rows={[]}
+        />
+      </ConfigProvider>,
+    );
+
+    expect(screen.getAllByText("暂无数据").length).toBeGreaterThan(0);
+    expect(container.querySelector(".data-table__state-cell")).toHaveAttribute("colspan", "2");
+  });
+
+  it("shows a unified error state with retry action", () => {
+    const onRetry = vi.fn();
+
+    render(
+      <ConfigProvider locale={zhCN}>
+        <DataTable
+          columns={[
+            { key: "id", label: "ID" },
+            { key: "summary", label: "Summary" },
+          ]}
+          error="网络请求失败"
+          onRetry={onRetry}
+          rows={[]}
+        />
+      </ConfigProvider>,
+    );
+
+    expect(screen.getByText("列表加载失败")).toBeInTheDocument();
+    expect(screen.getByText("网络请求失败")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

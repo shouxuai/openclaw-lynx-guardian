@@ -81,8 +81,33 @@ func TestTokenSummarySeparatesActualEstimatedAndUnavailableUsage(t *testing.T) {
 	expectNumber(t, body, "actualTokens", 120)
 	expectNumber(t, body, "estimatedTokens", 1000)
 	expectNumber(t, body, "measurableTokens", 1120)
+	expectNumber(t, body, "measurableInputTokens", 1120)
+	expectNumber(t, body, "measurableOutputTokens", 0)
 	expectNumber(t, body, "estimatedCount", 1)
 	expectNumber(t, body, "unavailableCount", 1)
+
+	topModels, ok := body["topModels"].([]any)
+	if !ok || len(topModels) != 1 {
+		t.Fatalf("expected one measurable top model, got %#v", body["topModels"])
+	}
+	topModel, ok := topModels[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected top model object, got %#v", topModels[0])
+	}
+	expectNumber(t, topModel, "totalTokens", 1120)
+
+	trend := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, "/lynx/tokens/trend?bucket=hour&provider=openai", nil, false), http.StatusOK)
+	points, ok := trend["points"].([]any)
+	if !ok || len(points) != 1 {
+		t.Fatalf("expected one measurable trend point, got %#v", trend["points"])
+	}
+	point, ok := points[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected trend point object, got %#v", points[0])
+	}
+	expectNumber(t, point, "inputTokens", 1120)
+	expectNumber(t, point, "outputTokens", 0)
+	expectNumber(t, point, "totalTokens", 1120)
 }
 
 func TestToolCallAndApprovalDetailRoutesExposeRawDetailContracts(t *testing.T) {

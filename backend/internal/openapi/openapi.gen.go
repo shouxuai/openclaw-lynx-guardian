@@ -264,11 +264,17 @@ type ToolCallId = string
 // ToolName defines model for ToolName.
 type ToolName = string
 
+// IngestBatchResult defines model for IngestBatchResult.
+type IngestBatchResult = IngestBatchResponse
+
 // ObjectResponse defines model for ObjectResponse.
 type ObjectResponse = JsonObject
 
 // PageResponse defines model for PageResponse.
 type PageResponse = Page
+
+// IngestBatchRequestBody defines model for IngestBatchRequestBody.
+type IngestBatchRequestBody = IngestBatchRequest
 
 // ListApprovalsParams defines parameters for ListApprovals.
 type ListApprovalsParams struct {
@@ -317,6 +323,7 @@ type ListEventsParams struct {
 
 // ListLynxChecksParams defines parameters for ListLynxChecks.
 type ListLynxChecksParams struct {
+	Q               *Q          `form:"q,omitempty" json:"q,omitempty"`
 	FromMs          *FromMs     `form:"fromMs,omitempty" json:"fromMs,omitempty"`
 	ToMs            *ToMs       `form:"toMs,omitempty" json:"toMs,omitempty"`
 	SessionKey      *SessionKey `form:"sessionKey,omitempty" json:"sessionKey,omitempty"`
@@ -394,8 +401,26 @@ type ListToolCallsParams struct {
 	ApprovalId        *ApprovalId        `form:"approvalId,omitempty" json:"approvalId,omitempty"`
 }
 
+// IngestApprovalsJSONRequestBody defines body for IngestApprovals for application/json ContentType.
+type IngestApprovalsJSONRequestBody = IngestBatchRequest
+
+// IngestAuditEventsJSONRequestBody defines body for IngestAuditEvents for application/json ContentType.
+type IngestAuditEventsJSONRequestBody = IngestBatchRequest
+
 // IngestBatchJSONRequestBody defines body for IngestBatch for application/json ContentType.
 type IngestBatchJSONRequestBody = IngestBatchRequest
+
+// IngestLynxChecksJSONRequestBody defines body for IngestLynxChecks for application/json ContentType.
+type IngestLynxChecksJSONRequestBody = IngestBatchRequest
+
+// IngestSessionsJSONRequestBody defines body for IngestSessions for application/json ContentType.
+type IngestSessionsJSONRequestBody = IngestBatchRequest
+
+// IngestTokenUsageJSONRequestBody defines body for IngestTokenUsage for application/json ContentType.
+type IngestTokenUsageJSONRequestBody = IngestBatchRequest
+
+// IngestToolCallsJSONRequestBody defines body for IngestToolCalls for application/json ContentType.
+type IngestToolCallsJSONRequestBody = IngestBatchRequest
 
 // Getter for additional properties for IngestBatchRequest. Returns the specified
 // element and whether it was found
@@ -893,55 +918,73 @@ func (a Page) MarshalJSON() ([]byte, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// 查询审批记录列表
+	// List approval records.
 	// (GET /lynx/approvals)
 	ListApprovals(c *gin.Context, params ListApprovalsParams)
-	// 查询单条审批记录
+	// Read one approval record.
 	// (GET /lynx/approvals/{approvalId})
 	GetApproval(c *gin.Context, approvalId string)
-	// 查询看板概览指标
+	// Read dashboard overview metrics.
 	// (GET /lynx/dashboard/overview)
 	GetDashboardOverview(c *gin.Context, params GetDashboardOverviewParams)
-	// 查询审计事件列表
+	// List audit events.
 	// (GET /lynx/events)
 	ListEvents(c *gin.Context, params ListEventsParams)
-	// 查询单条审计事件
+	// Read one audit event.
 	// (GET /lynx/events/{eventId})
 	GetEvent(c *gin.Context, eventId string)
-	// 查看后端健康状态
+	// Read server health.
 	// (GET /lynx/health)
 	GetHealth(c *gin.Context)
-	// 插件事件批量写入接口
+	// Ingest approval upsert items.
+	// (POST /lynx/internal/v1/ingest/approvals)
+	IngestApprovals(c *gin.Context)
+	// Ingest audit event items.
+	// (POST /lynx/internal/v1/ingest/audit-events)
+	IngestAuditEvents(c *gin.Context)
+	// Ingest one plugin event batch.
 	// (POST /lynx/internal/v1/ingest/batch)
 	IngestBatch(c *gin.Context)
-	// 查询 Lynx 检查记录列表
+	// Ingest Lynx check upsert items.
+	// (POST /lynx/internal/v1/ingest/lynx-checks)
+	IngestLynxChecks(c *gin.Context)
+	// Ingest session upsert items.
+	// (POST /lynx/internal/v1/ingest/sessions)
+	IngestSessions(c *gin.Context)
+	// Ingest token usage items.
+	// (POST /lynx/internal/v1/ingest/token-usage)
+	IngestTokenUsage(c *gin.Context)
+	// Ingest tool call upsert items.
+	// (POST /lynx/internal/v1/ingest/tool-calls)
+	IngestToolCalls(c *gin.Context)
+	// List Lynx check runs.
 	// (GET /lynx/lynx-checks)
 	ListLynxChecks(c *gin.Context, params ListLynxChecksParams)
-	// 查询单次 Lynx 检查记录
+	// Read one Lynx check run.
 	// (GET /lynx/lynx-checks/{requestId})
 	GetLynxCheck(c *gin.Context, requestId string)
-	// 查看本地控制台能力
+	// Read local console capabilities.
 	// (GET /lynx/meta/capabilities)
 	GetCapabilities(c *gin.Context)
-	// 查询会话列表
+	// List conversation sessions.
 	// (GET /lynx/sessions)
 	ListSessions(c *gin.Context, params ListSessionsParams)
-	// 查询单个会话
+	// Read one conversation session.
 	// (GET /lynx/sessions/{sessionKey})
 	GetSession(c *gin.Context, sessionKey string)
-	// 查询 Token 使用汇总
+	// Read token usage summary.
 	// (GET /lynx/tokens/summary)
 	GetTokenSummary(c *gin.Context, params GetTokenSummaryParams)
-	// 查询 Token 使用趋势
+	// Read token usage trend.
 	// (GET /lynx/tokens/trend)
 	GetTokenTrend(c *gin.Context, params GetTokenTrendParams)
-	// 查询 Token 使用记录列表
+	// List token usage records.
 	// (GET /lynx/tokens/usage)
 	ListTokenUsage(c *gin.Context, params ListTokenUsageParams)
-	// 查询工具调用列表
+	// List tool calls.
 	// (GET /lynx/tool-calls)
 	ListToolCalls(c *gin.Context, params ListToolCallsParams)
-	// 查询单条工具调用
+	// Read one tool call.
 	// (GET /lynx/tool-calls/{toolCallId})
 	GetToolCall(c *gin.Context, toolCallId string)
 }
@@ -1334,6 +1377,36 @@ func (siw *ServerInterfaceWrapper) GetHealth(c *gin.Context) {
 	siw.Handler.GetHealth(c)
 }
 
+// IngestApprovals operation middleware
+func (siw *ServerInterfaceWrapper) IngestApprovals(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.IngestApprovals(c)
+}
+
+// IngestAuditEvents operation middleware
+func (siw *ServerInterfaceWrapper) IngestAuditEvents(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.IngestAuditEvents(c)
+}
+
 // IngestBatch operation middleware
 func (siw *ServerInterfaceWrapper) IngestBatch(c *gin.Context) {
 
@@ -1349,6 +1422,66 @@ func (siw *ServerInterfaceWrapper) IngestBatch(c *gin.Context) {
 	siw.Handler.IngestBatch(c)
 }
 
+// IngestLynxChecks operation middleware
+func (siw *ServerInterfaceWrapper) IngestLynxChecks(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.IngestLynxChecks(c)
+}
+
+// IngestSessions operation middleware
+func (siw *ServerInterfaceWrapper) IngestSessions(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.IngestSessions(c)
+}
+
+// IngestTokenUsage operation middleware
+func (siw *ServerInterfaceWrapper) IngestTokenUsage(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.IngestTokenUsage(c)
+}
+
+// IngestToolCalls operation middleware
+func (siw *ServerInterfaceWrapper) IngestToolCalls(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.IngestToolCalls(c)
+}
+
 // ListLynxChecks operation middleware
 func (siw *ServerInterfaceWrapper) ListLynxChecks(c *gin.Context) {
 
@@ -1356,6 +1489,14 @@ func (siw *ServerInterfaceWrapper) ListLynxChecks(c *gin.Context) {
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListLynxChecksParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", c.Request.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter q: %w", err), http.StatusBadRequest)
+		return
+	}
 
 	// ------------- Optional query parameter "fromMs" -------------
 
@@ -1991,7 +2132,13 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/lynx/events", wrapper.ListEvents)
 	router.GET(options.BaseURL+"/lynx/events/:eventId", wrapper.GetEvent)
 	router.GET(options.BaseURL+"/lynx/health", wrapper.GetHealth)
+	router.POST(options.BaseURL+"/lynx/internal/v1/ingest/approvals", wrapper.IngestApprovals)
+	router.POST(options.BaseURL+"/lynx/internal/v1/ingest/audit-events", wrapper.IngestAuditEvents)
 	router.POST(options.BaseURL+"/lynx/internal/v1/ingest/batch", wrapper.IngestBatch)
+	router.POST(options.BaseURL+"/lynx/internal/v1/ingest/lynx-checks", wrapper.IngestLynxChecks)
+	router.POST(options.BaseURL+"/lynx/internal/v1/ingest/sessions", wrapper.IngestSessions)
+	router.POST(options.BaseURL+"/lynx/internal/v1/ingest/token-usage", wrapper.IngestTokenUsage)
+	router.POST(options.BaseURL+"/lynx/internal/v1/ingest/tool-calls", wrapper.IngestToolCalls)
 	router.GET(options.BaseURL+"/lynx/lynx-checks", wrapper.ListLynxChecks)
 	router.GET(options.BaseURL+"/lynx/lynx-checks/:requestId", wrapper.GetLynxCheck)
 	router.GET(options.BaseURL+"/lynx/meta/capabilities", wrapper.GetCapabilities)

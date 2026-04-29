@@ -133,7 +133,9 @@ func TestDecisionPersistsRequestContextAndAuditEvent(t *testing.T) {
 		RequestID:      "req-context",
 		Stage:          "tool_call",
 		Hook:           "before_tool_call",
+		QARecordID:     "qa-context",
 		SessionKey:     "session-context",
+		RunID:          "run-context",
 		ChannelProfile: "webchat",
 		ConversationID: "conversation-context",
 		RequesterID:    "requester-context",
@@ -164,15 +166,18 @@ func TestDecisionPersistsRequestContextAndAuditEvent(t *testing.T) {
 	var eventCount int
 	var policyDecision string
 	var enforcementAction string
+	var qaRecordID string
+	var runID string
 	var payloadJSON string
 	err = database.QueryRow(`
-		SELECT COUNT(*), COALESCE(MAX(policy_decision), ''), COALESCE(MAX(enforcement_action), ''), COALESCE(MAX(payload_json), '')
+		SELECT COUNT(*), COALESCE(MAX(policy_decision), ''), COALESCE(MAX(enforcement_action), ''),
+		       COALESCE(MAX(qa_record_id), ''), COALESCE(MAX(run_id), ''), COALESCE(MAX(payload_json), '')
 		FROM audit_events
 		WHERE request_id = ? AND hook_name = ? AND session_key = ?`,
 		"req-context",
 		"before_tool_call",
 		"session-context",
-	).Scan(&eventCount, &policyDecision, &enforcementAction, &payloadJSON)
+	).Scan(&eventCount, &policyDecision, &enforcementAction, &qaRecordID, &runID, &payloadJSON)
 	if err != nil {
 		t.Fatalf("read audit event: %v", err)
 	}
@@ -184,6 +189,9 @@ func TestDecisionPersistsRequestContextAndAuditEvent(t *testing.T) {
 	}
 	if enforcementAction != string(response.Audit.EnforcementAction) {
 		t.Fatalf("audit enforcement action = %s, want %s", enforcementAction, response.Audit.EnforcementAction)
+	}
+	if qaRecordID != "qa-context" || runID != "run-context" {
+		t.Fatalf("audit qa/run link mismatch: qa=%s run=%s", qaRecordID, runID)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {

@@ -13,7 +13,7 @@ import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
 import { mockTokenSummary, mockTokenTrend, mockTokenUsage } from "../data/mock-console";
 import { paginateMockPage, usePagedListResource } from "../hooks/usePagedListResource";
-import { formatInteger, formatTimestamp } from "../utils/format";
+import { formatDateOnly, formatInteger, formatTimestamp } from "../utils/format";
 
 const EMPTY_TOKEN_SUMMARY: TokenSummaryDto = {
   totalTokens: 0,
@@ -34,22 +34,30 @@ const EMPTY_TOKEN_TREND: TokenTrendDto = {
 };
 
 const TOKEN_TREND_POINT_LIMIT = 7;
+const TOKEN_TREND_EMPTY_LABEL_COUNT = 7;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
 type TokenTimeRangeKey = "last1h" | "last24h" | "last7d" | "last30d" | "all";
+
+type TokenTrendDisplaySlot = {
+  key: string;
+  label: string;
+  point?: TokenTrendPointDto;
+};
 
 const TOKEN_TIME_RANGE_OPTIONS: Array<{
   bucket: TokenTrendBucket;
   durationMs?: number;
   key: TokenTimeRangeKey;
   label: string;
+  trendTitle: string;
 }> = [
-  { key: "last1h", label: "最近 1 小时", durationMs: HOUR_MS, bucket: "hour" },
-  { key: "last24h", label: "最近 24 小时", durationMs: DAY_MS, bucket: "hour" },
-  { key: "last7d", label: "最近 7 天", durationMs: 7 * DAY_MS, bucket: "day" },
-  { key: "last30d", label: "最近 30 天", durationMs: 30 * DAY_MS, bucket: "day" },
-  { key: "all", label: "全部时间", bucket: "day" },
+  { key: "last1h", label: "最近 1 小时", trendTitle: "最近 1 小时消耗趋势", durationMs: HOUR_MS, bucket: "hour" },
+  { key: "last24h", label: "最近 24 小时", trendTitle: "最近 24 小时消耗趋势", durationMs: DAY_MS, bucket: "hour" },
+  { key: "last7d", label: "最近 7 天", trendTitle: "最近 7 天消耗趋势", durationMs: 7 * DAY_MS, bucket: "day" },
+  { key: "last30d", label: "最近 30 天", trendTitle: "最近 30 天消耗趋势", durationMs: 30 * DAY_MS, bucket: "day" },
+  { key: "all", label: "全部时间", trendTitle: "全部时间消耗趋势", bucket: "day" },
 ];
 
 function percent(value: number, total: number): number {
@@ -81,8 +89,19 @@ function formatSourceTypeLabel(sourceType: "actual" | "estimated" | "unavailable
   return labels[sourceType];
 }
 
-function formatTrendLabel(point: TokenTrendPointDto): string {
-  return formatTimestamp(point.bucketStartMs).split(" ")[0];
+function formatHourLabel(timestamp: number): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+function formatTrendLabel(point: TokenTrendPointDto, bucket: TokenTrendBucket): string {
+  return bucket === "hour" ? formatHourLabel(point.bucketStartMs) : formatDateOnly(point.bucketStartMs);
+}
+
+function formatTrendBucketLabel(bucketStartMs: number, bucket: TokenTrendBucket): string {
+  return bucket === "hour" ? formatHourLabel(bucketStartMs) : formatDateOnly(bucketStartMs);
 }
 
 function clampTokenCount(value: number): number {
@@ -95,7 +114,7 @@ function buildTrendBarHeight(point: TokenTrendPointDto, maxTotalTokens: number):
     return "2%";
   }
 
-  return `${Math.max((totalTokens / maxTotalTokens) * 100, 8)}%`;
+  return `${Math.max((totalTokens / maxTotalTokens) * 100, 18)}%`;
 }
 
 function buildTrendSegmentStyle(value: number, totalTokens: number, background: string): CSSProperties {
@@ -125,6 +144,150 @@ function resolveTokenTimeRange(key: TokenTimeRangeKey): { bucket: TokenTrendBuck
   };
 }
 
+function resolveTokenTimeRangeOption(key: TokenTimeRangeKey) {
+  return TOKEN_TIME_RANGE_OPTIONS.find((item) => item.key === key) ?? TOKEN_TIME_RANGE_OPTIONS[1];
+}
+
+function floorToTrendBucket(timestamp: number, bucket: TokenTrendBucket): number {
+  const date = new Date(timestamp);
+  if (bucket === "hour") {
+    date.setMinutes(0, 0, 0);
+    return date.getTime();
+  }
+
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function mergeTrendPoint(existing: TokenTrendPointDto | undefined, point: TokenTrendPointDto, bucketStartMs: number): TokenTrendPointDto {
+  return {
+    bucketStartMs,
+    inputTokens: clampTokenCount(existing?.inputTokens ?? 0) + clampTokenCount(point.inputTokens),
+    outputTokens: clampTokenCount(existing?.outputTokens ?? 0) + clampTokenCount(point.outputTokens),
+    totalTokens: clampTokenCount(existing?.totalTokens ?? 0) + clampTokenCount(point.totalTokens),
+  };
+}
+
+function buildTrendDisplaySlots(
+  points: TokenTrendPointDto[],
+  bucket: TokenTrendBucket,
+  option: ReturnType<typeof resolveTokenTimeRangeOption>,
+  query: TokenTimeRangeQuery,
+): TokenTrendDisplaySlot[] {
+  const visiblePoints = points.slice(-TOKEN_TREND_POINT_LIMIT);
+  if (!option.durationMs || query.fromMs === undefined || query.toMs === undefined) {
+    if (visiblePoints.length > 0) {
+      return visiblePoints.map((point, index) => ({
+        key: `${point.bucketStartMs}-${index}`,
+        label: formatTrendLabel(point, bucket),
+        point,
+      }));
+    }
+
+    return buildEmptyTrendLabels(option, query).map((label, index) => ({
+      key: `empty-${index}-${label}`,
+      label,
+    }));
+  }
+
+  const unitMs = bucket === "hour" ? HOUR_MS : DAY_MS;
+  const slotCount = option.key === "last1h" ? 1 : TOKEN_TREND_POINT_LIMIT;
+  const totalUnits = Math.max(1, Math.ceil((query.toMs - query.fromMs) / unitMs));
+  const unitsPerSlot = Math.max(1, Math.ceil(totalUnits / slotCount));
+  const endBucketStartMs = floorToTrendBucket(query.toMs, bucket);
+  const firstBucketStartMs = endBucketStartMs - (slotCount * unitsPerSlot - 1) * unitMs;
+
+  const slots: TokenTrendDisplaySlot[] = Array.from({ length: slotCount }, (_, index) => {
+    const bucketStartMs = firstBucketStartMs + index * unitsPerSlot * unitMs;
+    return {
+      key: `${bucketStartMs}-${index}`,
+      label: formatTrendBucketLabel(bucketStartMs, bucket),
+    };
+  });
+
+  let mappedPointCount = 0;
+  for (const point of visiblePoints) {
+    const pointBucketStartMs = floorToTrendBucket(point.bucketStartMs, bucket);
+    const slotIndex = Math.floor((pointBucketStartMs - firstBucketStartMs) / (unitsPerSlot * unitMs));
+    if (slotIndex < 0 || slotIndex >= slots.length) {
+      continue;
+    }
+
+    const slotBucketStartMs = firstBucketStartMs + slotIndex * unitsPerSlot * unitMs;
+    slots[slotIndex] = {
+      ...slots[slotIndex],
+      point: mergeTrendPoint(slots[slotIndex].point, point, slotBucketStartMs),
+    };
+    mappedPointCount += 1;
+  }
+
+  if (mappedPointCount === 0 && visiblePoints.length > 0) {
+    const startIndex = Math.max(0, slots.length - visiblePoints.length);
+    visiblePoints.forEach((point, index) => {
+      const slotIndex = startIndex + index;
+      if (!slots[slotIndex]) {
+        return;
+      }
+
+      slots[slotIndex] = {
+        ...slots[slotIndex],
+        point: {
+          ...point,
+          bucketStartMs: floorToTrendBucket(point.bucketStartMs, bucket),
+        },
+      };
+    });
+  }
+
+  return slots;
+}
+
+function buildEmptyTrendLabels(option: ReturnType<typeof resolveTokenTimeRangeOption>, query: TokenTimeRangeQuery): string[] {
+  const toMs = query.toMs ?? Date.now();
+  const fromMs = query.fromMs ?? (toMs - (option.durationMs ?? 6 * DAY_MS));
+  const spanMs = Math.max(toMs - fromMs, option.bucket === "hour" ? HOUR_MS : DAY_MS);
+  const stepMs = TOKEN_TREND_EMPTY_LABEL_COUNT > 1 ? spanMs / (TOKEN_TREND_EMPTY_LABEL_COUNT - 1) : spanMs;
+
+  return Array.from({ length: TOKEN_TREND_EMPTY_LABEL_COUNT }, (_, index) => {
+    const tickMs = Math.round(fromMs + stepMs * index);
+    return option.bucket === "hour" ? formatHourLabel(tickMs) : formatDateOnly(tickMs);
+  });
+}
+
+function formatActualUsageSummary(
+  actualTokens: number,
+  estimatedTokens: number,
+  estimatedCount: number,
+  unavailableCount: number,
+): string {
+  if (actualTokens > 0) {
+    return `实际 ${formatInteger(actualTokens)} · 估算 ${formatInteger(estimatedTokens)}`;
+  }
+
+  if (estimatedTokens > 0 || estimatedCount > 0) {
+    return `实际未返回：模型未提供 usage · 估算 ${formatInteger(estimatedTokens)}`;
+  }
+
+  if (unavailableCount > 0) {
+    return "实际未返回：模型未提供 usage";
+  }
+
+  return "暂无 usage 数据";
+}
+
+function buildTrendAxisLabels(maxTotalTokens: number): string[] {
+  const safeMax = clampTokenCount(maxTotalTokens);
+  if (safeMax === 0) {
+    return ["0", "0", "0"];
+  }
+
+  return [
+    formatInteger(safeMax),
+    formatInteger(Math.round(safeMax / 2)),
+    "0",
+  ];
+}
+
 export function TokensPage() {
   const [summary, setSummary] = useState<TokenSummaryDto>(EMPTY_TOKEN_SUMMARY);
   const [trend, setTrend] = useState<TokenTrendDto>(EMPTY_TOKEN_TREND);
@@ -133,12 +296,14 @@ export function TokensPage() {
   const [error, setError] = useState<string | null>(null);
   const [timeRangeKey, setTimeRangeKey] = useState<TokenTimeRangeKey>("last24h");
 
+  const selectedTimeRangeOption = useMemo(() => resolveTokenTimeRangeOption(timeRangeKey), [timeRangeKey]);
   const selectedTimeRange = useMemo(() => resolveTokenTimeRange(timeRangeKey), [timeRangeKey]);
   const {
     items: usageItems,
     loading: usageLoading,
     error: usageError,
     paginationProps: usagePaginationProps,
+    retry: retryUsage,
     resetPaging: resetUsagePaging,
   } = usePagedListResource<TokenUsageListItemDto, TokenUsageListQuery>({
     fallbackPage: import.meta.env.DEV
@@ -226,22 +391,24 @@ export function TokensPage() {
     };
   }, [selectedTimeRange.bucket, selectedTimeRange.query]);
 
-  const totalTransferTokens = summary.inputTokens + summary.outputTokens;
-  const inputPercent = percent(summary.inputTokens, totalTransferTokens);
-  const outputPercent = percent(summary.outputTokens, totalTransferTokens);
+  const measurableTokens = summary.measurableTokens ?? summary.totalTokens;
+  const measurableInputTokens = summary.measurableInputTokens ?? summary.inputTokens;
+  const measurableOutputTokens = summary.measurableOutputTokens ?? summary.outputTokens;
+  const totalTransferTokens = measurableInputTokens + measurableOutputTokens;
+  const inputPercent = percent(measurableInputTokens, totalTransferTokens);
+  const outputPercent = percent(measurableOutputTokens, totalTransferTokens);
   const estimatedCount = summary.estimatedCount ?? 0;
   const unavailableCount = summary.unavailableCount ?? 0;
   const actualTokens = summary.actualTokens ?? 0;
   const estimatedTokens = summary.estimatedTokens ?? 0;
-  const visibleTrendPoints = useMemo(() => trend.points.slice(-TOKEN_TREND_POINT_LIMIT), [trend.points]);
-  const trendLabels = useMemo(() => {
-    if (visibleTrendPoints.length > 0) {
-      return visibleTrendPoints.map(formatTrendLabel);
-    }
-
-    return ["10/21", "10/22", "10/23", "10/24", "10/25", "10/26", "今日"];
-  }, [visibleTrendPoints]);
-  const maxTrendTotalTokens = Math.max(...visibleTrendPoints.map((point) => clampTokenCount(point.totalTokens)), 0);
+  const actualUsageSummary = formatActualUsageSummary(actualTokens, estimatedTokens, estimatedCount, unavailableCount);
+  const trendSlots = useMemo(
+    () => buildTrendDisplaySlots(trend.points, trend.bucket, selectedTimeRangeOption, selectedTimeRange.query),
+    [selectedTimeRange.query, selectedTimeRangeOption, trend.bucket, trend.points],
+  );
+  const hasTrendPoints = trendSlots.some((slot) => slot.point);
+  const maxTrendTotalTokens = Math.max(...trendSlots.map((slot) => clampTokenCount(slot.point?.totalTokens ?? 0)), 0);
+  const trendAxisLabels = useMemo(() => buildTrendAxisLabels(maxTrendTotalTokens), [maxTrendTotalTokens]);
   const topModelLegend = useMemo(() => {
     const models = summary.topModels
       .map((item) => item.model)
@@ -263,7 +430,7 @@ export function TokensPage() {
     <div className="page-stack">
       <section className="token-hero">
         <div>
-          <h1 className="token-hero__title">Token 统计报表</h1>
+          <h1 className="sr-only">Token 统计报表</h1>
           <p className="token-hero__subtitle">实时量化模型消耗与基础设施负载</p>
         </div>
         <div className="page-header__actions">
@@ -284,14 +451,14 @@ export function TokensPage() {
 
       <section className="summary-card-grid">
         <article className="summary-card">
-          <p className="summary-card__label">今日消耗总数</p>
+          <p className="summary-card__label">当前范围消耗总数</p>
           <p className="summary-card__label">{loading ? "正在刷新 token usage" : "可计量总量"}</p>
           <strong className="summary-card__value">
-            {formatInteger(summary.totalTokens)}
+            {formatInteger(measurableTokens)}
             <span className="summary-card__unit">Tokens</span>
           </strong>
           <p className="summary-card__delta">
-            实际 {formatInteger(actualTokens)} · 估算 {formatInteger(estimatedTokens)}
+            {actualUsageSummary}
           </p>
         </article>
 
@@ -317,8 +484,15 @@ export function TokensPage() {
               </div>
             </div>
           </div>
-          <div className="ratio-ring">
-            <strong>{formatRatio(summary.inputTokens, summary.outputTokens)}</strong>
+          <div
+            className="ratio-ring"
+            style={{
+              background: totalTransferTokens > 0
+                ? `conic-gradient(var(--accent) 0 ${inputPercent * 3.6}deg, #6d28d9 ${inputPercent * 3.6}deg 360deg)`
+                : undefined,
+            }}
+          >
+            <strong>{formatRatio(measurableInputTokens, measurableOutputTokens)}</strong>
           </div>
         </article>
 
@@ -345,7 +519,7 @@ export function TokensPage() {
 
       <section className="panel trend-panel">
         <div className="panel__header">
-          <h2 className="panel__title">7 日消耗趋势分析</h2>
+          <h2 className="panel__title">{selectedTimeRangeOption.trendTitle}</h2>
           <div className="trend-panel__legend">
             {topModelLegend.map((model, index) => (
               <span key={model}>
@@ -355,92 +529,96 @@ export function TokensPage() {
             ))}
           </div>
         </div>
-        {visibleTrendPoints.length > 0 ? (
+        {hasTrendPoints ? (
           <div
             aria-label="Token 消耗趋势"
-            className="chart-empty-grid"
+            className="chart-empty-grid token-trend-chart"
             data-testid="token-trend-chart"
             role="img"
-            style={{
-              alignItems: "stretch",
-              gap: "14px",
-              gridTemplateRows: "1fr auto",
-            }}
+            style={{ "--token-trend-slot-count": trendSlots.length } as CSSProperties}
           >
-            <div
-              style={{
-                alignItems: "end",
-                borderBottom: "1px solid var(--line)",
-                display: "grid",
-                gap: "14px",
-                gridTemplateColumns: `repeat(${visibleTrendPoints.length}, minmax(0, 1fr))`,
-                minHeight: "232px",
-              }}
-            >
-              {visibleTrendPoints.map((point, index) => {
-                const totalTokens = clampTokenCount(point.totalTokens);
-                const inputTokens = clampTokenCount(point.inputTokens);
-                const outputTokens = clampTokenCount(point.outputTokens);
+            <div className="token-trend-body">
+              <div className="token-trend-y-axis" data-testid="token-trend-y-axis" aria-label="Token 纵轴">
+                {trendAxisLabels.map((label, index) => (
+                  <span key={`${label}-${index}`}>{label}</span>
+                ))}
+              </div>
+              <div
+                className="token-trend-plot"
+                style={{ "--token-trend-slot-count": trendSlots.length } as CSSProperties}
+              >
+                <div className="token-trend-gridlines" aria-hidden="true">
+                  {trendAxisLabels.map((label, index) => (
+                    <span className="token-trend-gridline" key={`${label}-${index}`} />
+                  ))}
+                </div>
+                {trendSlots.map((slot, index) => {
+                  const point = slot.point;
+                  if (!point) {
+                    return (
+                      <div
+                        key={slot.key}
+                        className="token-trend-slot token-trend-slot--empty"
+                        data-testid={`token-trend-slot-${index}`}
+                        data-token-trend-slot="empty"
+                      >
+                        <span className="token-trend-empty-marker" title={`${slot.label} 暂无 token usage`} />
+                      </div>
+                    );
+                  }
 
-                return (
-                  <div
-                    key={`${point.bucketStartMs}-${index}`}
-                    aria-label={`${formatTrendLabel(point)} 总计 ${formatInteger(totalTokens)} tokens，输入 ${formatInteger(inputTokens)}，输出 ${formatInteger(outputTokens)}`}
-                    style={{
-                      alignItems: "stretch",
-                      display: "grid",
-                      gap: "6px",
-                      gridTemplateRows: "1fr auto auto auto",
-                      minWidth: 0,
-                    }}
-                  >
+                  const totalTokens = clampTokenCount(point.totalTokens);
+                  const inputTokens = clampTokenCount(point.inputTokens);
+                  const outputTokens = clampTokenCount(point.outputTokens);
+
+                  return (
                     <div
-                      data-testid={`token-trend-total-${index}`}
-                      data-total-tokens={totalTokens}
-                      style={{
-                        alignSelf: "end",
-                        background: "#e8edf5",
-                        border: "1px solid rgba(148, 163, 184, 0.35)",
-                        borderRadius: "8px 8px 4px 4px",
-                        boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.5)",
-                        display: "flex",
-                        flexDirection: "column-reverse",
-                        height: buildTrendBarHeight(point, maxTrendTotalTokens),
-                        minHeight: totalTokens > 0 ? "16px" : "4px",
-                        overflow: "hidden",
-                        width: "100%",
-                      }}
-                      title={`总计 ${formatInteger(totalTokens)} tokens`}
+                      key={slot.key}
+                      aria-label={`${slot.label} 总计 ${formatInteger(totalTokens)} tokens，输入 ${formatInteger(inputTokens)}，输出 ${formatInteger(outputTokens)}`}
+                      className="token-trend-slot"
+                      data-testid={`token-trend-slot-${index}`}
+                      data-token-trend-slot="filled"
                     >
-                      <span
-                        data-input-tokens={inputTokens}
-                        data-testid={`token-trend-input-${index}`}
-                        style={buildTrendSegmentStyle(inputTokens, totalTokens, "var(--accent)")}
-                        title={`输入 ${formatInteger(inputTokens)}`}
-                      />
-                      <span
-                        data-output-tokens={outputTokens}
-                        data-testid={`token-trend-output-${index}`}
-                        style={buildTrendSegmentStyle(outputTokens, totalTokens, "#6d28d9")}
-                        title={`输出 ${formatInteger(outputTokens)}`}
-                      />
+                      <div
+                        className="token-trend-bar"
+                        data-testid={`token-trend-total-${index}`}
+                        data-total-tokens={totalTokens}
+                        style={{
+                          height: buildTrendBarHeight(point, maxTrendTotalTokens),
+                          minHeight: totalTokens > 0 ? "48px" : "4px",
+                        }}
+                        title={`总计 ${formatInteger(totalTokens)} tokens`}
+                      >
+                        <span
+                          data-input-tokens={inputTokens}
+                          data-testid={`token-trend-input-${index}`}
+                          style={buildTrendSegmentStyle(inputTokens, totalTokens, "var(--accent)")}
+                          title={`输入 ${formatInteger(inputTokens)}`}
+                        />
+                        <span
+                          data-output-tokens={outputTokens}
+                          data-testid={`token-trend-output-${index}`}
+                          style={buildTrendSegmentStyle(outputTokens, totalTokens, "#6d28d9")}
+                          title={`输出 ${formatInteger(outputTokens)}`}
+                        />
+                      </div>
+                      <strong className="token-trend-value">
+                        总计 {formatInteger(totalTokens)}
+                      </strong>
+                      <span className="token-trend-meta">
+                        输入 {formatInteger(inputTokens)}
+                      </span>
+                      <span className="token-trend-meta">
+                        输出 {formatInteger(outputTokens)}
+                      </span>
                     </div>
-                    <strong style={{ color: "#334155", fontSize: "0.78rem", overflowWrap: "anywhere" }}>
-                      总计 {formatInteger(totalTokens)}
-                    </strong>
-                    <span style={{ color: "#64748b", fontSize: "0.72rem", overflowWrap: "anywhere" }}>
-                      输入 {formatInteger(inputTokens)}
-                    </span>
-                    <span style={{ color: "#64748b", fontSize: "0.72rem", overflowWrap: "anywhere" }}>
-                      输出 {formatInteger(outputTokens)}
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
             <div className="chart-empty-grid__axis">
-              {trendLabels.map((label, index) => (
-                <span key={`${label}-${index}`}>{label}</span>
+              {trendSlots.map((slot, index) => (
+                <span key={`${slot.label}-${index}`}>{slot.label}</span>
               ))}
             </div>
           </div>
@@ -457,8 +635,8 @@ export function TokensPage() {
           >
             <p className="small-note">暂无 Token 趋势点</p>
             <div className="chart-empty-grid__axis" style={{ width: "100%" }}>
-              {trendLabels.map((label, index) => (
-                <span key={`${label}-${index}`}>{label}</span>
+              {trendSlots.map((slot, index) => (
+                <span key={`${slot.label}-${index}`}>{slot.label}</span>
               ))}
             </div>
           </div>
@@ -479,7 +657,9 @@ export function TokensPage() {
             { key: "type", label: "来源类型" },
             { key: "time", label: "触发时间" },
           ]}
+          error={usageError}
           loading={usageLoading}
+          onRetry={retryUsage}
           rows={usageItems.map((item) => {
             const sourceType = resolveSourceType(item);
             return {

@@ -628,6 +628,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
         handleBeforeMessageWriteDecision(decisionBroker, event, ctx);
       }
       const localConsoleOccurredAtMs = Date.now();
+      const localConsoleRunId = normalizeString((ctx as any).runId) || undefined;
       const originalMessage = event?.message;
       if (!originalMessage) return;
 
@@ -640,6 +641,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
           localConsoleHooks?.beforeMessageWrite({
             occurredAtMs: localConsoleOccurredAtMs,
             sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            runId: localConsoleRunId,
             summary: inputWriteGuard.reason ?? "Inbound message was blocked before persistence.",
             contentExcerpt: extractMessageText(inputWriteGuard.message),
             contentKind: "user_message",
@@ -703,6 +705,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
           localConsoleHooks?.beforeMessageWrite({
             occurredAtMs: localConsoleOccurredAtMs,
             sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            runId: localConsoleRunId,
             summary: persistenceDecision.warning ?? "Assistant message was blocked before persistence.",
             contentExcerpt: extractMessageText(persistenceDecision.message),
             contentKind: "assistant_message",
@@ -722,6 +725,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
         localConsoleHooks?.beforeMessageWrite({
           occurredAtMs: localConsoleOccurredAtMs,
           sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          runId: localConsoleRunId,
           summary: "Assistant message passed through before_message_write without mutation.",
           contentExcerpt: extractMessageText(nextMessage),
           contentKind: "assistant_message",
@@ -736,6 +740,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
       localConsoleHooks?.beforeMessageWrite({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        runId: localConsoleRunId,
         summary: "Assistant message was reshaped before persistence.",
         contentExcerpt: extractMessageText(nextMessage),
         contentKind: "assistant_message",
@@ -757,6 +762,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
       handleToolResultPersistDecision(decisionBroker, event, ctx);
     }
     const localConsoleOccurredAtMs = Date.now();
+    const localConsoleRunId = normalizeString((ctx as any).runId) || undefined;
     if (selfSafetyGuardConfig.resultGuard === false) return;
     const { guardContext } = buildManagedGuardContext(event, ctx);
     const decision = guardToolResultPersistence(event.toolName, event.message, {
@@ -770,6 +776,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
       localConsoleHooks?.toolResultPersist({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        runId: localConsoleRunId,
         toolCallId: normalizeString(event.toolCallId) || undefined,
         toolName: normalizeString(event.toolName) || undefined,
         summary: decision.warning ?? "Tool result passed persistence guard evaluation.",
@@ -783,6 +790,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
     localConsoleHooks?.toolResultPersist({
       occurredAtMs: localConsoleOccurredAtMs,
       sessionKey: normalizeString(ctx.sessionKey) || undefined,
+      runId: localConsoleRunId,
       toolCallId: normalizeString(event.toolCallId) || undefined,
       toolName: normalizeString(event.toolName) || undefined,
       summary: decision.warning ?? "Tool result was blocked before persistence.",
@@ -806,6 +814,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
     }
     const localConsoleOccurredAtMs = Date.now();
     const localConsoleSessionKey = normalizeString(ctx.sessionKey) || undefined;
+    const localConsoleRunId = normalizeString((ctx as any).runId) || undefined;
     const activeManagedLynxCheckRun = localConsoleSessionKey
       ? readLatestPendingLynxCheckRunIntent(localConsoleSessionKey)
       : null;
@@ -878,6 +887,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
       localConsoleHooks?.messageSending({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey: localConsoleSessionKey,
+        runId: localConsoleRunId,
         summary: "Scheduled /lynx-check outbound message was cancelled because no concrete recipient was available.",
         contentExcerpt: typeof event.content === "string" ? event.content : undefined,
         contentKind: "outbound_message",
@@ -902,6 +912,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
       localConsoleHooks?.messageSending({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey: localConsoleSessionKey,
+        runId: localConsoleRunId,
         summary: "Outbound message sending bypassed output guard because it is disabled.",
         contentExcerpt: shapedContent ?? (typeof event.content === "string" ? event.content : undefined),
         contentKind: "outbound_message",
@@ -927,6 +938,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
       localConsoleHooks?.messageSending({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey: localConsoleSessionKey,
+        runId: localConsoleRunId,
         summary: enforcement.warning ?? "Outbound message content was changed by output enforcement.",
         contentExcerpt: enforcement.content,
         contentKind: "outbound_message",
@@ -941,6 +953,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
     localConsoleHooks?.messageSending({
       occurredAtMs: localConsoleOccurredAtMs,
       sessionKey: localConsoleSessionKey,
+      runId: localConsoleRunId,
       summary: enforcement.warning ?? "Outbound message passed message_sending evaluation.",
       contentExcerpt: shapedContent ?? (typeof event.content === "string" ? event.content : undefined),
       contentKind: "outbound_message",

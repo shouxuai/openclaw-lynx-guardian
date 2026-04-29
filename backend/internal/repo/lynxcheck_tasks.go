@@ -12,6 +12,7 @@ import (
 )
 
 type LynxCheckTaskListQuery struct {
+	Q          *string
 	FromMs     *int64
 	ToMs       *int64
 	SessionKey *string
@@ -126,6 +127,11 @@ func (r *LynxCheckTaskRepository) Get(ctx context.Context, requestID string) (ap
 func (r *LynxCheckTaskRepository) List(ctx context.Context, query LynxCheckTaskListQuery) (service.PageResponse[api.LynxCheckTask], error) {
 	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"request_id", "requester_id", "session_key", "target_key",
+		"source", "trigger", "status", "report_skeleton", "report_markdown",
+		"delivery_channel", "delivery_target", "delivery_status", "delivery_error",
+	}, query.Q)
 	filter.AppendEquals("session_key", query.SessionKey)
 	filter.AppendEquals("source", query.Source)
 	filter.AppendEquals("trigger", query.Trigger)

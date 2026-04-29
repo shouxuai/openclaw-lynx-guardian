@@ -86,9 +86,9 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
     items: [
       {
         id: "lynx-checks",
-        label: "检测",
+        label: "检测报告",
         path: ROUTE_PATHS.lynxChecks,
-        pageTitle: "检测",
+        pageTitle: "检测报告",
       },
       {
         id: "sessions",

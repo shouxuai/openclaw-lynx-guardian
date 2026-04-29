@@ -392,15 +392,17 @@ func insertDecisionAuditEvent(
 	payload := decisionAuditPayload(req, decision)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO audit_events (
-			event_id, session_key, request_id, source_kind, hook_name, event_type,
+			event_id, qa_record_id, session_key, run_id, request_id, source_kind, hook_name, event_type,
 			category, sub_category, direction, content_kind, primary_module,
 			modules_json, risk_level, risk_score, policy_decision, enforcement_action,
 			title, summary, recommendation, content_excerpt, occurred_at, ingested_at,
 			payload_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		decision.DecisionID+"-audit",
+		emptyToNil(req.QARecordID),
 		req.SessionKey,
+		emptyToNil(req.RunID),
 		nonEmptyString(req.RequestID, decision.DecisionID),
 		"go_control_plane",
 		nonEmptyString(req.Hook, string(decision.Stage)),
@@ -509,6 +511,14 @@ func firstString(values []string) string {
 		}
 	}
 	return ""
+}
+
+func emptyToNil(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func stringFromAnyMap(values map[string]any, keys ...string) string {

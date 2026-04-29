@@ -191,6 +191,7 @@ paths:
       operationId: listLynxChecks
       summary: List Lynx check runs.
       parameters:
+        - $ref: "#/components/parameters/Q"
         - $ref: "#/components/parameters/FromMs"
         - $ref: "#/components/parameters/ToMs"
         - $ref: "#/components/parameters/SessionKey"
