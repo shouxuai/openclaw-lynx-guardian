@@ -364,7 +364,7 @@ Expected:
 - all converted backend tests pass under `backend/test`;
 - `go test ./...` has no internal test packages left.
 
-- [ ] **Step 9: Commit Priority Task 0**
+- [x] **Step 9: Commit Priority Task 0**
 
 ```powershell
 git add backend/test
@@ -379,7 +379,7 @@ git commit -m "test: align backend tests under test directory"
 - Create: `test/src-file-ownership-audit.test.ts`
 - Modify: `test/runtime-slimming-audit.test.ts`
 
-- [ ] **Step 1: Write the file ownership audit**
+- [x] **Step 1: Write the file ownership audit**
 
 Create `test/src-file-ownership-audit.test.ts`:
 
@@ -526,7 +526,7 @@ describe("src file ownership audit", () => {
 });
 ```
 
-- [ ] **Step 2: Run the audit and confirm failure**
+- [x] **Step 2: Run the audit and confirm failure**
 
 Run:
 
