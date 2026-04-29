@@ -27,6 +27,9 @@ func (semanticArbiter) Evaluate(
 		return semanticResult("L1", "log_only", 10, "semantic.security_education", "security education request without code generation"), nil
 	case chainHasPendingApproval(chain):
 		return semanticResult("L3", "require_approval", 70, "chain_context.pending_approval", "chain context has a pending approval"), nil
+	case chainHasRecentEvasionFamilies(chain, "bypass_goal", "detector_target", "masquerade_method") &&
+		containsAny(text, "换个壳", "伪装", "执行", "脚本", "命令", "execute", "script", "command"):
+		return semanticResult("L3", "require_approval", 75, "chain_context.recent_evasion_followup", "chain has recent evasion and the request continues execution planning"), nil
 	case chainHasSensitiveFollowup(chain):
 		return semanticResult("L2", "warn", 45, "chain_context.sensitive_followup", "chain context has recent denial, evasion, or taint signals"), nil
 	case asksForProtectedPrompt(text):
@@ -61,6 +64,20 @@ func chainHasSensitiveFollowup(chain ChainSummary) bool {
 		len(chain.RecentEvasions) > 0 ||
 		len(chain.RecentTaintReads) > 0 ||
 		len(chain.TaintSummary) > 0
+}
+
+func chainHasRecentEvasionFamilies(chain ChainSummary, families ...string) bool {
+	if len(chain.RecentEvasions) == 0 {
+		return false
+	}
+	for _, want := range families {
+		for _, seen := range chain.RecentEvasions {
+			if seen == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func asksForProtectedPrompt(text string) bool {

@@ -1425,7 +1425,7 @@ git commit -m "feat: strengthen structured go tool decisions"
 - Modify: `backend/internal/repo/decisions.go`
 - Modify: `backend/internal/repo/chains.go`
 
-- [ ] **Step 1: Write chain escalation tests**
+- [x] **Step 1: Write chain escalation tests**
 
 Create `backend/internal/decision/chain_escalation_test.go`:
 
@@ -1471,7 +1471,7 @@ func TestEvidenceArbiterEscalatesRecentTaintToExternalSend(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run chain tests and confirm failure**
+- [x] **Step 2: Run chain tests and confirm failure**
 
 Run:
 
@@ -1483,7 +1483,7 @@ Pop-Location
 
 Expected: FAIL until semantic/evidence arbiters use chain families with stage-specific escalation.
 
-- [ ] **Step 3: Implement semantic chain escalation**
+- [x] **Step 3: Implement semantic chain escalation**
 
 Modify `backend/internal/decision/semantic_arbiter.go` so `chainHasSensitiveFollowup()` distinguishes recent evasion from generic warn. Add:
 
@@ -1510,7 +1510,7 @@ Then add a semantic branch:
 		return semanticResult("L3", "require_approval", 75, "chain_context.recent_evasion_followup", "chain has recent evasion and the request continues execution planning"), nil
 ```
 
-- [ ] **Step 4: Implement evidence chain escalation**
+- [x] **Step 4: Implement evidence chain escalation**
 
 Modify `backend/internal/decision/evidence_scorer.go` so `chainEvidenceItems()` adds a hard L4 result when recent taint reads combine with external send in the current request. The rule can live in `rules_tool.go` if it needs current request text:
 
@@ -1534,7 +1534,7 @@ Modify `backend/internal/decision/evidence_scorer.go` so `chainEvidenceItems()` 
 
 If persisted chain taint is only available in `ChainSummary`, add an evidence scorer helper that checks both request `TaintSummary` and `chain.RecentTaintReads`.
 
-- [ ] **Step 5: Persist evasion families after decisions**
+- [x] **Step 5: Persist evasion families after decisions**
 
 Modify `backend/internal/decision/service.go` and repository write path so decisions with matched module `evasive_intent_cn`, `concealed_execution`, or `hidden_execution` append family names into the chain event store.
 
@@ -1555,7 +1555,7 @@ func evasionSignalsFromResponse(response api.DecisionResponse) []string {
 
 Call the repository only when the session or chain key is present. Do not create chain events for ordinary business requests.
 
-- [ ] **Step 6: Verify Task 6**
+- [x] **Step 6: Verify Task 6**
 
 Run:
 
@@ -1567,7 +1567,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```powershell
 git add backend/internal/decision backend/internal/repo/decisions.go backend/internal/repo/chains.go

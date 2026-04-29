@@ -189,7 +189,7 @@ func (r evidenceRule) matches(req api.DecisionRequest) bool {
 
 func (r evidenceRule) matchesWithChain(req api.DecisionRequest, chain ChainSummary) bool {
 	switch r.ID {
-	case "tool.flow.taint_to_external":
+	case "tool.flow.taint_to_external", "tool.taint_external_send":
 		return toolRuleMatches(req, chain, func(view toolRequestView) bool {
 			return hasAnyString(view.SourceKinds, "tainted_artifact") && hasAnyString(view.SinkKinds, "external_network")
 		})

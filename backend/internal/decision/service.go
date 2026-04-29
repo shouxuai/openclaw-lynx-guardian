@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 )
@@ -54,6 +55,12 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 	if err := s.repo.InsertDecision(ctx, req, response); err != nil {
 		return api.DecisionResponse{}, err
 	}
+	if signals := evasionSignalsFromResponse(response); len(signals) > 0 {
+		now := s.clock().UTC().Format(time.RFC3339Nano)
+		if err := s.repo.AppendDecisionEvasionSignals(ctx, req, response, signals, now); err != nil {
+			return api.DecisionResponse{}, err
+		}
+	}
 	return response, nil
 }
 
@@ -73,6 +80,17 @@ func mergeMatchedModules(groups ...[]string) []string {
 		}
 	}
 	return out
+}
+
+func evasionSignalsFromResponse(response api.DecisionResponse) []string {
+	out := make([]string, 0)
+	for _, module := range response.MatchedModules {
+		switch module {
+		case "evasive_intent_cn", "concealed_execution", "hidden_execution":
+			out = append(out, module)
+		}
+	}
+	return uniqueStrings(out)
 }
 
 func eventSeverityFor(riskLevel api.RiskLevel, action api.DecisionAction) api.EventSeverity {

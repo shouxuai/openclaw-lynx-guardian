@@ -48,6 +48,18 @@ var toolEvidenceRules = []evidenceRule{
 		Matcher:       func(api.DecisionRequest, string) bool { return false },
 	},
 	{
+		ID:            "tool.taint_external_send",
+		Module:        "exfiltration",
+		Kind:          "taint_to_external_target",
+		Source:        "chain",
+		Severity:      "critical",
+		ScoreDelta:    95,
+		Reason:        "chain has recent sensitive taint and current tool sends data externally",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher:       func(api.DecisionRequest, string) bool { return false },
+	},
+	{
 		ID:            "tool.secret_external_send",
 		Module:        "exfiltration",
 		Kind:          "secret_to_external_target",

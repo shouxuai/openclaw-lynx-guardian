@@ -48,6 +48,119 @@ func (r *DecisionRepository) LoadChainSummaryForDecision(ctx context.Context, re
 	return summary, taintSummary, nil
 }
 
+func (r *DecisionRepository) AppendDecisionEvasionSignals(
+	ctx context.Context,
+	req api.DecisionRequest,
+	decision api.DecisionResponse,
+	signals []string,
+	now string,
+) error {
+	signals = uniqueNonEmptyStrings(signals)
+	if len(signals) == 0 {
+		return nil
+	}
+	requestedChainID := stringFromAnyMap(req.ChainSummary, "chainId", "chain_id")
+	if requestedChainID == "" {
+		requestedChainID = req.SessionKey
+	}
+	if requestedChainID == "" && req.SessionKey == "" {
+		return nil
+	}
+
+	summary, err := r.lookupChainSummaryForDecision(ctx, req)
+	if err != nil {
+		return err
+	}
+	chainID := nonEmptyString(summary.ChainID, requestedChainID)
+	if chainID == "" {
+		return nil
+	}
+	summary.ChainID = chainID
+	summary.SessionKey = nonEmptyString(summary.SessionKey, req.SessionKey)
+	summary.RecentEvasions = appendUniqueStrings(summary.RecentEvasions, signals, 12)
+	summaryJSON := toJSONText(summary, "{}")
+	metadataJSON := toJSONText(map[string]any{
+		"decisionId":     decision.DecisionID,
+		"evasionSignals": signals,
+		"matchedModules": decision.MatchedModules,
+	}, "{}")
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO chains (
+			id, chain_id, session_key, channel_profile, channel_id, conversation_id,
+			requester_id, requester_ou_id, status, summary_json, active_grant_id,
+			pending_approval_id, created_at, updated_at, ended_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chain_id) DO UPDATE SET
+			session_key = COALESCE(NULLIF(excluded.session_key, ''), chains.session_key),
+			channel_profile = COALESCE(NULLIF(excluded.channel_profile, ''), chains.channel_profile),
+			channel_id = COALESCE(NULLIF(excluded.channel_id, ''), chains.channel_id),
+			conversation_id = COALESCE(NULLIF(excluded.conversation_id, ''), chains.conversation_id),
+			requester_id = COALESCE(NULLIF(excluded.requester_id, ''), chains.requester_id),
+			requester_ou_id = COALESCE(NULLIF(excluded.requester_ou_id, ''), chains.requester_ou_id),
+			status = 'active',
+			summary_json = excluded.summary_json,
+			active_grant_id = excluded.active_grant_id,
+			pending_approval_id = excluded.pending_approval_id,
+			updated_at = excluded.updated_at`,
+		chainID,
+		chainID,
+		nonEmptyString(req.SessionKey, summary.SessionKey),
+		req.ChannelProfile,
+		req.ChannelID,
+		req.ConversationID,
+		req.RequesterID,
+		"",
+		"active",
+		summaryJSON,
+		summary.ActiveGrantID,
+		summary.PendingApproval,
+		now,
+		now,
+		nil,
+	); err != nil {
+		return err
+	}
+
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO chain_events (
+			id, chain_id, event_type, hook, risk_level, action, tool_name,
+			target_uri, content_excerpt, metadata_json, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		decision.DecisionID+"-evasion-signal",
+		chainID,
+		"decision_evasion_signal",
+		nonEmptyString(req.Hook, string(req.Stage)),
+		string(decision.RiskLevel),
+		string(decision.Action),
+		req.ToolName,
+		req.TargetURI,
+		truncate(decisionContentExcerpt(req), 240),
+		metadataJSON,
+		now,
+	); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 func (r *DecisionRepository) lookupChainSummaryForDecision(ctx context.Context, req api.DecisionRequest) (api.ChainSummary, error) {
 	where := make([]string, 0)
 	args := make([]any, 0)
@@ -438,6 +551,17 @@ func normalizeDecisionContextSignal(value string) string {
 		return value
 	}
 	return string(runes[:maxSignalRunes-3]) + "..."
+}
+
+func appendUniqueStrings(values []string, additions []string, limit int) []string {
+	for _, value := range additions {
+		values = appendUniqueString(values, value, limit)
+	}
+	return values
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	return appendUniqueStrings(nil, values, 0)
 }
 
 func nonEmptyString(value string, fallback string) string {
