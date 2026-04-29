@@ -1875,7 +1875,7 @@ node scripts/verify-dev-sync.mjs
 
 Expected: all assertions pass.
 
-- [ ] **Step 2: Sync into real OpenClaw runtime**
+- [x] **Step 2: Sync into real OpenClaw runtime**
 
 Run:
 
@@ -1890,7 +1890,7 @@ Expected:
 - staged plugin copy loads from `/app/extensions/openclaw-lynx-guardian`;
 - gateway restarts and log assessment is ready.
 
-- [ ] **Step 3: Verify gateway health**
+- [x] **Step 3: Verify gateway health**
 
 Run:
 
@@ -1900,7 +1900,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18789/healthz
 
 Expected: HTTP 200 with live status.
 
-- [ ] **Step 4: Run authenticated live probes**
+- [x] **Step 4: Run authenticated live probes**
 
 Use:
 
@@ -1938,7 +1938,7 @@ Expected:
 - concealed execution blocks at L4;
 - system prompt extraction blocks at L4.
 
-- [ ] **Step 5: Inspect Go decision evidence**
+- [x] **Step 5: Inspect Go decision evidence**
 
 Run:
 
@@ -1957,7 +1957,15 @@ Expected:
 - `go-strong-sysprompt` includes `prompt_protection`;
 - `block:false` approval cases remain visibly warn/orange, not safe/green.
 
-- [ ] **Step 6: Record final ownership evidence**
+Observed runtime proof after sync:
+
+- `20260429-task10-final-evasive-cn`: `L4/deny`, `block:true`, both `semantic_intent` and `evidence_score`, module `evasive_intent_cn`, evidence rules `input.evasive_cn_high_confidence` and `input.evasive_cn_combo`.
+- `20260429-task10-final-pinyin-approval`: `L3/require_approval`, `block:false`, `audit.color: orange`, both arbiters returned, module `evasive_intent_cn`.
+- `20260429-task10-final-concealed`: `L4/deny`, modules `concealed_execution` and `hidden_execution`, both arbiters returned.
+- `20260429-task10-final-sysprompt`: `L4/deny`, evidence module `prompt_protection`, both arbiters returned.
+- Tool-stage live backend probes denied credential external send, plugin tamper, and config disable with both semantic and evidence arbiters; matched modules included `credential_access`, `exfiltration`, `plugin_integrity`, `destructive_mutation`, and `config_integrity`.
+
+- [x] **Step 6: Record final ownership evidence**
 
 Run:
 
@@ -1972,7 +1980,12 @@ Expected:
 - no `src/` active runtime import of `detectChineseEvasiveIntent`;
 - any remaining references are Go fixtures, historical docs, or frontend labels for Go-returned modules.
 
-- [ ] **Step 7: Commit runtime proof notes or sync script fixes**
+Observed ownership evidence:
+
+- no `src/` result for `detectChineseEvasiveIntent`, `CHINESE_EVASIVE_INTENT`, or `M4:evasive_intent_cn`;
+- remaining matches are tests asserting absence of old plugin modules and Go backend owner code/tests using `detectChineseEvasiveIntentGo`.
+
+- [x] **Step 7: Commit runtime proof notes or sync script fixes**
 
 Only commit script changes if Task 10 required a real script fix:
 
@@ -1988,23 +2001,32 @@ git add docs/superpowers/plans/2026-04-29-lynx-guardian-go-decision-engine-stren
 git commit -m "docs: record go decision engine runtime proof"
 ```
 
+No sync script changes were required. Final verification run:
+
+- `npx vitest run test/runtime-slimming-audit.test.ts test/api-boundary.test.ts test/go-decision-ownership.test.ts test/local-l4-fast-path.test.ts test/output-guard-redesign.test.ts test/safety-guard.test.ts test/visible-input-warning.test.ts`: 7 files passed, 132 tests passed, 13 skipped.
+- `npx tsc --noEmit`: passed.
+- `Push-Location backend; go test ./... -count=1; Pop-Location`: passed.
+- `node scripts/verify-dev-sync.mjs`: `[verify-dev-sync] all assertions passed`.
+- `GET http://127.0.0.1:18789/healthz`: HTTP 200, `{"ok":true,"status":"live"}`.
+- Authenticated `POST http://127.0.0.1:18789/v1/chat/completions`: returned `chat.completion` with `pong`.
+
 ## Final Acceptance Checklist
 
-- [ ] Go `semantic_intent` covers all old plugin Chinese evasive true-positive fixtures.
-- [ ] Go `evidence_score` covers all old plugin Chinese evasive true-positive fixtures with score breakdowns.
-- [ ] Go preserves old false-positive protections for benign wildcard, plugin-help, and security-education text.
-- [ ] Go adds stronger mixed Chinese/English, pinyin, encoded execution, staged loader, and multi-turn evasion cases.
-- [ ] Tool stage has a structured request view, tool semantic arbiter coverage, source/sink evidence, command flag evidence, path classification, taint-to-external escalation, and safe operational-read boundaries.
-- [ ] Output and install stages have stronger evidence rules than before this plan.
-- [ ] Chain context raises risk for repeated evasions and taint-to-external-send transitions.
-- [ ] `src/api.ts` remains a compatibility re-export only.
-- [ ] Go control-plane request declarations remain centralized in `src/api/go-control-plane.ts`.
-- [ ] Legacy remote safety service request declarations remain centralized in `src/api/remote-safety-service.ts`.
-- [ ] Plugin active runtime no longer imports `src/guard/evasive-intent-cn.ts`.
-- [ ] Plugin local L4 hard-deny still works without Go.
-- [ ] Decision API still returns two arbiter results for representative risky probes.
-- [ ] Local console/frontend still represent `block:false` warn/approval correctly.
-- [ ] Real OpenClaw runtime sync and authenticated live probes pass.
+- [x] Go `semantic_intent` covers all old plugin Chinese evasive true-positive fixtures.
+- [x] Go `evidence_score` covers all old plugin Chinese evasive true-positive fixtures with score breakdowns.
+- [x] Go preserves old false-positive protections for benign wildcard, plugin-help, and security-education text.
+- [x] Go adds stronger mixed Chinese/English, pinyin, encoded execution, staged loader, and multi-turn evasion cases.
+- [x] Tool stage has a structured request view, tool semantic arbiter coverage, source/sink evidence, command flag evidence, path classification, taint-to-external escalation, and safe operational-read boundaries.
+- [x] Output and install stages have stronger evidence rules than before this plan.
+- [x] Chain context raises risk for repeated evasions and taint-to-external-send transitions.
+- [x] `src/api.ts` remains a compatibility re-export only.
+- [x] Go control-plane request declarations remain centralized in `src/api/go-control-plane.ts`.
+- [x] Legacy remote safety service request declarations remain centralized in `src/api/remote-safety-service.ts`.
+- [x] Plugin active runtime no longer imports `src/guard/evasive-intent-cn.ts`.
+- [x] Plugin local L4 hard-deny still works without Go.
+- [x] Decision API still returns two arbiter results for representative risky probes.
+- [x] Local console/frontend still represent `block:false` warn/approval correctly.
+- [x] Real OpenClaw runtime sync and authenticated live probes pass.
 
 ## Execution Handoff
 
