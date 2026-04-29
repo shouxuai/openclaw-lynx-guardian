@@ -1152,7 +1152,7 @@ git commit -m "refactor: split plugin setup helpers by owner"
 - Modify: `index.ts`
 - Modify: related tests
 
-- [ ] **Step 1: Move Lynx Check prompt and report template**
+- [x] **Step 1: Move Lynx Check prompt and report template**
 
 Move:
 
@@ -1161,11 +1161,11 @@ Move:
 
 Update all imports.
 
-- [ ] **Step 2: Inline or move root config**
+- [x] **Step 2: Inline or move root config**
 
 If `src/config.ts` only supports legacy remote safety API, move the exported constants into `src/api/remote-safety-service.ts`. If more consumers remain, move it to `src/runtime/plugin-runtime-config.ts` with an explicit name.
 
-- [ ] **Step 3: Split root `utils.ts` only where ownership is obvious**
+- [x] **Step 3: Split root `utils.ts` only where ownership is obvious**
 
 Move obvious helper groups:
 
@@ -1175,7 +1175,7 @@ Move obvious helper groups:
 
 Leave ambiguous helpers in place until a future approved `Discuss` pass. Do not make risky broad rewrites.
 
-- [ ] **Step 4: Verify Task 9**
+- [x] **Step 4: Verify Task 9**
 
 Run:
 
@@ -1186,7 +1186,18 @@ npx tsc --noEmit
 
 Expected: imports resolve and moved files have correct owner directories.
 
-- [ ] **Step 5: Commit Task 9**
+Observed during Task 9: Lynx Check prompt and report template moved to `src/lynx-check/` with old-path re-export shims; `src/config.ts` was deleted by inlining the legacy remote API base URL into `src/api/remote-safety-service.ts` and moving local resource constants to `src/runtime/resource-config.ts`. `src/utils.ts` remains as a compatibility aggregation point because its remaining groups are cross-owner or directly mocked by hook tests. Verification passed:
+
+```powershell
+npx vitest run test/lynx-check-prompt.test.ts test/manual-lynx-check.test.ts test/discovery-runtime-config.test.ts test/src-file-ownership-audit.test.ts
+# PASS: 4 files, 19 tests
+npx vitest run test/api.test.ts test/regression.test.ts test/skill-guard.test.ts
+# PASS: 3 files, 70 tests
+npx tsc --noEmit
+# PASS
+```
+
+- [x] **Step 5: Commit Task 9**
 
 ```powershell
 git add src/lynx-check src/discovery src/runtime src/utils.ts src/config.ts src/api/remote-safety-service.ts index.ts test/lynx-check-prompt.test.ts test/manual-lynx-check.test.ts test/discovery-runtime-config.test.ts test/src-file-ownership-audit.test.ts

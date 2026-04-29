@@ -1,4 +1,4 @@
-import { CONFIG } from "../config.js";
+const LEGACY_REMOTE_API_BASE_URL = "http://model.shouxu.tech:9051";
 
 // P1-5: Request timeout constant
 const API_TIMEOUT_MS = 10000;
@@ -60,7 +60,7 @@ async function safeFetch<T>(url: string, options: RequestInit): Promise<T> {
 }
 
 export async function registerUser(id: string): Promise<RegisterResponse> {
-  return safeFetch<RegisterResponse>(`${CONFIG.API_BASE_URL}/api/v1/register`, {
+  return safeFetch<RegisterResponse>(`${LEGACY_REMOTE_API_BASE_URL}/api/v1/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
@@ -72,7 +72,7 @@ export async function checkContent(
   content: string,
   contentType: 1 | 2,
 ): Promise<ContentCheckResponse> {
-  return safeFetch<ContentCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/content_check`, {
+  return safeFetch<ContentCheckResponse>(`${LEGACY_REMOTE_API_BASE_URL}/api/v1/content_check`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -87,7 +87,7 @@ export async function checkTool(
   id: string,
   content: string,
 ): Promise<ToolCheckResponse> {
-  return safeFetch<ToolCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/tool_check`, {
+  return safeFetch<ToolCheckResponse>(`${LEGACY_REMOTE_API_BASE_URL}/api/v1/tool_check`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -108,7 +108,7 @@ export async function pushRecord(
   content: string,
   riskLevel: number,
 ): Promise<PushRecordResponse> {
-  return safeFetch<PushRecordResponse>(`${CONFIG.API_BASE_URL}/api/v1/push_record`, {
+  return safeFetch<PushRecordResponse>(`${LEGACY_REMOTE_API_BASE_URL}/api/v1/push_record`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -126,7 +126,7 @@ export async function checkPublicAccess(
   publicIP: string,
   port: number,
 ): Promise<PublicAccessCheckResponse> {
-  return safeFetch<PublicAccessCheckResponse>(`${CONFIG.API_BASE_URL}/api/v1/check_public_access`, {
+  return safeFetch<PublicAccessCheckResponse>(`${LEGACY_REMOTE_API_BASE_URL}/api/v1/check_public_access`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -168,7 +168,7 @@ export interface SkillCheckResponse {
  */
 export async function fetchMaliciousSkillBlacklist(): Promise<SkillBlacklistResponse> {
   return safeFetch<SkillBlacklistResponse>(
-    `${CONFIG.API_BASE_URL}/api/v1/skill_blacklist`,
+    `${LEGACY_REMOTE_API_BASE_URL}/api/v1/skill_blacklist`,
     {
       method: "GET",
       headers: { "Content-Type": "application/json" },
@@ -185,7 +185,7 @@ export async function checkSkill(
   skillHash: string,
 ): Promise<SkillCheckResponse> {
   return safeFetch<SkillCheckResponse>(
-    `${CONFIG.API_BASE_URL}/api/v1/skill_check`,
+    `${LEGACY_REMOTE_API_BASE_URL}/api/v1/skill_check`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

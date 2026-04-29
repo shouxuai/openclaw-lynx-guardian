@@ -80,7 +80,6 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    CONFIG,
     checkContentWeighted,
     checkPublicAccessWeighted,
     checkToolWeighted,

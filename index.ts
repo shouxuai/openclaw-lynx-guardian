@@ -78,7 +78,6 @@ import {
   buildOptimizationHints, isTokenOptimizerAvailable,
 } from "./src/runtime/token-optimizer-runner.js";
 import { reconcileScheduledLynxCheck, resolveScheduledLynxCheckConfig } from "./src/lynx-check/scheduled-lynx-check.js";
-import { CONFIG } from "./src/config.js";
 import {
   checkContentWeighted,
   checkPublicAccessWeighted,
@@ -173,7 +172,7 @@ import {
   buildLynxCheckFallbackFailureNotice,
   buildManualLynxCheckPrompt,
   buildScheduledLynxCheckPrompt,
-} from "./src/runtime/lynx-check-prompt.js";
+} from "./src/lynx-check/prompt.js";
 import { deliverManagedLynxAuditReport } from "./src/runtime/lynx-audit-runtime.js";
 import {
   createLocalConsoleTokenProvider,
@@ -618,7 +617,6 @@ export default function setup(api: OpenClawPluginApi) {
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    CONFIG,
     checkContentWeighted,
     checkPublicAccessWeighted,
     checkToolWeighted,

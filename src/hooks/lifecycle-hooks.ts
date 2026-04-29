@@ -73,7 +73,6 @@ export function registerLifecycleHooks(api: OpenClawPluginApi, runtime: LynxHook
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    CONFIG,
     checkContentWeighted,
     checkPublicAccessWeighted,
     checkToolWeighted,

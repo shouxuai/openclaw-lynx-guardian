@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildManualLynxCheckPrompt,
   buildScheduledLynxCheckPrompt,
-} from "../src/runtime/lynx-check-prompt.js";
+} from "../src/lynx-check/prompt.js";
 
 describe("lynx-check prompt", () => {
   const reportMarkdown = [

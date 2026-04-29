@@ -47,7 +47,7 @@ import {
   buildLynxCheckFallbackFailureNotice,
   buildManualLynxCheckPrompt,
   buildScheduledLynxCheckPrompt,
-} from '../src/runtime/lynx-check-prompt.js';
+} from '../src/lynx-check/prompt.js';
 import * as tokenOptimizerRunner from '../src/runtime/token-optimizer-runner.js';
 import { resetDirectFeishuApprovalDeliveryForTests } from '../src/delivery/message-delivery.js';
 

@@ -1,5 +1,5 @@
 import { runDiscoveryAndNotify } from "./discovery-hook-utils.js";
-import { renderDetailedLynxAuditReport } from "./lynx-check-report-template.js";
+import { renderDetailedLynxAuditReport } from "../lynx-check/report-template.js";
 import { runMaliciousScriptScan, runSecurityAudit } from "../lynx-check/report-producers.js";
 import {
   checkPublicAccessWeighted,

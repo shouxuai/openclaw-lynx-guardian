@@ -77,7 +77,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    CONFIG,
     checkContentWeighted,
     checkPublicAccessWeighted,
     checkToolWeighted,

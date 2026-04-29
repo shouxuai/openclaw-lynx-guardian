@@ -15,7 +15,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSy
 import { join, basename, resolve, normalize } from "path";
 import { homedir } from "os";
 import { SKILL_HASH_ALGORITHM, computeSkillHash, computeFileHash } from "./skill-hash.js";
-import { CONFIG } from "../config.js";
+import { LYNX_RESOURCE_CONFIG } from "../runtime/resource-config.js";
 import { GoControlPlaneClient } from "../api/go-control-plane.js";
 
 /**
@@ -272,7 +272,7 @@ let blacklistCache: BlacklistCache | null = null;
 let inventoryControlPlaneConfig: SkillInventoryControlPlaneConfig | null = null;
 
 function getBlacklistDiskPath(): string {
-  return join(homedir(), CONFIG.CACHE_DIR, "skill-blacklist-cache.json");
+  return join(homedir(), LYNX_RESOURCE_CONFIG.CACHE_DIR, "skill-blacklist-cache.json");
 }
 
 export function configureSkillInventoryControlPlane(config?: SkillInventoryControlPlaneConfig | null): void {
@@ -322,7 +322,7 @@ export async function getBlacklist(
         blacklistCache = { entries: remote, lastFetched: Date.now() };
         // Persist to disk
         try {
-          const cacheDir = join(homedir(), CONFIG.CACHE_DIR);
+          const cacheDir = join(homedir(), LYNX_RESOURCE_CONFIG.CACHE_DIR);
           if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
           writeFileSync(diskPath, JSON.stringify({
             entries: remote.map((e) => ({
@@ -826,11 +826,11 @@ export function quickBlacklistCheck(
 // ── Paths ────────────────────────────────────────────────────────────
 
 function getQuarantineDir(): string {
-  return join(homedir(), CONFIG.CACHE_DIR, "quarantine");
+  return join(homedir(), LYNX_RESOURCE_CONFIG.CACHE_DIR, "quarantine");
 }
 
 function getToolsLogPath(): string {
-  return join(homedir(), CONFIG.CACHE_DIR, "TOOLS.md");
+  return join(homedir(), LYNX_RESOURCE_CONFIG.CACHE_DIR, "TOOLS.md");
 }
 
 function getSkillsDir(): string {
@@ -959,7 +959,7 @@ export function updateOpenClawConfig(skillName: string): boolean {
  */
 export function logCleanupAction(action: CleanupAction): void {
   const logPath = getToolsLogPath();
-  const logDir = join(homedir(), CONFIG.CACHE_DIR);
+  const logDir = join(homedir(), LYNX_RESOURCE_CONFIG.CACHE_DIR);
 
   if (!existsSync(logDir)) {
     mkdirSync(logDir, { recursive: true });

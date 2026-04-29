@@ -15,7 +15,7 @@ type OwnershipLabel =
 const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/api.ts": "delete",
   "src/blacklist.ts": "split",
-  "src/config.ts": "move-ts",
+  "src/config.ts": "delete",
   "src/path-glob-protection.ts": "split",
   "src/types.ts": "keep-ts",
   "src/utils.ts": "split",
@@ -59,6 +59,8 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/local-guard/sensitive-patterns.ts": "keep-ts",
   "src/local-guard/tool-command-hard-deny.ts": "keep-ts",
   "src/lynx-check/lynx-check-bridge.ts": "split",
+  "src/lynx-check/prompt.ts": "keep-ts",
+  "src/lynx-check/report-template.ts": "keep-ts",
   "src/lynx-check/report-producers.ts": "discuss-keep",
   "src/lynx-check/scheduled-lynx-check.ts": "split",
   "src/lynx-check/setup-helpers.ts": "keep-ts",
@@ -77,6 +79,7 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/runtime/policy-runtime.ts": "delete",
   "src/runtime/remote-weighting-service.ts": "delete",
   "src/runtime/requester-provenance-store.ts": "split",
+  "src/runtime/resource-config.ts": "keep-ts",
   "src/runtime/token-optimizer-runner.ts": "discuss-keep",
   "src/runtime/visible-input-warning.ts": "split",
   "src/skills/skill-guard.ts": "split",
@@ -114,6 +117,10 @@ describe("src file ownership audit", () => {
 
   it("does not keep the root api compatibility shim", () => {
     expect(existsSync(join(repoRoot, "src/api.ts"))).toBe(false);
+  });
+
+  it("does not keep a root config catch-all file", () => {
+    expect(existsSync(join(repoRoot, "src/config.ts"))).toBe(false);
   });
 
   it("keeps Go control-plane requests centralized", () => {
@@ -173,5 +180,14 @@ describe("src file ownership audit", () => {
     expect(source).not.toContain("export function buildOutboundDeliveryTarget");
     expect(source).not.toContain("export function resolveManagedLynxCheckSource");
     expect(source).not.toContain("writeFileSync");
+  });
+
+  it("keeps moved lynx-check prompt and report template paths as compatibility shims", () => {
+    expect(read("src/runtime/lynx-check-prompt.ts").trim()).toBe(
+      'export * from "../lynx-check/prompt.js";',
+    );
+    expect(read("src/discovery/lynx-check-report-template.ts").trim()).toBe(
+      'export * from "../lynx-check/report-template.js";',
+    );
   });
 });
