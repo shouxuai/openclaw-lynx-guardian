@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
 import type { EventContext, Logger, LynxReportDeliveryAttempt, Message, ResolvedMessageTarget } from "../types.js";
 import {
   getRecentActiveDeliveryTargets,
@@ -5,11 +7,22 @@ import {
   readRecentActiveDeliverySnapshots,
   readSessionStoreDeliverySnapshots,
   type RecentActiveRouteHint,
-} from "./recent-active-delivery.js";
+} from "./recent-delivery.js";
 import {
   extractInjectableWebchatText,
   injectLynxWebchatReportViaGateway,
-} from "./lynx-webchat-delivery.js";
+} from "../runtime/lynx-webchat-delivery.js";
+import {
+  normalizeString,
+  resolveRuntimeHomeDir,
+} from "../runtime/plugin-runtime-helpers.js";
+export {
+  isTrustedManagedLynxCheckReportText,
+} from "../runtime/plugin-runtime-helpers.js";
+export {
+  appendLocalConsoleWebviewFootnote,
+  appendLocalConsoleWebviewFootnoteForL4Reply,
+} from "../runtime/local-console-webview-note.js";
 
 export interface DeliverLynxReportOptions {
   log: Logger;
@@ -654,4 +667,503 @@ export async function deliverLynxReport(options: DeliverLynxReportOptions): Prom
     transport,
     deliveryAttempts,
   };
+}
+
+// Feishu direct approval delivery
+type FeishuReceiveIdType = "open_id" | "chat_id";
+
+type FeishuDirectTarget = {
+  receiveIdType: FeishuReceiveIdType;
+  receiveId: string;
+};
+
+type FeishuCredentials = {
+  appId: string;
+  appSecret: string;
+  baseUrl: string;
+};
+
+type FeishuConfigFailureReason =
+  | "file_not_found"
+  | "parse_failed"
+  | "feishu_disabled"
+  | "missing_credentials";
+
+export interface DirectFeishuApprovalDeliveryInput {
+  conversationId?: string;
+  content: string;
+  logger?: Pick<Logger, "warn">;
+}
+
+export interface DirectFeishuApprovalDeliveryResult {
+  delivered: boolean;
+  transport: "feishu-openapi-direct" | "none";
+  reason?:
+    | "missing_target"
+    | "malformed_target"
+    | "missing_config"
+    | "runtime_unavailable"
+    | "auth_failed"
+    | "send_failed";
+  configReason?: FeishuConfigFailureReason;
+  errorMessage?: string;
+  receiveIdType?: FeishuReceiveIdType;
+  receiveId?: string;
+  messageId?: string;
+}
+
+const tenantAccessTokenCache = new Map<string, {
+  token: string;
+  expiresAtMs: number;
+}>();
+
+function resolveFeishuBaseUrl(rawDomain: string): string {
+  const normalizedDomain = rawDomain.trim();
+  if (/^https?:\/\//i.test(normalizedDomain)) {
+    return normalizedDomain.replace(/\/+$/, "");
+  }
+
+  if (/lark/i.test(normalizedDomain)) {
+    return "https://open.larksuite.com";
+  }
+
+  return "https://open.feishu.cn";
+}
+
+function buildTenantTokenCacheKey(credentials: FeishuCredentials): string {
+  return `${credentials.baseUrl}\n${credentials.appId}\n${credentials.appSecret}`;
+}
+
+function resolveFeishuCredentials(logger?: Pick<Logger, "warn">): (
+  | { ok: true; credentials: FeishuCredentials }
+  | { ok: false; reason: FeishuConfigFailureReason; errorMessage?: string }
+) {
+  const openclawConfigPath = join(resolveRuntimeHomeDir(), ".openclaw", "openclaw.json");
+  if (!existsSync(openclawConfigPath)) {
+    return {
+      ok: false,
+      reason: "file_not_found",
+    };
+  }
+
+  try {
+    const openclawConfig = JSON.parse(readFileSync(openclawConfigPath, "utf8")) as Record<string, any>;
+    const feishu = openclawConfig?.channels?.feishu ?? {};
+    const enabled = feishu?.enabled;
+    if (enabled === false) {
+      return {
+        ok: false,
+        reason: "feishu_disabled",
+      };
+    }
+
+    const appId = normalizeString(feishu?.appId ?? feishu?.app_id);
+    const appSecret = normalizeString(feishu?.appSecret ?? feishu?.app_secret);
+    if (!appId || !appSecret) {
+      return {
+        ok: false,
+        reason: "missing_credentials",
+      };
+    }
+
+    const baseUrl = resolveFeishuBaseUrl(
+      normalizeString(feishu?.openBaseUrl ?? feishu?.baseUrl ?? feishu?.domain ?? "feishu"),
+    );
+    return {
+      ok: true,
+      credentials: {
+        appId,
+        appSecret,
+        baseUrl,
+      },
+    };
+  } catch (error: any) {
+    logger?.warn?.(`[lynx-guardian] Failed to read host openclaw.json feishu config: ${error.message}`);
+    return {
+      ok: false,
+      reason: "parse_failed",
+      errorMessage: error?.message ?? String(error),
+    };
+  }
+}
+
+function resolveFeishuTarget(conversationId?: string): (
+  | { ok: true; target: FeishuDirectTarget }
+  | { ok: false; reason: "missing_target" | "malformed_target" }
+) {
+  const normalizedConversationId = normalizeString(conversationId);
+  if (!normalizedConversationId) {
+    return {
+      ok: false,
+      reason: "missing_target",
+    };
+  }
+
+  const prefixedTargetMatch = normalizedConversationId.match(/^(user|dm):(.*)$/i);
+  if (prefixedTargetMatch) {
+    const openId = normalizeString(prefixedTargetMatch[2]);
+    if (!openId || !/^ou_[A-Za-z0-9_-]+$/i.test(openId)) {
+      return {
+        ok: false,
+        reason: "malformed_target",
+      };
+    }
+
+    return {
+      ok: true,
+      target: {
+        receiveIdType: "open_id",
+        receiveId: openId,
+      },
+    };
+  }
+
+  if (/^(user|dm):/i.test(normalizedConversationId)) {
+    return {
+      ok: false,
+      reason: "malformed_target",
+    };
+  }
+
+  return {
+    ok: true,
+    target: {
+      receiveIdType: "chat_id",
+      receiveId: normalizedConversationId,
+    },
+  };
+}
+
+function getGlobalFetch(): typeof fetch | null {
+  return typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
+}
+
+async function fetchTenantAccessToken(
+  credentials: FeishuCredentials,
+): Promise<{ ok: true; token: string } | { ok: false; errorMessage: string }> {
+  const cacheKey = buildTenantTokenCacheKey(credentials);
+  const cachedEntry = tenantAccessTokenCache.get(cacheKey);
+  if (
+    cachedEntry
+    && cachedEntry.expiresAtMs > Date.now() + 30_000
+  ) {
+    return {
+      ok: true,
+      token: cachedEntry.token,
+    };
+  }
+
+  const fetchFn = getGlobalFetch();
+  if (!fetchFn) {
+    return {
+      ok: false,
+      errorMessage: "Global fetch is unavailable",
+    };
+  }
+
+  try {
+    const response = await fetchFn(
+      `${credentials.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          app_id: credentials.appId,
+          app_secret: credentials.appSecret,
+        }),
+      },
+    );
+
+    const payload = await response.json() as Record<string, any>;
+    if (!response.ok || payload?.code !== 0 || !normalizeString(payload?.tenant_access_token)) {
+      return {
+        ok: false,
+        errorMessage: `Feishu tenant token request failed (status=${response.status}, code=${String(payload?.code ?? "")})`,
+      };
+    }
+
+    const token = normalizeString(payload.tenant_access_token);
+    const expireSeconds = Number.isFinite(payload?.expire) ? Number(payload.expire) : 3600;
+    tenantAccessTokenCache.set(cacheKey, {
+      token,
+      expiresAtMs: Date.now() + Math.max(60, expireSeconds) * 1000,
+    });
+    return {
+      ok: true,
+      token,
+    };
+  } catch (error: any) {
+    return {
+      ok: false,
+      errorMessage: error?.message ?? String(error),
+    };
+  }
+}
+
+export async function deliverLynxFeishuApprovalPromptDirectly(
+  input: DirectFeishuApprovalDeliveryInput,
+): Promise<DirectFeishuApprovalDeliveryResult> {
+  const targetResult = resolveFeishuTarget(input.conversationId);
+  if (!targetResult.ok) {
+    return {
+      delivered: false,
+      transport: "none",
+      reason: targetResult.reason,
+    };
+  }
+  const target = targetResult.target;
+
+  const credentialsResult = resolveFeishuCredentials(input.logger);
+  if (!credentialsResult.ok) {
+    return {
+      delivered: false,
+      transport: "none",
+      reason: "missing_config",
+      configReason: credentialsResult.reason,
+      errorMessage: credentialsResult.errorMessage,
+      receiveIdType: target.receiveIdType,
+      receiveId: target.receiveId,
+    };
+  }
+  const credentials = credentialsResult.credentials;
+
+  const fetchFn = getGlobalFetch();
+  if (!fetchFn) {
+    return {
+      delivered: false,
+      transport: "none",
+      reason: "runtime_unavailable",
+      errorMessage: "Global fetch is unavailable",
+      receiveIdType: target.receiveIdType,
+      receiveId: target.receiveId,
+    };
+  }
+
+  const tokenResult = await fetchTenantAccessToken(credentials);
+  if (!tokenResult.ok) {
+    return {
+      delivered: false,
+      transport: "none",
+      reason: "auth_failed",
+      errorMessage: tokenResult.errorMessage,
+      receiveIdType: target.receiveIdType,
+      receiveId: target.receiveId,
+    };
+  }
+
+  try {
+    const response = await fetchFn(
+      `${credentials.baseUrl}/open-apis/im/v1/messages?receive_id_type=${target.receiveIdType}`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tokenResult.token}`,
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          receive_id: target.receiveId,
+          msg_type: "text",
+          content: JSON.stringify({
+            text: input.content,
+          }),
+        }),
+      },
+    );
+
+    const payload = await response.json() as Record<string, any>;
+    if (!response.ok || payload?.code !== 0) {
+      return {
+        delivered: false,
+        transport: "none",
+        reason: "send_failed",
+        errorMessage: `Feishu message send failed (status=${response.status}, code=${String(payload?.code ?? "")})`,
+        receiveIdType: target.receiveIdType,
+        receiveId: target.receiveId,
+      };
+    }
+
+    return {
+      delivered: true,
+      transport: "feishu-openapi-direct",
+      receiveIdType: target.receiveIdType,
+      receiveId: target.receiveId,
+      messageId: normalizeString(payload?.data?.message_id) || undefined,
+    };
+  } catch (error: any) {
+    return {
+      delivered: false,
+      transport: "none",
+      reason: "send_failed",
+      errorMessage: error?.message ?? String(error),
+      receiveIdType: target.receiveIdType,
+      receiveId: target.receiveId,
+    };
+  }
+}
+
+export function resetDirectFeishuApprovalDeliveryForTests(): void {
+  tenantAccessTokenCache.clear();
+}
+
+// Outbound message decoration
+export const OUTBOUND_MESSAGE_PREFIX = "";
+export const OUTBOUND_MESSAGE_SUFFIX = "";
+export const DISCOVERY_REPORT_HEADER = "\n---\n📡 Lynx Guardian OpenClaw 服务检测报告\n---\n";
+
+function mergeDiscoveryReportText(content: string, report: string): string {
+  if (content.includes(report)) {
+    return content;
+  }
+
+  const existingReportIndex = content.indexOf(DISCOVERY_REPORT_HEADER);
+  if (existingReportIndex >= 0) {
+    return `${content.slice(0, existingReportIndex)}${report}`;
+  }
+
+  return `${content}${report}`;
+}
+
+export function decorateOutgoingMessage(content: string): string {
+  if (typeof content !== "string" || content.length === 0) {
+    return content;
+  }
+  if (content.startsWith(OUTBOUND_MESSAGE_PREFIX) && content.endsWith(OUTBOUND_MESSAGE_SUFFIX)) {
+    return content;
+  }
+  return `${OUTBOUND_MESSAGE_PREFIX}${content}${OUTBOUND_MESSAGE_SUFFIX}`;
+}
+
+export function formatDiscoveryReport(content: string): string {
+  if (typeof content !== "string" || content.length === 0) {
+    return "";
+  }
+  return `${DISCOVERY_REPORT_HEADER}${content}`;
+}
+
+export function appendDiscoveryReportToContent(content: string, report: string): string {
+  if (typeof content !== "string" || content.length === 0 || !report) {
+    return content;
+  }
+
+  return mergeDiscoveryReportText(content, report);
+}
+
+export function appendDiscoveryReportToMessage(message: any, report: string): any {
+  if (!message || typeof message !== "object" || message.role !== "assistant" || !report) {
+    return message;
+  }
+
+  if (typeof message.content === "string") {
+    const nextContent = mergeDiscoveryReportText(message.content, report);
+    if (nextContent === message.content) {
+      return message;
+    }
+    return {
+      ...message,
+      content: nextContent,
+    };
+  }
+
+  if (Array.isArray(message.content)) {
+    const lastTextIndex = [...message.content]
+      .map((block: any, index: number) => (
+        block && typeof block === "object" && block.type === "text" && typeof block.text === "string"
+          ? index
+          : -1
+      ))
+      .filter((index: number) => index >= 0)
+      .pop();
+
+    if (lastTextIndex == null) {
+      return {
+        ...message,
+        content: [
+          ...message.content,
+          { type: "text", text: report },
+        ],
+      };
+    }
+
+    const lastTextBlock = message.content[lastTextIndex];
+    const nextText = mergeDiscoveryReportText(lastTextBlock?.text ?? "", report);
+    if (nextText === lastTextBlock?.text) {
+      return message;
+    }
+
+    return {
+      ...message,
+      content: message.content.map((block: any, index: number) => (
+        index === lastTextIndex
+          ? { ...block, text: nextText }
+          : block
+      )),
+    };
+  }
+
+  return message;
+}
+
+export function decorateAssistantMessage(message: any): any {
+  if (!message || typeof message !== "object" || message.role !== "assistant") {
+    return message;
+  }
+
+  if (typeof message.content === "string") {
+    const decoratedContent = decorateOutgoingMessage(message.content);
+    if (decoratedContent === message.content) {
+      return message;
+    }
+    return {
+      ...message,
+      content: decoratedContent,
+    };
+  }
+
+  if (Array.isArray(message.content)) {
+    let changed = false;
+    const textBlockIndexes = message.content
+      .map((block: any, index: number) => (
+        block && typeof block === "object" && block.type === "text" && typeof block.text === "string"
+          ? index
+          : -1
+      ))
+      .filter((index: number) => index >= 0);
+    const firstTextIndex = textBlockIndexes[0];
+    const lastTextIndex = textBlockIndexes[textBlockIndexes.length - 1];
+
+    const decoratedBlocks = message.content.map((block: any, index: number) => {
+      if (!block || typeof block !== "object" || block.type !== "text" || typeof block.text !== "string") {
+        return block;
+      }
+
+      let nextText = block.text;
+      if (index === firstTextIndex && !nextText.startsWith(OUTBOUND_MESSAGE_PREFIX)) {
+        nextText = `${OUTBOUND_MESSAGE_PREFIX}${nextText}`;
+      }
+      if (index === lastTextIndex && !nextText.endsWith(OUTBOUND_MESSAGE_SUFFIX)) {
+        nextText = `${nextText}${OUTBOUND_MESSAGE_SUFFIX}`;
+      }
+      if (nextText === block.text) {
+        return block;
+      }
+
+      changed = true;
+      return {
+        ...block,
+        text: nextText,
+      };
+    });
+
+    if (!changed) {
+      return message;
+    }
+    return {
+      ...message,
+      content: decoratedBlocks,
+    };
+  }
+
+  return message;
 }

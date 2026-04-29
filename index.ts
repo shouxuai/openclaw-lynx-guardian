@@ -59,7 +59,7 @@ import {
   toApprovalRiskLevel,
 } from "./src/approval/approval-bridge.js";
 import { buildApprovalRequestFingerprint } from "./src/approval/approval-fingerprint.js";
-import { deliverLynxFeishuApprovalPromptDirectly } from "./src/runtime/lynx-feishu-direct-delivery.js";
+import { deliverLynxFeishuApprovalPromptDirectly } from "./src/delivery/message-delivery.js";
 import {
   assessSkillRisk,
   configureSkillInventoryControlPlane,
@@ -95,7 +95,6 @@ import {
   buildGuardContext,
   createReplacementMessage,
   extractMessageText,
-  isTrustedManagedLynxCheckReportText,
   normalizeString,
   redactAgentOutput,
 } from "./src/runtime/plugin-runtime-helpers.js";
@@ -144,7 +143,7 @@ import {
 import {
   formatDiscoveryReport,
   decorateAssistantMessage,
-} from "./src/runtime/message-decoration.js";
+} from "./src/delivery/message-delivery.js";
 import { buildManualLynxCheckReport } from "./src/discovery/manual-lynx-check.js";
 import {
   clearRecentActiveDeliveryTargetForContext,
@@ -155,10 +154,10 @@ import {
   getRecentActiveDeliveryTarget,
   rememberRecentActiveDeliveryTarget,
   shouldPreferRecentActiveDelivery,
-} from "./src/runtime/recent-active-delivery.js";
+} from "./src/delivery/recent-delivery.js";
 import { getHookCapabilityReport, getOpenClawRuntimeVersion } from "./src/runtime/hook-capabilities.js";
-import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from "./src/runtime/recent-active-delivery.js";
-import { deliverLynxReport, shapeMessageForProvider, shapeTextForProvider } from "./src/runtime/lynx-message-delivery.js";
+import type { RecentActiveDeliverySnapshot, RecentActiveDeliveryTarget } from "./src/delivery/recent-delivery.js";
+import { deliverLynxReport, shapeMessageForProvider, shapeTextForProvider } from "./src/delivery/message-delivery.js";
 import {
   configureLynxCheckTaskControlPlane,
   createLynxCheckRunIntent,
@@ -207,7 +206,8 @@ import { createLocalConsoleTokenHook } from "./src/runtime/local-console-token-h
 import {
   appendLocalConsoleWebviewFootnote,
   appendLocalConsoleWebviewFootnoteForL4Reply,
-} from "./src/runtime/local-console-webview-note.js";
+  isTrustedManagedLynxCheckReportText,
+} from "./src/delivery/message-delivery.js";
 import { guardInboundMessageBeforeWrite } from "./src/runtime/message-write-input-guard.js";
 import { guardPromptBuildInput } from "./src/runtime/prompt-build-input-guard.js";
 import {

@@ -13,7 +13,7 @@ import {
   getRecentActiveDeliveryTarget,
   rememberRecentActiveDeliveryTarget,
   readRecentActiveDeliverySnapshot,
-} from "../src/runtime/recent-active-delivery.js";
+} from "../src/delivery/recent-delivery.js";
 import {
   createLynxCheckRunIntent,
   getLynxCheckRunReportPath,

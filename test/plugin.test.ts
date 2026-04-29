@@ -12,9 +12,9 @@ import * as securityAuditRunner from '../src/lynx-check/report-producers.js';
 import * as skillGuard from '../src/skills/skill-guard.js';
 import * as safetyGuard from '../src/guard/safety-guard.js';
 import * as blacklist from '../src/blacklist.js';
-import * as recentActiveDelivery from '../src/runtime/recent-active-delivery.js';
-import * as lynxMessageDelivery from '../src/runtime/lynx-message-delivery.js';
-import { deliverLynxReport } from '../src/runtime/lynx-message-delivery.js';
+import * as recentActiveDelivery from '../src/delivery/recent-delivery.js';
+import * as lynxMessageDelivery from '../src/delivery/message-delivery.js';
+import { deliverLynxReport } from '../src/delivery/message-delivery.js';
 import { setLynxWebchatGatewayCallerForTests } from '../src/runtime/lynx-webchat-delivery.js';
 import {
   clearManagedLynxCheckAuthorization,
@@ -50,7 +50,7 @@ import {
   buildScheduledLynxCheckPrompt,
 } from '../src/runtime/lynx-check-prompt.js';
 import * as tokenOptimizerRunner from '../src/runtime/token-optimizer-runner.js';
-import { resetDirectFeishuApprovalDeliveryForTests } from '../src/runtime/lynx-feishu-direct-delivery.js';
+import { resetDirectFeishuApprovalDeliveryForTests } from '../src/delivery/message-delivery.js';
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');

@@ -38,7 +38,7 @@ export const RUNTIME_STORE_OWNERSHIP_INVENTORY: RuntimeStoreOwnershipEntry[] = [
     notes: "Consolidated local /lynx-check artifact bridge, Go task write-through, and managed-run boundary authorization.",
   },
   {
-    file: "recent-active-delivery.ts",
+    file: "delivery/recent-delivery.ts",
     owner: "delivery-bridge",
     activeLocalWrites: true,
     goWriteThrough: false,

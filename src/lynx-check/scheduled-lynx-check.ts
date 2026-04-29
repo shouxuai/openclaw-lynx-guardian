@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
-import type { ScheduledLynxDeliveryMode } from "../runtime/recent-active-delivery.js";
+import type { ScheduledLynxDeliveryMode } from "../delivery/recent-delivery.js";
 import { grantManagedLynxCheckAuthorization } from "./lynx-check-bridge.js";
 import { resolveRuntimeHomeDir } from "../runtime/plugin-runtime-helpers.js";
 

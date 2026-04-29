@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deliverLynxFeishuApprovalPromptDirectly,
   resetDirectFeishuApprovalDeliveryForTests,
-} from "../src/runtime/lynx-feishu-direct-delivery.js";
+} from "../src/delivery/message-delivery.js";
 
 describe("lynx feishu direct delivery", () => {
   const runtimeHome = join(process.cwd(), "test-temp", "lynx-feishu-direct-delivery");

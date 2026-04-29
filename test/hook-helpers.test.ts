@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   appendDiscoveryReportToMessage,
   decorateAssistantMessage,
-} from "../src/runtime/message-decoration.js";
+} from "../src/delivery/message-delivery.js";
 import {
   isManualDiscoveryRequest,
 } from "../src/discovery/discovery-hook-utils.js";

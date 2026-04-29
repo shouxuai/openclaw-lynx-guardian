@@ -21,7 +21,7 @@ import {
 import {
   rememberRecentActiveDeliveryTarget,
   resetRecentActiveDeliveryTargets,
-} from "../src/runtime/recent-active-delivery.js";
+} from "../src/delivery/recent-delivery.js";
 import { clearRequesterProvenanceStore } from "../src/runtime/requester-provenance-store.js";
 import { clearRunApprovalContexts } from "../src/approval/approval-context.js";
 

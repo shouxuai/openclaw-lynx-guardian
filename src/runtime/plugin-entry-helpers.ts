@@ -13,7 +13,7 @@ import { buildLocalConsoleWebviewFootnote } from "./local-console-webview-note.j
 import { evaluateGuardDecisionPolicy } from "./policy-runtime.js";
 import {
   readRecentActiveDeliverySnapshots,
-} from "./recent-active-delivery.js";
+} from "../delivery/recent-delivery.js";
 import {
   readRequesterProvenance,
   rememberRequesterProvenance,

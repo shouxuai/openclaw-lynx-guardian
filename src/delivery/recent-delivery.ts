@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import type { EventContext, Message } from "../types.js";
-import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
+import { normalizeString, resolveRuntimeHomeDir } from "../runtime/plugin-runtime-helpers.js";
 
 export type ScheduledLynxDeliveryMode = "recent-active" | "announce";
 

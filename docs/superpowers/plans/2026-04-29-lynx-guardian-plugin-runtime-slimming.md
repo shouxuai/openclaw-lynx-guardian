@@ -572,7 +572,7 @@ git commit -m "refactor: consolidate lynx check bridge"
 - Modify: `src/lynx-check/lynx-check-bridge.ts`
 - Delete after imports move: `src/runtime/lynx-message-delivery.ts`, `src/runtime/lynx-feishu-direct-delivery.ts`, `src/runtime/recent-active-delivery.ts`, `src/runtime/message-decoration.ts`
 
-- [ ] **Step 1: Create message delivery module**
+- [x] **Step 1: Create message delivery module**
 
 Move outbound message formatting, Feishu direct delivery, and delivery result recording into `src/delivery/message-delivery.ts`. Preserve:
 
@@ -585,7 +585,7 @@ export {
 };
 ```
 
-- [ ] **Step 2: Create recent delivery module**
+- [x] **Step 2: Create recent delivery module**
 
 Move recent route recovery into `src/delivery/recent-delivery.ts`. Preserve:
 
@@ -597,7 +597,7 @@ export {
 };
 ```
 
-- [ ] **Step 3: Update imports and delete old files**
+- [x] **Step 3: Update imports and delete old files**
 
 Update all consumers, then delete:
 
@@ -608,7 +608,7 @@ src/runtime/recent-active-delivery.ts
 src/runtime/message-decoration.ts
 ```
 
-- [ ] **Step 4: Verify delivery focused tests**
+- [x] **Step 4: Verify delivery focused tests**
 
 Run:
 
@@ -619,7 +619,7 @@ npx tsc --noEmit
 
 Expected: focused tests and compile pass.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```powershell
 git add src/delivery index.ts src/lynx-check/lynx-check-bridge.ts

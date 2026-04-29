@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFile
 import { dirname, isAbsolute, join, resolve } from "path";
 import type { LynxReportDeliveryAttempt } from "../types.js";
 import { GoControlPlaneClient } from "../api/go-control-plane.js";
-import type { RecentActiveDeliverySnapshot } from "../runtime/recent-active-delivery.js";
+import type { RecentActiveDeliverySnapshot } from "../delivery/recent-delivery.js";
 import { assertManagedLynxAuditBoundary } from "../runtime/lynx-audit-runtime.js";
 import { normalizeString, resolveRuntimeHomeDir } from "../runtime/plugin-runtime-helpers.js";
 

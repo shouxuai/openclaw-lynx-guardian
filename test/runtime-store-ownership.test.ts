@@ -12,7 +12,7 @@ describe("runtime store ownership inventory", () => {
       "approval/approval-bridge.ts",
       "approval/approval-context.ts",
       "lynx-check/lynx-check-bridge.ts",
-      "recent-active-delivery.ts",
+      "delivery/recent-delivery.ts",
     ].sort());
 
     expect(byFile.get("lynx-check/lynx-check-bridge.ts")).toMatchObject({
@@ -33,7 +33,7 @@ describe("runtime store ownership inventory", () => {
       goWriteThrough: false,
       preserveForDeliveryBridge: true,
     });
-    expect(byFile.get("recent-active-delivery.ts")).toMatchObject({
+    expect(byFile.get("delivery/recent-delivery.ts")).toMatchObject({
       owner: "delivery-bridge",
       preserveForDeliveryBridge: true,
     });

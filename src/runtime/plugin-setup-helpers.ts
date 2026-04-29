@@ -35,16 +35,16 @@ import {
   getRecentActiveDeliveryTargets,
   readRecentActiveDeliverySnapshot,
   rememberRecentActiveDeliveryTarget,
-} from "./recent-active-delivery.js";
+} from "../delivery/recent-delivery.js";
 import type {
   RecentActiveDeliverySnapshot,
   RecentActiveDeliveryTarget,
-} from "./recent-active-delivery.js";
-import { deliverLynxReport } from "./lynx-message-delivery.js";
+} from "../delivery/recent-delivery.js";
+import { deliverLynxReport } from "../delivery/message-delivery.js";
 import {
   readLatestPendingLynxCheckRunIntent,
 } from "../lynx-check/lynx-check-bridge.js";
-import { deliverLynxFeishuApprovalPromptDirectly } from "./lynx-feishu-direct-delivery.js";
+import { deliverLynxFeishuApprovalPromptDirectly } from "../delivery/message-delivery.js";
 import { buildApprovalRequestFingerprint } from "../approval/approval-fingerprint.js";
 import {
   persistGrantFromApproval,
