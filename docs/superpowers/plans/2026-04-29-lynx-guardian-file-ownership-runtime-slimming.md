@@ -946,7 +946,7 @@ git commit -m "refactor: reduce guard to local enforcement facade"
 - Modify: `test/src-file-ownership-audit.test.ts`
 - Modify: skill guard tests under `test/`
 
-- [ ] **Step 1: Add Go Skill corpus contract tests**
+- [x] **Step 1: Add Go Skill corpus contract tests**
 
 Create `backend/test/skill_decision_corpus_contract_test.go` with route-level install decision cases:
 
@@ -957,7 +957,7 @@ Create `backend/test/skill_decision_corpus_contract_test.go` with route-level in
 
 Use `/lynx/internal/v1/decision/install` through the backend test app.
 
-- [ ] **Step 2: Move expandable Skill corpora to Go**
+- [x] **Step 2: Move expandable Skill corpora to Go**
 
 Move these from `src/skills/skill-guard.ts` into Go decision/install evidence:
 
@@ -974,7 +974,9 @@ Keep in TypeScript:
 - install hook bridge;
 - Go control-plane sync calls.
 
-- [ ] **Step 3: Verify Skill split**
+Observed during Task 6: Go install decision evidence now covers unknown remote source, malicious manifest content, benign local metadata, malicious skill naming, and plugin-self install tamper. The before-tool-call decision handler routes Skill install-shaped tool calls to the existing install decision endpoint so this does not add a detector-specific round trip. TypeScript Skill guard remains as the local file IO/hash/quarantine compatibility surface.
+
+- [x] **Step 3: Verify Skill split**
 
 Run:
 
@@ -989,7 +991,9 @@ npx tsc --noEmit
 
 Expected: Go owns Skill risk judgement; plugin keeps local file operations.
 
-- [ ] **Step 4: Commit Task 6**
+Observed during Task 6: `go test ./test -run TestSkillDecisionCorpusContracts -count=1`, backend `go test ./... -count=1`, `test/src-file-ownership-audit.test.ts`, `test/skill-guard.test.ts`, `test/decision-broker.test.ts`, and `npx tsc --noEmit` pass.
+
+- [x] **Step 4: Commit Task 6**
 
 ```powershell
 git add backend/internal/decision backend/test/skill_decision_corpus_contract_test.go src/skills test/src-file-ownership-audit.test.ts

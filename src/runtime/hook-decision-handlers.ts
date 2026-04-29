@@ -65,6 +65,12 @@ export async function handleBeforeToolCallDecision(
   ctx: EventContext,
   timeoutMs = 1500,
 ): Promise<void | BeforeToolCallResult> {
+  const installContext = skillInstallDecisionContext(event, ctx);
+  if (installContext) {
+    const decision = await broker.waitInstallDecision(installContext, timeoutMs);
+    return decisionToBeforeToolCallResult(decision, "Blocked by Lynx Guardian install decision.", "Lynx Guardian install approval required");
+  }
+
   const decision = await broker.waitToolDecision(nowDecisionContext({
     stage: "tool_call",
     hook: "before_tool_call",
@@ -74,13 +80,21 @@ export async function handleBeforeToolCallDecision(
     toolArgs: event.params,
     targetUri: JSON.stringify(event.params ?? {}),
   }), timeoutMs);
+  return decisionToBeforeToolCallResult(decision, "Blocked by Lynx Guardian decision control plane.", "Lynx Guardian approval required");
+}
+
+function decisionToBeforeToolCallResult(
+  decision: Awaited<ReturnType<DecisionBroker["waitToolDecision"]>>,
+  blockFallback: string,
+  approvalFallbackTitle: string,
+): void | BeforeToolCallResult {
   if (decision.block) {
-    return { block: true, blockReason: decision.userMessage ?? "Blocked by Lynx Guardian decision control plane." };
+    return { block: true, blockReason: decision.userMessage ?? blockFallback };
   }
   if (decision.requiresApproval || decision.action === "require_approval") {
     return {
       requireApproval: {
-        title: decision.approvalRequest?.title ?? "Lynx Guardian approval required",
+        title: decision.approvalRequest?.title ?? approvalFallbackTitle,
         description: decision.approvalRequest?.summary ?? decision.userMessage ?? "This tool call requires approval.",
         severity: decision.audit.eventSeverity === "critical" || decision.riskLevel === "L4" ? "critical" : "warning",
         timeoutBehavior: "deny",
@@ -88,6 +102,37 @@ export async function handleBeforeToolCallDecision(
     };
   }
   return undefined;
+}
+
+function skillInstallDecisionContext(event: ToolCallEvent, ctx: EventContext): DecisionContext | null {
+  const params = event.params ?? {};
+  const command = typeof params.command === "string" ? params.command : "";
+  const path = typeof params.file_path === "string"
+    ? params.file_path
+    : typeof params.path === "string"
+      ? params.path
+      : "";
+  const looksLikeSkillInstall =
+    /\bopenclaw\s+(?:plugins?\s+)?install\b/i.test(command)
+    || (/\bgit\s+clone\b/i.test(command) && /\.openclaw[\\/]skills[\\/]/i.test(command))
+    || (/\b(?:cp|rsync)\b/i.test(command) && /\.openclaw[\\/]skills[\\/]/i.test(command))
+    || /\.openclaw[\\/]skills[\\/]/i.test(path);
+
+  if (!looksLikeSkillInstall) {
+    return null;
+  }
+
+  return nowDecisionContext({
+    stage: "install",
+    hook: "before_install",
+    sessionKey: ctx.sessionKey,
+    channelId: ctx.channelId,
+    requesterId: ctx.userId ?? ctx.senderId,
+    content: JSON.stringify(params),
+    toolName: event.toolName,
+    toolArgs: params,
+    targetUri: path || command,
+  });
 }
 
 export function handleAfterToolCallDecision(): void {}

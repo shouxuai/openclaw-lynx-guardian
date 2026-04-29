@@ -147,6 +147,34 @@ describe("DecisionBroker", () => {
     expect(result?.requireApproval?.severity).toBe("warning");
   });
 
+  it("routes skill installs to the install decision endpoint instead of generic tool decision", async () => {
+    const goClient = client({
+      decideInstall: vi.fn(async () => response({
+        stage: "install",
+        block: true,
+        action: "deny",
+        riskLevel: "L4",
+        matchedModules: ["skill_manifest_risk"],
+        audit: {
+          eventSeverity: "critical",
+          policyDecision: "deny",
+          enforcementAction: "deny",
+          color: "red",
+        },
+      })),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeToolCallDecision(broker, {
+      toolName: "exec",
+      params: { command: "openclaw plugins install https://unknown.example/skill.zip" },
+    }, { sessionKey: "session-1", userId: "requester-1" });
+
+    expect(result?.block).toBe(true);
+    expect(goClient.decideInstall).toHaveBeenCalledTimes(1);
+    expect(goClient.decideTool).not.toHaveBeenCalled();
+  });
+
   it("keeps sync-only handlers synchronous", () => {
     const broker = new DecisionBroker(client());
 
