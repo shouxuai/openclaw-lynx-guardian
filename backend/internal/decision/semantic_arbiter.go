@@ -27,7 +27,7 @@ func (semanticArbiter) Evaluate(
 		return semanticResult("L1", "log_only", 10, "semantic.security_education", "security education request without code generation"), nil
 	case chainHasPendingApproval(chain):
 		return semanticResult("L3", "require_approval", 70, "chain_context.pending_approval", "chain context has a pending approval"), nil
-	case chainHasRecentEvasionFamilies(chain, "bypass_goal", "detector_target", "masquerade_method") &&
+	case chainHasRecentEvasionFamilies(chain, "bypass_goal", "detector_target", "masquerade_method", "evasive_intent_cn", "concealed_execution", "hidden_execution") &&
 		containsAny(text, "换个壳", "伪装", "执行", "脚本", "命令", "execute", "script", "command"):
 		return semanticResult("L3", "require_approval", 75, "chain_context.recent_evasion_followup", "chain has recent evasion and the request continues execution planning"), nil
 	case chainHasSensitiveFollowup(chain):
