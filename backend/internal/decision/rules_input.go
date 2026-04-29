@@ -42,6 +42,47 @@ var inputEvidenceRules = []evidenceRule{
 		HardAction:    "deny",
 	},
 	{
+		ID:            "input.evasive_cn_high_confidence",
+		Module:        "evasive_intent_cn",
+		Kind:          "high_confidence_combo",
+		Source:        "input",
+		Severity:      "critical",
+		ScoreDelta:    80,
+		Reason:        "input combines high-confidence Chinese evasive intent families",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(_ api.DecisionRequest, text string) bool {
+			result := detectChineseEvasiveIntentGo(text)
+			return result.Detected && result.ScoreDelta >= 3
+		},
+	},
+	{
+		ID:         "input.evasive_cn_combo",
+		Module:     "evasive_intent_cn",
+		Kind:       "family_combo",
+		Source:     "input",
+		Severity:   "warn",
+		ScoreDelta: 10,
+		Reason:     "input combines Chinese evasive intent families",
+		Matcher: func(_ api.DecisionRequest, text string) bool {
+			result := detectChineseEvasiveIntentGo(text)
+			return result.Detected && result.ScoreDelta >= 2
+		},
+	},
+	{
+		ID:         "input.evasive_cn_low_signal",
+		Module:     "evasive_intent_cn",
+		Kind:       "low_signal",
+		Source:     "input",
+		Severity:   "info",
+		ScoreDelta: 10,
+		Reason:     "input contains low-signal Chinese security or wildcard discussion",
+		Matcher: func(_ api.DecisionRequest, text string) bool {
+			result := detectChineseEvasiveIntentGo(text)
+			return result.Detected && result.ScoreDelta == 1
+		},
+	},
+	{
 		ID:         "input.approval_bypass_cn_pinyin",
 		Module:     "approval_bypass",
 		Kind:       "bypass_terms",

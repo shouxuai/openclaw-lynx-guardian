@@ -442,7 +442,7 @@ git commit -m "feat: add go decision text normalization"
 - Modify: `backend/internal/decision/rules_input.go`
 - Modify: `backend/internal/decision/rules_test.go`
 
-- [ ] **Step 1: Write Go detector tests**
+- [x] **Step 1: Write Go detector tests**
 
 Create `backend/internal/decision/evasive_cn_test.go`:
 
@@ -501,7 +501,7 @@ func assertStringSetContains(t *testing.T, values []string, wants ...string) {
 }
 ```
 
-- [ ] **Step 2: Run detector tests and confirm failure**
+- [x] **Step 2: Run detector tests and confirm failure**
 
 Run:
 
@@ -513,7 +513,7 @@ Pop-Location
 
 Expected: FAIL because `detectChineseEvasiveIntentGo` does not exist.
 
-- [ ] **Step 3: Implement `evasive_cn.go`**
+- [x] **Step 3: Implement `evasive_cn.go`**
 
 Create `backend/internal/decision/evasive_cn.go`. Port every literal, regex pattern, normalization-dependent family, gated family rule, detector-target support rule, and score combination from `src/guard/evasive-intent-cn.ts`.
 
@@ -593,7 +593,7 @@ Keep this contract:
 - standalone wildcard remains score `1`;
 - gated families without an anchor do not detect.
 
-- [ ] **Step 4: Wire semantic arbiter**
+- [x] **Step 4: Wire semantic arbiter**
 
 Modify `backend/internal/decision/semantic_arbiter.go` so `Evaluate()` checks Chinese evasive intent after safe-education and protected prompt checks but before ordinary business:
 
@@ -608,7 +608,7 @@ Modify `backend/internal/decision/semantic_arbiter.go` so `Evaluate()` checks Ch
 
 Add `strings` to imports.
 
-- [ ] **Step 5: Wire evidence score**
+- [x] **Step 5: Wire evidence score**
 
 Modify `backend/internal/decision/rules_input.go` to add one `evidenceRule` with a `Matcher` that calls the detector:
 
@@ -643,7 +643,7 @@ Modify `backend/internal/decision/rules_input.go` to add one `evidenceRule` with
 
 If a high-confidence combination should be L4, add `HardRiskLevel: "L4"` and `HardAction: "deny"` only to a separate high-confidence rule `input.evasive_cn_high_confidence`.
 
-- [ ] **Step 6: Verify Task 3**
+- [x] **Step 6: Verify Task 3**
 
 Run:
 
@@ -655,7 +655,7 @@ Pop-Location
 
 Expected: PASS for the detector tests and legacy fixture cases.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 ```powershell
 git add backend/internal/decision/evasive_cn.go backend/internal/decision/evasive_cn_test.go backend/internal/decision/semantic_arbiter.go backend/internal/decision/rules_input.go backend/internal/decision/rules_test.go backend/internal/decision/legacy_plugin_fixture_test.go backend/internal/decision/testdata/plugin_evasive_intent_cases.json
