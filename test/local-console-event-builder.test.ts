@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AuditEventItem, IngestItemV1, LynxCheckUpsertItem } from "../shared/src/ingest.js";
-import { createLocalConsoleEventBuilder } from "../src/runtime/local-console-event-builder.js";
+import { createLocalConsoleEventBuilder } from "../src/console/event-builder.js";
 
 function findAuditEvent(items: IngestItemV1[]): AuditEventItem {
   const item = items.find((candidate): candidate is AuditEventItem => candidate.kind === "auditEvent");

@@ -1,4 +1,4 @@
-import { appendLocalConsoleWebviewFootnote } from "../runtime/local-console-webview-note.js";
+import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
 
 export interface DetailedAuditSection {
   title: string;

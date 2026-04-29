@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { IngestItemV1 } from "../shared/src/ingest.js";
-import { createLocalConsoleEventBuilder } from "../src/runtime/local-console-event-builder.js";
+import { createLocalConsoleEventBuilder } from "../src/console/event-builder.js";
 import {
   filterRoutineHeartbeatIngestItems,
   shouldSkipRoutineHeartbeatProbe,
-} from "../src/runtime/local-console-heartbeat-filter.js";
+} from "../src/console/runtime.js";
 
 describe("local console heartbeat filtering", () => {
   const builder = createLocalConsoleEventBuilder();

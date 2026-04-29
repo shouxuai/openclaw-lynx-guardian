@@ -4,7 +4,7 @@ import {
   getOpenClawRuntimeVersion,
   isVersionAtLeast,
 } from "../runtime/hook-capabilities.js";
-import { appendLocalConsoleWebviewFootnote } from "../runtime/local-console-webview-note.js";
+import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
 import type { ChannelProfile } from "../runtime/requester-provenance-store.js";
 
 export type ApprovalRiskLevel = "L2" | "L3";

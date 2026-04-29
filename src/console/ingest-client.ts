@@ -1,7 +1,7 @@
 import type { Logger } from "../types.js";
 import type { IngestBatchRequestV1, IngestBatchResponseV1, IngestItemV1 } from "../../shared/src/ingest.js";
 import { LOCAL_CONSOLE_INGEST_SCHEMA_VERSION } from "../../shared/src/enums.js";
-import type { LocalConsoleRuntimeConfig } from "./local-console-config.js";
+import type { LocalConsoleRuntimeConfig } from "./runtime.js";
 
 export interface LocalConsoleIngestClient {
   enqueue(item: IngestItemV1): boolean;

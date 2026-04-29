@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { IngestItemV1, TokenUsageItem } from "../shared/src/ingest.js";
-import { createLocalConsoleTokenHook } from "../src/runtime/local-console-token-hook.js";
+import { createLocalConsoleTokenHook } from "../src/console/token-usage.js";
 import type { EventContext, LlmOutputEvent } from "../src/types.js";
 
 function event(overrides: Partial<LlmOutputEvent> = {}): LlmOutputEvent {

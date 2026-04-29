@@ -1,5 +1,5 @@
 import type { DecisionRequest, DecisionResponse } from "../../shared/src/decision.js";
-import type { LocalConsoleRuntimeConfig } from "../runtime/local-console-config.js";
+import type { LocalConsoleRuntimeConfig } from "../console/runtime.js";
 
 export type GoDecisionEndpoint = "input" | "tool" | "output" | "install";
 

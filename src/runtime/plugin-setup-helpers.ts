@@ -52,8 +52,8 @@ import {
 } from "../approval/approval-bridge.js";
 import { buildParamSummary } from "./policy-runtime.js";
 import { hasManagedLynxCheckAuthorization } from "../lynx-check/lynx-check-bridge.js";
-import { appendLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";
-import { shouldSkipRoutineHeartbeatProbe } from "./local-console-heartbeat-filter.js";
+import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
+import { shouldSkipRoutineHeartbeatProbe } from "../console/runtime.js";
 import { ensureParentDirectory } from "../discovery/pending-discovery-store.js";
 
 export function describeDeliveryTarget(ctx: any): string {

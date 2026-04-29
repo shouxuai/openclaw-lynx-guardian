@@ -22,7 +22,7 @@ export {
 export {
   appendLocalConsoleWebviewFootnote,
   appendLocalConsoleWebviewFootnoteForL4Reply,
-} from "../runtime/local-console-webview-note.js";
+} from "../console/runtime.js";
 
 export interface DeliverLynxReportOptions {
   log: Logger;

@@ -182,9 +182,9 @@ import {
 import {
   createLocalConsoleTokenProvider,
   ensureLocalConsoleToken,
-} from "./src/runtime/local-console-auth.js";
-import { createLocalConsoleIngestClient } from "./src/runtime/local-console-client.js";
-import { resolveLocalConsoleRuntimeConfig } from "./src/runtime/local-console-config.js";
+} from "./src/console/runtime.js";
+import { createLocalConsoleIngestClient } from "./src/console/ingest-client.js";
+import { resolveLocalConsoleRuntimeConfig } from "./src/console/runtime.js";
 import { DecisionBroker } from "./src/runtime/decision-broker.js";
 import { GoControlPlaneClient } from "./src/api/go-control-plane.js";
 import {
@@ -198,11 +198,11 @@ import {
   handleMessageSendingDecision,
   handleToolResultPersistDecision,
 } from "./src/runtime/hook-decision-handlers.js";
-import { createLocalConsoleGatewayRouteRegistrations } from "./src/runtime/local-console-gateway-routes.js";
-import { createLocalConsoleHookHandlers } from "./src/runtime/local-console-hook-handlers.js";
-import { buildLocalConsoleLynxCheckSnapshot } from "./src/runtime/local-console-lynx-check-snapshot.js";
-import { createLocalConsoleSupervisor } from "./src/runtime/local-console-supervisor.js";
-import { createLocalConsoleTokenHook } from "./src/runtime/local-console-token-hook.js";
+import { createLocalConsoleGatewayRouteRegistrations } from "./src/console/runtime.js";
+import { createLocalConsoleHookHandlers } from "./src/console/runtime.js";
+import { buildLocalConsoleLynxCheckSnapshot } from "./src/console/runtime.js";
+import { createLocalConsoleSupervisor } from "./src/console/runtime.js";
+import { createLocalConsoleTokenHook } from "./src/console/token-usage.js";
 import {
   appendLocalConsoleWebviewFootnote,
   appendLocalConsoleWebviewFootnoteForL4Reply,

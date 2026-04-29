@@ -9,10 +9,10 @@ import { buildInstallLocalConsoleRuntimeDepsShellCommand } from "../scripts/dev-
 import {
   buildLynxServerExecutableName,
   resolveLocalConsoleBackendEntryPath,
-} from "../src/runtime/local-console-launch.js";
+} from "../src/console/runtime.js";
 import {
   hasLocalConsoleBackendRuntimeDeps,
-} from "../src/runtime/local-console-runtime-deps.js";
+} from "../src/console/runtime.js";
 
 describe("Lynx server backend packaging and launch", () => {
   it("uses platform-specific lynx-server executable names", () => {
@@ -22,7 +22,7 @@ describe("Lynx server backend packaging and launch", () => {
 
   it("resolves the packaged Go backend", () => {
     const root = mkdtempSync(join(tmpdir(), "lynx-go-launch-"));
-    const runtimeDir = join(root, "src", "runtime");
+    const runtimeDir = join(root, "src", "console");
     const backendGoDir = join(root, "server", "backend");
     mkdirSync(runtimeDir, { recursive: true });
     mkdirSync(backendGoDir, { recursive: true });
@@ -31,7 +31,7 @@ describe("Lynx server backend packaging and launch", () => {
     writeFileSync(goEntry, "", "utf8");
 
     const resolved = resolveLocalConsoleBackendEntryPath(
-      pathToFileURL(join(runtimeDir, "local-console-launch.js")).href,
+      pathToFileURL(join(runtimeDir, "runtime.js")).href,
       { platform: "linux", arch: "x64" },
     );
 
@@ -40,14 +40,14 @@ describe("Lynx server backend packaging and launch", () => {
 
   it("does not fall back to the old Fastify backend entry", () => {
     const root = mkdtempSync(join(tmpdir(), "lynx-go-no-fastify-"));
-    const runtimeDir = join(root, "src", "runtime");
+    const runtimeDir = join(root, "src", "console");
     const oldBackendDir = join(root, "server", "backend", "dist");
     mkdirSync(runtimeDir, { recursive: true });
     mkdirSync(oldBackendDir, { recursive: true });
     writeFileSync(join(oldBackendDir, "main.js"), "", "utf8");
 
     const resolved = resolveLocalConsoleBackendEntryPath(
-      pathToFileURL(join(runtimeDir, "local-console-launch.js")).href,
+      pathToFileURL(join(runtimeDir, "runtime.js")).href,
       { platform: "linux", arch: "x64" },
     );
 

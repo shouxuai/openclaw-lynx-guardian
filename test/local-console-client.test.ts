@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { IngestItemV1 } from "../shared/src/ingest.js";
-import { createLocalConsoleIngestClient } from "../src/runtime/local-console-client.js";
-import type { LocalConsoleRuntimeConfig } from "../src/runtime/local-console-config.js";
+import { createLocalConsoleIngestClient } from "../src/console/ingest-client.js";
+import type { LocalConsoleRuntimeConfig } from "../src/console/runtime.js";
 
 const baseConfig: LocalConsoleRuntimeConfig = {
   enabled: true,

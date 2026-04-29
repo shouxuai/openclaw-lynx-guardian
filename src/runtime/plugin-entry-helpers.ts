@@ -9,7 +9,7 @@ import {
   extractMessageText,
   normalizeString,
 } from "./plugin-runtime-helpers.js";
-import { buildLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";
+import { buildLocalConsoleWebviewFootnote } from "../console/runtime.js";
 import { evaluateGuardDecisionPolicy } from "./policy-runtime.js";
 import {
   readRecentActiveDeliverySnapshots,

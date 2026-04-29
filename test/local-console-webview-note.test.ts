@@ -6,7 +6,7 @@ import {
   buildLocalConsoleWebviewFootnote,
   buildLocalConsoleWebviewUrl,
   shouldAppendLocalConsoleWebviewFootnoteForL4Reply,
-} from "../src/runtime/local-console-webview-note.js";
+} from "../src/console/runtime.js";
 
 describe("local console webview note", () => {
   it("builds the local gateway webview URL", () => {
