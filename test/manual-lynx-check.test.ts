@@ -1,21 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as api from "../src/api.js";
 import { buildManualLynxCheckReport } from "../src/discovery/manual-lynx-check.js";
 import * as discoveryUtils from "../src/discovery/discovery-hook-utils.js";
+import * as remoteApi from "../src/api/remote-safety-service.js";
 import { runManagedLynxAuditBoundaryCheck } from "../src/runtime/lynx-audit-runtime.js";
 import * as securityAuditRunner from "../src/lynx-check/report-producers.js";
 import * as skillGuard from "../src/skills/skill-guard.js";
 
-vi.mock("../src/api.js");
 vi.mock("../src/discovery/discovery-hook-utils.js");
+vi.mock("../src/api/remote-safety-service.js");
 vi.mock("../src/lynx-check/report-producers.js");
 vi.mock("../src/skills/skill-guard.js");
 
 describe("buildManualLynxCheckReport", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(api.checkPublicAccess).mockResolvedValue({
+    vi.mocked(remoteApi.checkPublicAccess).mockResolvedValue({
       code: 200,
       result: { is_public: false },
     } as any);

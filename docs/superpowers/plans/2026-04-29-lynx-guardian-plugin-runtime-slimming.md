@@ -931,7 +931,7 @@ git commit -m "test: enforce plugin slimming boundary"
 
 - Modify only packaging scripts if sync shows a real packaging gap.
 
-- [ ] **Step 1: Run local TypeScript and root tests**
+- [x] **Step 1: Run local TypeScript and root tests**
 
 Run:
 
@@ -945,7 +945,13 @@ Expected:
 - TypeScript passes.
 - Root Vitest passes with the new API boundary and slimming audit tests.
 
-- [ ] **Step 2: Run backend and frontend checks**
+Verification notes:
+
+- `npx tsc --noEmit` passed.
+- `npx vitest run --reporter=json --outputFile=test-results/root-vitest-plugin-slimming.json` passed with 145 suites and 557 tests.
+- During this pass, `test/manual-lynx-check.test.ts` was corrected to mock `src/api/remote-safety-service.ts`, matching the slimmed API boundary.
+
+- [x] **Step 2: Run backend and frontend checks**
 
 Run:
 
@@ -961,7 +967,13 @@ Pop-Location
 
 Expected: Go, frontend tests, and frontend build pass.
 
-- [ ] **Step 3: Verify sync readiness**
+Verification notes:
+
+- `Push-Location backend; go test ./... -count=1; Pop-Location` passed.
+- `Push-Location frontend; npx vitest run --reporter=verbose; npx vite build --debug; Pop-Location` passed.
+- Frontend verification covered 17 files and 38 tests, then completed the Vite build.
+
+- [x] **Step 3: Verify sync readiness**
 
 Run:
 
@@ -971,7 +983,11 @@ node scripts/verify-dev-sync.mjs
 
 Expected: no blocking packaging error.
 
-- [ ] **Step 4: Sync into real OpenClaw runtime**
+Verification notes:
+
+- `node scripts/verify-dev-sync.mjs` passed after adding coverage for the real dev log pattern where the host-mounted duplicate candidate is world-writable but the staged `/app/extensions/openclaw-lynx-guardian` plugin copy loads successfully.
+
+- [x] **Step 4: Sync into real OpenClaw runtime**
 
 Run:
 
@@ -986,7 +1002,12 @@ Expected:
 - gateway restarts;
 - gateway log assessment is not blocked.
 
-- [ ] **Step 5: Verify gateway health**
+Verification notes:
+
+- `.\scripts\sync-openclaw-dev-ready.ps1 --logs 200` passed.
+- The wrapper built and packaged backend/frontend outputs, synced hooks and skills, staged the plugin into `/app/extensions/openclaw-lynx-guardian`, restarted the gateway, synced the cron Docker state copy, restarted again, and reported success.
+
+- [x] **Step 5: Verify gateway health**
 
 Run:
 
@@ -996,7 +1017,11 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18789/healthz
 
 Expected: HTTP 200.
 
-- [ ] **Step 6: Run authenticated live probes**
+Verification notes:
+
+- `Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18789/healthz` returned HTTP 200 with `{"ok":true,"status":"live"}`.
+
+- [x] **Step 6: Run authenticated live probes**
 
 Use the current local bearer token and call the OpenAI-compatible endpoint with these scenarios:
 
@@ -1031,7 +1056,13 @@ Expected:
 - approval bypass remains warn/approval/block according to Go decision;
 - `/lynx-check` still creates a Go task and delivery evidence.
 
-- [ ] **Step 7: Record final file-count evidence**
+Verification notes:
+
+- Authenticated `openclaw/main` probes verified normal business output, system/developer prompt extraction refusal, and approval-bypass refusal.
+- Go decision API evidence included `task12-final2-system` as `L4 deny block:true`, `task12-final2-bypass` as `L3 require_approval block:false requiresApproval:true`, and `task12-final2-tool` plus `task12-final2-exfil` as `L4 deny`.
+- `/lynx-check` completed with artifact `C:\Users\24716\.openclaw\lynx\check-runs\lynx-check-1777438505070-nk61a3.result.json`; the result status was `completed`, `sendSucceeded=true`, and the Go `/lynx/lynx-checks` row showed `deliveryStatus=sent`.
+
+- [x] **Step 7: Record final file-count evidence**
 
 Run:
 
@@ -1051,7 +1082,15 @@ Expected:
 - `src/guard/**/*.ts <= 10`
 - `index.ts < 2200`
 
-- [ ] **Step 8: Commit runtime packaging changes if needed**
+Verification notes:
+
+- `src/**/*.ts = 59`
+- `src/runtime/**/*.ts = 17`
+- `src/guard/**/*.ts = 7`
+- `index.ts = 762` lines
+- Largest remaining ownership directories: `discovery = 7`, `hooks = 5`, `console = 4`, `local-guard = 3`, `lynx-check = 3`, `skills = 2`, `delivery = 2`, `api = 2`, `approval = 1`.
+
+- [x] **Step 8: Commit runtime packaging changes if needed**
 
 Only run this if packaging scripts changed:
 
@@ -1060,24 +1099,29 @@ git add scripts/sync-openclaw-dev-ready.ps1 scripts/package-local-console-server
 git commit -m "build: package slimmed plugin runtime"
 ```
 
+Verification notes:
+
+- No packaging scripts needed changes.
+- The dev sync log assessment scripts changed because the real runtime loads the staged plugin even when OpenClaw logs the host-mounted duplicate as world-writable; these changes are committed with Task 10 verification evidence instead of committing generated `server/` artifacts.
+
 ## Final Acceptance Checklist
 
-- [ ] API requests are centralized under `src/api`.
-- [ ] Local Go control-plane API and remote security-service API are separated.
-- [ ] `src/api.ts` is a shim only.
-- [ ] Approval bridge files are consolidated under `src/approval`.
-- [ ] Lynx Check bridge files are consolidated under `src/lynx-check`.
-- [ ] Delivery bridge files are consolidated under `src/delivery`.
-- [ ] Local console bridge files are consolidated under `src/console`.
-- [ ] Guard code keeps local enforcement only.
-- [ ] Go-owned policy/state modules are deleted from active plugin path.
-- [ ] `index.ts` is below 2200 lines and reads as hook orchestration.
-- [ ] `src/**/*.ts` is at or below 60 files.
-- [ ] `src/runtime/**/*.ts` is at or below 20 files.
-- [ ] `src/guard/**/*.ts` is at or below 10 files.
-- [ ] Local L4 hard deny still works without Go.
-- [ ] Sync-only output protection still works without Go.
-- [ ] Real OpenClaw runtime verification passes after sync.
+- [x] API requests are centralized under `src/api`.
+- [x] Local Go control-plane API and remote security-service API are separated.
+- [x] `src/api.ts` is a shim only.
+- [x] Approval bridge files are consolidated under `src/approval`.
+- [x] Lynx Check bridge files are consolidated under `src/lynx-check`.
+- [x] Delivery bridge files are consolidated under `src/delivery`.
+- [x] Local console bridge files are consolidated under `src/console`.
+- [x] Guard code keeps local enforcement only.
+- [x] Go-owned policy/state modules are deleted from active plugin path.
+- [x] `index.ts` is below 2200 lines and reads as hook orchestration.
+- [x] `src/**/*.ts` is at or below 60 files.
+- [x] `src/runtime/**/*.ts` is at or below 20 files.
+- [x] `src/guard/**/*.ts` is at or below 10 files.
+- [x] Local L4 hard deny still works without Go.
+- [x] Sync-only output protection still works without Go.
+- [x] Real OpenClaw runtime verification passes after sync.
 
 ## Execution Handoff
 

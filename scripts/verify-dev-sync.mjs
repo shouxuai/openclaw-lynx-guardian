@@ -91,6 +91,13 @@ const blocked = assessGatewayLogs(
 assert.equal(blocked.status, "blocked");
 assert.match(blocked.reason, /world-writable/i);
 
+const stagedCopyLoaded = assessGatewayLogs([
+  "blocked plugin candidate: world-writable path (/home/node/.openclaw/extensions/openclaw-lynx-guardian/index.ts, mode=777)",
+  "[lynx-guardian] Plugin loading...",
+].join("\n"));
+assert.equal(stagedCopyLoaded.status, "ready");
+assert.match(stagedCopyLoaded.reason, /staged path/i);
+
 assert.equal(extractContainerHealthStatus('{"Status":"healthy","FailingStreak":0,"Log":[]}'), "healthy");
 assert.equal(extractContainerHealthStatus('{"Status":"starting","FailingStreak":0,"Log":[]}'), "starting");
 assert.equal(extractContainerHealthStatus("null"), "none");

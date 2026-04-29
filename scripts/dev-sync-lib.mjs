@@ -156,17 +156,17 @@ export function buildInstallLocalConsoleRuntimeDepsShellCommand({
 export function assessGatewayLogs(logText) {
   const text = String(logText ?? "");
 
-  if (/blocked plugin candidate: world-writable path .*openclaw-lynx-guardian/i.test(text)) {
-    return {
-      status: "blocked",
-      reason: "OpenClaw still treats the plugin path as world-writable; use the in-container staged copy.",
-    };
-  }
-
   if (text.includes("[lynx-guardian] Plugin loading...")) {
     return {
       status: "ready",
       reason: "Lynx Guardian started from the in-container staged path.",
+    };
+  }
+
+  if (/blocked plugin candidate: world-writable path .*openclaw-lynx-guardian/i.test(text)) {
+    return {
+      status: "blocked",
+      reason: "OpenClaw still treats the plugin path as world-writable; use the in-container staged copy.",
     };
   }
 
