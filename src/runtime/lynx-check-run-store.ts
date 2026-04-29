@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, isAbsolute, join, resolve } from "path";
 import type { LynxReportDeliveryAttempt } from "../types.js";
+import { GoControlPlaneClient } from "../api/go-control-plane.js";
 import type { RecentActiveDeliverySnapshot } from "./recent-active-delivery.js";
 import { normalizeString, resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
 
@@ -307,14 +308,6 @@ function writeIntent(intent: LynxCheckRunIntent, options?: LynxCheckRunStoreOpti
   return intent;
 }
 
-function buildLynxCheckTaskUrl(path: string): string | null {
-  const baseUrl = normalizeString(taskControlPlaneConfig?.baseUrl);
-  if (!baseUrl) {
-    return null;
-  }
-  return `${baseUrl.replace(/\/+$/, "")}${path}`;
-}
-
 function startTaskTrigger(intent: LynxCheckRunIntent): "manual" | "scheduled" {
   return intent.source === "scheduled" || intent.trigger === "scheduled_lynx_check"
     ? "scheduled"
@@ -349,27 +342,25 @@ function mapResultStatusToTaskStatus(status: LynxCheckRunResult["status"]): stri
   }
 }
 
-function sendTaskControlPlanePayload(path: string, body: Record<string, unknown>): void {
+function sendTaskControlPlanePayload(
+  operation: (client: GoControlPlaneClient) => Promise<unknown>,
+): void {
   const config = taskControlPlaneConfig;
-  const url = buildLynxCheckTaskUrl(path);
-  const fetchImpl = config?.fetchImpl ?? globalThis.fetch;
-  if (!config || !url || !fetchImpl) {
+  if (!config) {
     return;
   }
 
-  const token = normalizeString(config.getToken?.());
-  void fetchImpl(url, {
-    method: "POST",
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  }).then((response) => {
-    if (!response.ok) {
-      throw new Error(`lynx check task control plane responded with HTTP ${response.status}`);
-    }
-  }).catch((error) => {
+  let client: GoControlPlaneClient;
+  try {
+    client = new GoControlPlaneClient(config);
+  } catch (error) {
+    config.logger?.warn?.(
+      `[lynx-guardian] Failed to prepare /lynx-check task control plane client: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+
+  void operation(client).catch((error) => {
     config.logger?.warn?.(
       `[lynx-guardian] Failed to sync /lynx-check task state to Go: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -377,7 +368,7 @@ function sendTaskControlPlanePayload(path: string, body: Record<string, unknown>
 }
 
 function syncTaskStart(intent: LynxCheckRunIntent): void {
-  sendTaskControlPlanePayload("/lynx/internal/v1/tasks/lynx-check/start", {
+  const body = {
     requestId: intent.requestId,
     trigger: startTaskTrigger(intent),
     source: intent.trigger,
@@ -389,13 +380,14 @@ function syncTaskStart(intent: LynxCheckRunIntent): void {
       routeHint: intent.routeHint,
       createdAtMs: intent.createdAtMs,
     },
-  });
+  };
+  sendTaskControlPlanePayload((client) => client.startLynxCheckTask(body));
 }
 
 function syncTaskIntentStatus(intent: LynxCheckRunIntent): void {
-  sendTaskControlPlanePayload(`/lynx/internal/v1/tasks/lynx-check/${encodeURIComponent(intent.requestId)}/event`, {
+  sendTaskControlPlanePayload((client) => client.appendLynxCheckTaskEvent(intent.requestId, {
     status: mapIntentStatusToTaskStatus(intent.status),
-  });
+  }));
 }
 
 function syncTaskRunResult(result: LynxCheckRunResult): void {
@@ -405,7 +397,7 @@ function syncTaskRunResult(result: LynxCheckRunResult): void {
   }
 
   const deliveredAttempt = result.deliveryAttempts?.find((attempt) => attempt.delivered);
-  sendTaskControlPlanePayload(`/lynx/internal/v1/tasks/lynx-check/${encodeURIComponent(result.requestId)}/event`, {
+  sendTaskControlPlanePayload((client) => client.appendLynxCheckTaskEvent(result.requestId, {
     status,
     deliveryChannel: result.transport !== "pending" ? result.transport : undefined,
     deliveryTarget: deliveredAttempt?.targetKey ?? result.deliveryAttempts?.[0]?.targetKey,
@@ -418,7 +410,7 @@ function syncTaskRunResult(result: LynxCheckRunResult): void {
       reportPath: result.reportPath,
       completedAtMs: result.completedAtMs,
     },
-  });
+  }));
 }
 
 export function createLynxCheckRunIntent(

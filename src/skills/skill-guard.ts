@@ -23,6 +23,7 @@ import {
   type TrustedSkillEntry,
 } from "./skill-blacklist-data.js";
 import { CONFIG } from "../config.js";
+import { GoControlPlaneClient } from "../api/go-control-plane.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -569,29 +570,18 @@ function publishSkillInventory(results: SkillIntegrityResult[]): void {
   if (!inventoryControlPlaneConfig || results.length === 0) {
     return;
   }
-  const fetchImpl = inventoryControlPlaneConfig.fetchImpl ?? globalThis.fetch;
-  if (!fetchImpl) {
-    inventoryControlPlaneConfig.logger?.warn?.("[lynx-guardian] Skill inventory sync skipped: fetch is unavailable.");
+  const items = results.map(skillResultToInventoryRecord);
+  let client: GoControlPlaneClient;
+  try {
+    client = new GoControlPlaneClient(inventoryControlPlaneConfig);
+  } catch (error) {
+    inventoryControlPlaneConfig.logger?.warn?.(
+      `[lynx-guardian] Skill inventory sync skipped: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return;
   }
 
-  const items = results.map(skillResultToInventoryRecord);
-  const token = inventoryControlPlaneConfig.getToken?.().trim();
-  const url = `${inventoryControlPlaneConfig.baseUrl.replace(/\/+$/, "")}/lynx/internal/v1/skills/inventory/sync`;
-  void fetchImpl(url, {
-    method: "POST",
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ items }),
-  }).then((response) => {
-    if (!response.ok) {
-      inventoryControlPlaneConfig?.logger?.warn?.(
-        `[lynx-guardian] Skill inventory sync responded with HTTP ${response.status}`,
-      );
-      return;
-    }
+  void client.syncSkillInventory({ items }).then(() => {
     inventoryControlPlaneConfig?.logger?.debug?.(
       `[lynx-guardian] Skill inventory sync queued ${items.length} item(s).`,
     );

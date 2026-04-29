@@ -1,4 +1,4 @@
-import type { ContentCheckResultPayload, ToolCheckResultPayload } from "../api.js";
+import type { ContentCheckResultPayload, ToolCheckResultPayload } from "../api/remote-safety-service.js";
 
 export interface CategoryChain {
   levelOne: string;

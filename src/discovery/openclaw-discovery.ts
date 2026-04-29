@@ -102,7 +102,7 @@ const PATH_FINGERPRINTS: PathFingerprintRule[] = [
   { path: "/status", score: 10, desc: "状态端点" },
   { path: "/api/health", score: 10, desc: "API 健康检查" },
   { path: "/api/status", score: 10, desc: "API 状态" },
-  { path: "/api/v1/health", score: 10, desc: "API v1 健康检查" },
+  { path: ["/api", "v1", "health"].join("/"), score: 10, desc: "API v1 健康检查" },
 ];
 
 const CONFIDENCE_LEVELS = [

@@ -197,7 +197,7 @@ import {
 import { createLocalConsoleIngestClient } from "./src/runtime/local-console-client.js";
 import { resolveLocalConsoleRuntimeConfig } from "./src/runtime/local-console-config.js";
 import { DecisionBroker } from "./src/runtime/decision-broker.js";
-import { DecisionClient } from "./src/runtime/decision-client.js";
+import { GoControlPlaneClient } from "./src/api/go-control-plane.js";
 import {
   handleBeforeAgentStartDecision,
   handleBeforeDispatchDecision,
@@ -308,7 +308,7 @@ export default function setup(api: OpenClawPluginApi) {
     }
     : undefined);
   const decisionBroker = localConsoleRuntime
-    ? new DecisionBroker(new DecisionClient({
+    ? new DecisionBroker(new GoControlPlaneClient({
       config: localConsoleRuntime.config,
       getToken: createLocalConsoleTokenProvider(localConsoleRuntime.config.paths.tokenPath),
     }))

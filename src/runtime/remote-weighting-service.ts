@@ -11,7 +11,7 @@ import {
   type RegisterResponse,
   type SkillBlacklistResponse,
   type ToolCheckResponse,
-} from "../api.js";
+} from "../api/remote-safety-service.js";
 
 export type RemoteWeightingResult<T> =
   | {

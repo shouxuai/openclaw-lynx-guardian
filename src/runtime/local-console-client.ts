@@ -33,12 +33,6 @@ const INGEST_KIND_ENDPOINTS: Record<IngestItemV1["kind"], string> = {
   tokenUsage: "token-usage",
 };
 
-export type LocalConsoleDecisionEndpoint = "input" | "tool" | "output" | "install";
-
-export function buildLocalConsoleDecisionUrl(baseUrl: string, endpoint: LocalConsoleDecisionEndpoint): string {
-  return `${baseUrl.replace(/\/+$/, "")}/lynx/internal/v1/decision/${endpoint}`;
-}
-
 function delayMs(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, durationMs);
