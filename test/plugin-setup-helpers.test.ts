@@ -3,12 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   appendFeishuNativeApprovalGuidance,
   buildFeishuNativeToolApprovalReplyPrompt,
-  buildOutboundDeliveryTarget,
   extractApproveCommand,
+  resolveToolApprovalProtectedTargetSummary,
+} from "../src/approval/approval-prompts.js";
+import {
+  buildOutboundDeliveryTarget,
+} from "../src/delivery/delivery-targets.js";
+import {
   resolveManagedLynxCheckPromptChannel,
   resolveManagedLynxCheckSource,
-  resolveToolApprovalProtectedTargetSummary,
-} from "../src/runtime/plugin-setup-helpers.js";
+} from "../src/lynx-check/setup-helpers.js";
 
 describe("plugin setup helpers", () => {
   it("extracts allow and deny decisions from an approve command", () => {

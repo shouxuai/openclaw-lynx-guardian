@@ -1072,7 +1072,7 @@ npx tsc --noEmit
 # PASS
 ```
 
-- [ ] **Step 5: Commit Task 7**
+- [x] **Step 5: Commit Task 7**
 
 ```powershell
 git add src/approval src/runtime test/*approval*.test.ts test/*override*.test.ts test/decision-broker.test.ts test/src-file-ownership-audit.test.ts
@@ -1094,7 +1094,7 @@ git commit -m "refactor: isolate runtime approval policy boundary"
 - Modify: `index.ts`
 - Modify: hook tests under `test/`
 
-- [ ] **Step 1: Add hook orchestration tests**
+- [x] **Step 1: Add hook orchestration tests**
 
 Update hook-focused tests so they assert hooks call these boundaries:
 
@@ -1104,7 +1104,7 @@ Update hook-focused tests so they assert hooks call these boundaries:
 - approval bridge for approval transport;
 - output protection for sync-only sinks.
 
-- [ ] **Step 2: Split `plugin-setup-helpers.ts` by owner**
+- [x] **Step 2: Split `plugin-setup-helpers.ts` by owner**
 
 Move helper groups into existing owner directories:
 
@@ -1116,11 +1116,11 @@ Move helper groups into existing owner directories:
 
 Do not move `src/discovery/openclaw-discovery.ts`, `src/lynx-check/report-producers.ts`, or `src/runtime/token-optimizer-runner.ts` in this task.
 
-- [ ] **Step 3: Reduce hook files to orchestration**
+- [x] **Step 3: Reduce hook files to orchestration**
 
 `input-hooks.ts`, `tool-hooks.ts`, and `output-hooks.ts` may remain TypeScript, but each should read as hook wiring plus calls into owner modules. They must not grow new semantic corpora or policy scoring.
 
-- [ ] **Step 4: Verify Task 8**
+- [x] **Step 4: Verify Task 8**
 
 Run:
 
@@ -1131,7 +1131,7 @@ npx tsc --noEmit
 
 If `test/plugin.test.ts` has historical unrelated failures, capture exact failing tests and run the new hook-specific tests plus compile.
 
-- [ ] **Step 5: Commit Task 8**
+- [x] **Step 5: Commit Task 8**
 
 ```powershell
 git add index.ts src/hooks src/runtime src/approval src/delivery src/lynx-check src/console test/plugin.test.ts test/decision-broker.test.ts test/output-guard-redesign.test.ts test/src-file-ownership-audit.test.ts

@@ -22,6 +22,7 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/api/go-control-plane.ts": "keep-ts",
   "src/api/remote-safety-service.ts": "keep-ts",
   "src/approval/approval-bridge.ts": "split",
+  "src/approval/approval-prompts.ts": "keep-ts",
   "src/approval/pending-override-store.ts": "keep-ts",
   "src/approval/requester-provenance-store.ts": "keep-ts",
   "src/console/event-builder.ts": "split",
@@ -29,6 +30,7 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/console/runtime.ts": "keep-ts",
   "src/console/token-usage.ts": "split",
   "src/delivery/message-delivery.ts": "split",
+  "src/delivery/delivery-targets.ts": "keep-ts",
   "src/delivery/recent-delivery.ts": "split",
   "src/discovery/discovery-hook-utils.ts": "keep-ts",
   "src/discovery/discovery-runtime-config.ts": "keep-ts",
@@ -45,6 +47,7 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/guard/system-prompt-guard.ts": "split",
   "src/hooks/input-hooks.ts": "split",
   "src/hooks/lifecycle-hooks.ts": "keep-ts",
+  "src/hooks/hook-runtime-helpers.ts": "keep-ts",
   "src/hooks/output-hooks.ts": "split",
   "src/hooks/setup.ts": "keep-ts",
   "src/hooks/tool-hooks.ts": "split",
@@ -58,6 +61,7 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/lynx-check/lynx-check-bridge.ts": "split",
   "src/lynx-check/report-producers.ts": "discuss-keep",
   "src/lynx-check/scheduled-lynx-check.ts": "split",
+  "src/lynx-check/setup-helpers.ts": "keep-ts",
   "src/runtime/decision-broker.ts": "keep-ts",
   "src/runtime/decision-context.ts": "keep-ts",
   "src/runtime/hook-capabilities.ts": "keep-ts",
@@ -161,5 +165,13 @@ describe("src file ownership audit", () => {
     const source = read("src/runtime/policy-runtime.ts");
     expect(source).not.toContain("evaluateEvidenceBundle");
     expect(source).not.toContain("compatibilityScore");
+  });
+
+  it("keeps plugin setup helper facade from owning approval, delivery, or lynx-check pure helpers", () => {
+    const source = read("src/runtime/plugin-setup-helpers.ts");
+    expect(source).not.toContain("export function extractApproveCommand");
+    expect(source).not.toContain("export function buildOutboundDeliveryTarget");
+    expect(source).not.toContain("export function resolveManagedLynxCheckSource");
+    expect(source).not.toContain("writeFileSync");
   });
 });

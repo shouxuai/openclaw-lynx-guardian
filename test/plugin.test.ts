@@ -2592,6 +2592,12 @@ describe('Plugin Setup', () => {
   });
 
   it('should not open pending override flow for hard-lock tool modules', async () => {
+    mockApi.config = {
+      localConsole: {
+        enabled: false,
+        autoStart: false,
+      },
+    };
     setup(mockApi);
     const toolHandler = handlers['before_tool_call'];
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
@@ -2718,6 +2724,12 @@ describe('Plugin Setup', () => {
   });
 
   it('should map local guard policy decisions back to legacy risk levels before pushRecord', async () => {
+    mockApi.config = {
+      localConsole: {
+        enabled: false,
+        autoStart: false,
+      },
+    };
     setup(mockApi);
     const toolHandler = handlers['before_tool_call'];
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({

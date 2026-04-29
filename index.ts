@@ -211,12 +211,18 @@ import {
 import { resolvePluginRuntimeConfig } from "./src/runtime/plugin-runtime-config.js";
 import {
   buildDeliveryTargetSnapshot,
-  buildFeishuNativeToolApprovalReplyPrompt,
   buildOutboundDeliveryTarget,
-  createPluginSetupHelpers,
+} from "./src/delivery/delivery-targets.js";
+import {
+  buildFeishuNativeToolApprovalReplyPrompt,
+  resolveToolApprovalProtectedTargetSummary,
+} from "./src/approval/approval-prompts.js";
+import {
   resolveManagedLynxCheckPromptChannel,
   resolveManagedLynxCheckSource,
-  resolveToolApprovalProtectedTargetSummary,
+} from "./src/lynx-check/setup-helpers.js";
+import {
+  createPluginSetupHelpers,
 } from "./src/runtime/plugin-setup-helpers.js";
 
 import {
