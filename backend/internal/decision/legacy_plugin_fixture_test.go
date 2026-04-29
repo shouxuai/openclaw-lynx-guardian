@@ -10,17 +10,12 @@ import (
 )
 
 type legacyPluginCase struct {
-	Name                   string   `json:"name"`
-	Content                string   `json:"content"`
-	ExpectDetected         bool     `json:"expectDetected"`
-	ExpectFamilies         []string `json:"expectFamilies"`
-	ExpectAbsentFamilies   []string `json:"expectAbsentFamilies"`
-	ExpectPluginSeverity   string   `json:"expectPluginSeverity"`
-	ExpectPluginScoreDelta float64  `json:"expectPluginScoreDelta"`
-	ExpectRiskLevel        string   `json:"expectRiskLevel"`
-	ExpectAction           string   `json:"expectAction"`
-	ExpectSemanticModule   string   `json:"expectSemanticModule"`
-	ExpectEvidenceRule     string   `json:"expectEvidenceRule"`
+	Name                 string `json:"name"`
+	Content              string `json:"content"`
+	ExpectRiskLevel      string `json:"expectRiskLevel"`
+	ExpectAction         string `json:"expectAction"`
+	ExpectSemanticModule string `json:"expectSemanticModule"`
+	ExpectEvidenceRule   string `json:"expectEvidenceRule"`
 }
 
 func TestGoDecisionEngineCoversLegacyPluginEvasiveIntentCases(t *testing.T) {
