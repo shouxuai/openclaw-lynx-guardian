@@ -1,5 +1,7 @@
 import type { DecisionResponse, DecisionStage } from "../../shared/src/decision.js";
 import type { DecisionContext } from "../runtime/decision-context.js";
+import { findLocalHardDenyPath, type LocalPathHardDenyHit } from "./path-hard-deny.js";
+import { findLocalToolHardDeny } from "./tool-command-hard-deny.js";
 
 interface PluginProtectionNormalizationRule {
   from: RegExp;
@@ -114,6 +116,28 @@ const localL4Rules: LocalL4Rule[] = [
 
 export function evaluateLocalL4FastPath(context: DecisionContext): LocalL4Decision {
   const text = normalizeContextText(context);
+  const toolHit = findLocalToolHardDeny({
+    content: context.content,
+    toolName: context.toolName,
+    command: extractCommandText(context.toolArgs),
+    params: context.toolArgs,
+    targetUri: context.targetUri,
+  });
+  if (toolHit) {
+    return {
+      matched: true,
+      decision: buildLocalL4Decision(context.stage, toolHit.module, toolHit.reason),
+    };
+  }
+
+  const pathHit = localPathHardDenyToRule(findLocalHardDenyPath(text), text, context);
+  if (pathHit) {
+    return {
+      matched: true,
+      decision: buildLocalL4Decision(context.stage, pathHit.module, pathHit.reason),
+    };
+  }
+
   const matched = localL4Rules.find((rule) => rule.matches(text, context));
   if (!matched) {
     return { matched: false };
@@ -207,4 +231,74 @@ function normalizeContextText(context: DecisionContext): string {
 
 function containsAny(value: string, ...needles: string[]): boolean {
   return needles.some((needle) => value.includes(needle.toLowerCase()));
+}
+
+function extractCommandText(toolArgs?: Record<string, unknown>): string | undefined {
+  const command = toolArgs?.command ?? toolArgs?.cmd ?? toolArgs?.script;
+  return typeof command === "string" ? command : undefined;
+}
+
+function localPathHardDenyToRule(
+  hit: LocalPathHardDenyHit | null,
+  text: string,
+  context: DecisionContext,
+): { module: string; reason: string } | null {
+  if (!hit) {
+    return null;
+  }
+
+  if (hit.kind === "credential" && hasReadVerb(text)) {
+    return {
+      module: "local_secret_read",
+      reason: `Request attempts to read protected credential path: ${hit.label}.`,
+    };
+  }
+
+  if (hit.kind === "system_path" && hasReadOrWriteVerb(text)) {
+    return {
+      module: "local_secret_read",
+      reason: `Request attempts to access protected system path: ${hit.label}.`,
+    };
+  }
+
+  if (hit.kind === "prompt_file" && hasReadVerb(text)) {
+    return {
+      module: "local_protected_prompt_read",
+      reason: `Request attempts to read protected prompt file: ${hit.label}.`,
+    };
+  }
+
+  if (hit.kind === "plugin_self" && isMutatingContext(text, context)) {
+    return {
+      module: "local_plugin_file_tamper",
+      reason: `Request attempts to mutate Lynx Guardian path: ${hit.label}.`,
+    };
+  }
+
+  if (hit.kind === "openclaw_config" && isDisableOrMutationText(text, context)) {
+    return {
+      module: "local_config_disable_mutation",
+      reason: `Request attempts to disable protection through config path: ${hit.label}.`,
+    };
+  }
+
+  return null;
+}
+
+function hasReadVerb(text: string): boolean {
+  return /\b(?:cat|type|get-content|gc|less|more|head|tail|read|open|print|show)\b/i.test(text);
+}
+
+function hasReadOrWriteVerb(text: string): boolean {
+  return hasReadVerb(text) || /\b(?:write|edit|patch|append|overwrite|set-content|rm|delete|remove)\b/i.test(text);
+}
+
+function isMutatingContext(text: string, context: DecisionContext): boolean {
+  return /^(?:write|edit|edit_file)$/i.test(context.toolName ?? "")
+    || /\b(?:rm|del|delete|remove|unlink|mv|move|rename|ren|rmdir|rd|write|edit|patch|append|overwrite|disable|uninstall)\b/i.test(text);
+}
+
+function isDisableOrMutationText(text: string, context: DecisionContext): boolean {
+  return isMutatingContext(text, context)
+    && /(?:\bdisabled\b\s*[:=]\s*true|\bdisable(?:d|s)?\b|\bturn\s+off\b|\bdeactivate\b|\bsafety\s*bypass\b)/i.test(text);
 }

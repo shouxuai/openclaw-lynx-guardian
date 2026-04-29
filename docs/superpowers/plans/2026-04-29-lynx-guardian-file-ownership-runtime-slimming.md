@@ -772,7 +772,7 @@ Only stage files that actually changed.
 - Modify: `test/blacklist.test.ts`
 - Modify: `test/local-l4-fast-path.test.ts`
 
-- [ ] **Step 1: Add focused local L4 tests**
+- [x] **Step 1: Add focused local L4 tests**
 
 Extend `test/local-l4-fast-path.test.ts` with cases for:
 
@@ -784,7 +784,7 @@ Extend `test/local-l4-fast-path.test.ts` with cases for:
 
 The high-confidence deny examples must assert `riskLevel === "L4"` and `action === "deny"`.
 
-- [ ] **Step 2: Create `tool-command-hard-deny.ts`**
+- [x] **Step 2: Create `tool-command-hard-deny.ts`**
 
 Move the L4 command patterns from `src/blacklist.ts` into:
 
@@ -806,7 +806,7 @@ export function evaluateLocalToolCommandHardDeny(input: {
 
 Keep `src/blacklist.ts` only as a compatibility wrapper during this task.
 
-- [ ] **Step 3: Create `path-hard-deny.ts`**
+- [x] **Step 3: Create `path-hard-deny.ts`**
 
 Move deterministic protected path expansion needed by local L4 into:
 
@@ -823,11 +823,11 @@ export function findLocalHardDenyPath(text: string): LocalPathHardDenyHit | null
 
 Leave non-L4 semantic label logic to Go evidence rules.
 
-- [ ] **Step 4: Wire local L4 through `local-l4-fast-path.ts`**
+- [x] **Step 4: Wire local L4 through `local-l4-fast-path.ts`**
 
 Use the new modules inside `evaluateLocalL4FastPath()` before the Go decision call. Do not add a Go call for these L4 cases.
 
-- [ ] **Step 5: Keep Go mirror L4 evidence aligned**
+- [x] **Step 5: Keep Go mirror L4 evidence aligned**
 
 For every local L4 family moved into `src/local-guard/*`, verify the backend mirror exists in Go decision tests under `backend/test/decision_l4_dual_corpus_contract_test.go`.
 
@@ -851,6 +851,8 @@ npx tsc --noEmit
 ```
 
 Expected: local L4 blocks high-confidence command/path cases without Go, and Go mirrors the same L4 families for evidence/audit.
+
+Observed during Task 4: `go test ./test -run TestGoMirrorsPluginLocalL4Families -count=1`, `test/blacklist.test.ts`, `test/local-l4-fast-path.test.ts`, and `npx tsc --noEmit` pass. The combined ownership-audit command still fails only on the known Task 5 `output-protection` dependency on `safety-guard`, so this verification checkbox remains open until Task 5 removes that dependency.
 
 - [ ] **Step 7: Commit Task 4**
 

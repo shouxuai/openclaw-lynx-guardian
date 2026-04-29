@@ -34,6 +34,14 @@ func TestGoMirrorsPluginLocalL4Families(t *testing.T) {
 			wantModules: []string{"plugin_integrity", "config_integrity"},
 		},
 		{
+			name:        "openclaw config disable",
+			stage:       "tool_call",
+			toolName:    "edit_file",
+			targetURI:   "C:/Users/24716/.openclaw/openclaw.json",
+			toolArgs:    map[string]any{"patch": "{\"extensions\":{\"openclaw-lynx-guardian\":{\"disabled\":true}}}"},
+			wantModules: []string{"config_integrity"},
+		},
+		{
 			name:        "sensitive source external send",
 			stage:       "tool_call",
 			toolName:    "shell.exec",
