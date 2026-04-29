@@ -435,6 +435,17 @@ function isStandaloneWildcardLowSignal(
     && result.matchedFamilies[0] === "wildcard_obfuscation";
 }
 
+function isBenignFullwidthPunctuationOnlyConcealment(
+  text: string,
+  result: ConcealedIntentDetection,
+): boolean {
+  if (!result.detected || result.severity !== "low" || result.scoreDelta !== 1) return false;
+  if (!result.matchedFamilies.every((family) => family === "glyph_confusable" || family === "intent_concealment")) {
+    return false;
+  }
+  return !/[\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A]/.test(text);
+}
+
 // ── Identity Verification (M0) ─────────────────────────────────────
 
 const DIRECT_OWNER_CLAIM_PATTERNS: { pattern: RegExp; label: string }[] = [
@@ -922,7 +933,7 @@ function detectWildcardObfuscation(text: string): boolean {
 function detectPathObfuscation(text: string): boolean {
   return detectWildcardObfuscation(text)
     || /~[/\\][^\s]*(?:\?|\[[^\]\s]+\])/.test(text)
-    || /(?:^|\s|['"`])[^\s]*(?:\?|\[[^\]\s]+\])[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text);
+    || /(?:^|\s|['"`])(?=[^\s]*[/\\.])(?=[^\s]*(?:\?|\[[^\]\s]+\]))[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text);
 }
 
 interface PipeExecResult {
@@ -1405,6 +1416,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   const suppressVisibleM4 = isStandaloneWildcardLowSignal(evasiveIntentCn);
+  const suppressConcealedM4 = isBenignFullwidthPunctuationOnlyConcealment(text, concealedIntent);
 
   // === 评分通道 ===
 
@@ -1532,7 +1544,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     pushDim(accum, "clarity", pipeExec.shellExec ? 2 : 1);
   }
 
-  if (concealedIntent.detected) {
+  if (concealedIntent.detected && !suppressConcealedM4) {
     modules.push("M4:concealed_intent");
     if (concealedIntent.severity === "high") {
       pushDim(accum, "harm", 2);
