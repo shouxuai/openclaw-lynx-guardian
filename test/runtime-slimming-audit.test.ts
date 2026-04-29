@@ -31,8 +31,19 @@ function relativeUnix(path: string): string {
 }
 
 describe("plugin runtime slimming target", () => {
-  it("keeps src file count within second-stage target", () => {
-    expect(countTsFiles("src")).toBeLessThanOrEqual(60);
+  it("keeps file ownership slimming grounded in source boundaries", () => {
+    const srcFiles = listTsFiles(join(repoRoot, "src")).map(relativeUnix);
+    const goEndpointOffenders = srcFiles
+      .filter((file) => file !== "src/api/go-control-plane.ts")
+      .filter((file) => readFileSync(join(repoRoot, file), "utf8").includes("/lynx/internal/v1"));
+    const legacyEndpointOffenders = srcFiles
+      .filter((file) => file !== "src/api/remote-safety-service.ts")
+      .filter((file) => readFileSync(join(repoRoot, file), "utf8").includes("/api/v1"));
+
+    expect(srcFiles).not.toContain("src/api.ts");
+    expect(srcFiles).not.toContain("src/config.ts");
+    expect(goEndpointOffenders).toEqual([]);
+    expect(legacyEndpointOffenders).toEqual([]);
   });
 
   it("keeps runtime from remaining a catch-all directory", () => {

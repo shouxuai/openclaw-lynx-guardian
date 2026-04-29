@@ -4,6 +4,7 @@ import { spawnSync } from "child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
+import { setTimeout as delay } from "timers/promises";
 import { fileURLToPath } from "url";
 import {
   DEFAULT_GATEWAY_CONTAINER,
@@ -285,24 +286,48 @@ function restartGateway(containerName) {
   runCommand("docker", ["restart", containerName]);
 }
 
-function printRecentLogs(containerName, count) {
+async function printRecentLogs(containerName, count, { sinceEpochSeconds } = {}) {
   if (count <= 0) {
     return;
   }
 
-  const result = runCommand("docker", ["logs", "--tail", String(count), containerName], {
-    capture: true,
-    allowFailure: true,
-  });
-  const logText = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  const deadline = Date.now() + 30_000;
+  let logText = "";
+  let lastAssessment = null;
+  let blockedAssessment = null;
+  let readyAssessment = null;
+
+  while (Date.now() <= deadline) {
+    const logArgs = ["logs"];
+    if (sinceEpochSeconds !== undefined) {
+      logArgs.push("--since", String(sinceEpochSeconds));
+    }
+    logArgs.push("--tail", String(count), containerName);
+
+    const result = runCommand("docker", logArgs, {
+      capture: true,
+      allowFailure: true,
+    });
+    logText = [result.stdout, result.stderr].filter(Boolean).join("\n");
+    lastAssessment = assessGatewayLogs(logText);
+    if (lastAssessment.status === "ready") {
+      readyAssessment = lastAssessment;
+      break;
+    }
+    if (lastAssessment.status === "blocked") {
+      blockedAssessment = lastAssessment;
+    }
+    await delay(1_000);
+  }
+
   if (logText.trim().length > 0) {
     process.stdout.write(logText.endsWith("\n") ? logText : `${logText}\n`);
   }
 
-  const assessment = assessGatewayLogs(logText);
-  console.log(`[lynx-dev-sync] gateway log assessment: ${assessment.status} - ${assessment.reason}`);
-  if (assessment.status === "blocked") {
-    throw new Error(assessment.reason);
+  const finalAssessment = readyAssessment ?? blockedAssessment ?? lastAssessment ?? assessGatewayLogs(logText);
+  console.log(`[lynx-dev-sync] gateway log assessment: ${finalAssessment.status} - ${finalAssessment.reason}`);
+  if (finalAssessment.status === "blocked") {
+    throw new Error(finalAssessment.reason);
   }
 }
 
@@ -355,8 +380,9 @@ async function main() {
       return;
     }
 
+    const restartSinceEpochSeconds = Math.floor(Date.now() / 1000) - 2;
     restartGateway(plan.containerName);
-    printRecentLogs(plan.containerName, options.logs);
+    await printRecentLogs(plan.containerName, options.logs, { sinceEpochSeconds: restartSinceEpochSeconds });
     console.log("[lynx-dev-sync] sync finished");
   } finally {
     rmSync(stageRoot, { recursive: true, force: true });

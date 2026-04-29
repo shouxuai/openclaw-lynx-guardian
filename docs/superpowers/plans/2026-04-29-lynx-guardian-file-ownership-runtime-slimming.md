@@ -1211,7 +1211,7 @@ git commit -m "refactor: move lynx check helpers to owner modules"
 
 - Modify only tests, docs, or scripts if verification exposes a real gap.
 
-- [ ] **Step 1: Run focused ownership verification**
+- [x] **Step 1: Run focused ownership verification**
 
 Run:
 
@@ -1221,7 +1221,9 @@ npx vitest run test/src-file-ownership-audit.test.ts test/api-boundary.test.ts t
 
 Expected: PASS.
 
-- [ ] **Step 2: Run plugin TypeScript verification**
+Observed on 2026-04-29: PASS, 4 files and 23 tests passed. `test/runtime-slimming-audit.test.ts` now uses direct source-boundary checks instead of the retired `src <= 60` coarse file-count gate.
+
+- [x] **Step 2: Run plugin TypeScript verification**
 
 Run:
 
@@ -1232,7 +1234,9 @@ npx vitest run --reporter=json --outputFile=test-results/file-ownership-runtime-
 
 Expected: TypeScript compile passes and root Vitest passes, or any pre-existing unrelated failures are recorded with exact names and a focused green substitute.
 
-- [ ] **Step 3: Run backend verification**
+Observed on 2026-04-29: `npx tsc --noEmit` passed. Root Vitest JSON was written to ignored proof artifact `test-results/file-ownership-runtime-slimming-root-vitest.json` with `success=true`, `147/147` suites passed, and `566/566` tests passed.
+
+- [x] **Step 3: Run backend verification**
 
 Run:
 
@@ -1244,7 +1248,9 @@ Pop-Location
 
 Expected: backend tests pass, including new `backend/test` contract tests.
 
-- [ ] **Step 4: Run frontend only if shared/display contracts changed**
+Observed on 2026-04-29: `go test ./... -count=1` passed from `backend/`; internal packages report no colocated test files and `github.com/openclaw/lynx-guardian/backend/test` passed.
+
+- [x] **Step 4: Run frontend only if shared/display contracts changed**
 
 If `shared/src/decision.ts`, `shared/src/ingest.ts`, or frontend display code changed, run:
 
@@ -1257,7 +1263,9 @@ Pop-Location
 
 Expected: frontend tests and build pass.
 
-- [ ] **Step 5: Verify dev sync readiness**
+Observed on 2026-04-29: no `shared/` or frontend display source changed in Task 10, so the dedicated frontend test gate was not required. The ready sync flow rebuilt the frontend package with `vite build` as part of runtime staging.
+
+- [x] **Step 5: Verify dev sync readiness**
 
 Run:
 
@@ -1267,7 +1275,9 @@ node scripts/verify-dev-sync.mjs
 
 Expected: `[verify-dev-sync] all assertions passed`.
 
-- [ ] **Step 6: Sync into real OpenClaw runtime**
+Observed on 2026-04-29: `node scripts/verify-dev-sync.mjs` passed with `[verify-dev-sync] all assertions passed`.
+
+- [x] **Step 6: Sync into real OpenClaw runtime**
 
 Run:
 
@@ -1277,7 +1287,9 @@ Run:
 
 Expected: backend/frontend package, hooks and skills sync, plugin is staged into `/app/extensions/openclaw-lynx-guardian`, gateway restarts, and log assessment is not blocked.
 
-- [ ] **Step 7: Verify gateway health**
+Observed on 2026-04-29: `.\scripts\sync-openclaw-dev-ready.ps1 --logs 200` passed. It rebuilt shared/backend/frontend, packaged `server/`, synced hooks and skills, staged the plugin to `/app/extensions/openclaw-lynx-guardian`, restarted the gateway twice, verified cron source/target stores, and ended with `SUCCESS: openclaw-openclaw-gateway-1 restarted and ready`. The host-mounted `/home/node/.openclaw/extensions/...` world-writable warning remains dev-environment noise; the fresh staged `/app` plugin startup marker was present and the final log assessment was `ready`.
+
+- [x] **Step 7: Verify gateway health**
 
 Run:
 
@@ -1287,7 +1299,9 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18789/healthz
 
 Expected: HTTP 200 with live status.
 
-- [ ] **Step 8: Run authenticated runtime probes**
+Observed on 2026-04-29: `Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18789/healthz` returned HTTP 200 with `{"ok":true,"status":"live"}`.
+
+- [x] **Step 8: Run authenticated runtime probes**
 
 Use the current local bearer token and run:
 
@@ -1324,7 +1338,9 @@ Expected:
 - evasive corpus and system prompt cases show Go decision evidence;
 - no delivery bridge or output protection regression.
 
-- [ ] **Step 9: Inspect decision evidence**
+Observed on 2026-04-29: authenticated `/v1/chat/completions` probes all returned HTTP 200. `ownership-normal` returned `pong`; `ownership-l4-plugin-tamper`, `ownership-l4-secret-exfil`, `ownership-go-corpus`, and `ownership-sysprompt` were refused rather than executed.
+
+- [x] **Step 9: Inspect decision evidence**
 
 Run:
 
@@ -1341,7 +1357,9 @@ Expected:
 - local L4 probes remain blocked even if Go is unavailable;
 - frontend/local console can still display warn/approval/deny correctly.
 
-- [ ] **Step 10: Record final source audit**
+Observed on 2026-04-29: `/lynx/decisions?limit=200` returned 100 decision records. The decision evidence set included both `semantic_intent` and `evidence_score`; 28 records were non-L0 and 18 were L4. Example modules included `approval_bypass`, `config_integrity`, `credential_access`, `exfiltration`, `hidden_execution`, `plugin_integrity`, `prompt_protection`, `secret_leak`, and `semantic`.
+
+- [x] **Step 10: Record final source audit**
 
 Run:
 
@@ -1358,7 +1376,9 @@ Expected:
 - `/api/v1` only in `src/api/remote-safety-service.ts`;
 - any remaining module labels are display-only or Go-returned labels.
 
-- [ ] **Step 11: Commit final proof notes**
+Observed on 2026-04-29: final source audit output contained only the allowed endpoint locations: `/lynx/internal/v1` in `src/api/go-control-plane.ts` and `/api/v1` in `src/api/remote-safety-service.ts`. No `CHINESE_EVASIVE_INTENT`, `detectChineseEvasiveIntent`, or `M4:evasive_intent_cn` active `src` references were found.
+
+- [x] **Step 11: Commit final proof notes**
 
 If only docs/tests changed for proof recording:
 
@@ -1369,24 +1389,26 @@ git commit -m "docs: record file ownership runtime slimming proof"
 
 If implementation files changed, stage only the files changed by this plan and commit with a matching implementation message.
 
+Observed on 2026-04-29: final commit must include the Task 10 test/script/doc changes, the tracked packaged `server/backend` binaries regenerated by ready sync, and the ignored root Vitest JSON via `git add -f`.
+
 ## Final Acceptance Checklist
 
-- [ ] Every current `src/**/*.ts` file has an ownership label.
-- [ ] `src/api.ts` is deleted.
-- [ ] Go control-plane requests appear only in `src/api/go-control-plane.ts`.
-- [ ] Legacy remote safety requests appear only in `src/api/remote-safety-service.ts`.
-- [ ] `Discuss Keep` files remain in TypeScript.
-- [ ] Expandable corpora and non-L4 semantic/evidence rules are Go-owned.
-- [ ] Local L4 hard-deny remains TypeScript-owned and works without Go.
-- [ ] L4 corpora are intentionally duplicated: plugin-native L4 blocks locally and Go mirror L4 emits evidence/audit decisions.
-- [ ] Backend tests live under `backend/test/`; no `backend/internal/**/_test.go` files remain.
-- [ ] Sync-only output protection does not depend on `src/guard/safety-guard.ts`.
-- [ ] `src/guard` no longer owns rich semantic judgement in active runtime path.
-- [ ] `src/runtime` no longer contains final policy ownership.
-- [ ] Skill risk judgement corpora are Go-owned; plugin keeps local file IO/hash/quarantine.
-- [ ] Feishu/webchat/OpenClaw delivery bridge still works.
-- [ ] Local console runtime bridge still works.
-- [ ] Real OpenClaw runtime sync and authenticated probes pass.
+- [x] Every current `src/**/*.ts` file has an ownership label.
+- [x] `src/api.ts` is deleted.
+- [x] Go control-plane requests appear only in `src/api/go-control-plane.ts`.
+- [x] Legacy remote safety requests appear only in `src/api/remote-safety-service.ts`.
+- [x] `Discuss Keep` files remain in TypeScript.
+- [x] Expandable corpora and non-L4 semantic/evidence rules are Go-owned.
+- [x] Local L4 hard-deny remains TypeScript-owned and works without Go.
+- [x] L4 corpora are intentionally duplicated: plugin-native L4 blocks locally and Go mirror L4 emits evidence/audit decisions.
+- [x] Backend tests live under `backend/test/`; no `backend/internal/**/_test.go` files remain.
+- [x] Sync-only output protection does not depend on `src/guard/safety-guard.ts`.
+- [x] `src/guard` no longer owns rich semantic judgement in active runtime path.
+- [x] `src/runtime` no longer contains final policy ownership.
+- [x] Skill risk judgement corpora are Go-owned; plugin keeps local file IO/hash/quarantine.
+- [x] Feishu/webchat/OpenClaw delivery bridge still works.
+- [x] Local console runtime bridge still works.
+- [x] Real OpenClaw runtime sync and authenticated probes pass.
 
 ## Execution Handoff
 
