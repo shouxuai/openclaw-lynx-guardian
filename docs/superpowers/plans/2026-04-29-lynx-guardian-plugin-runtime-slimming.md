@@ -124,7 +124,7 @@ Expected current baseline:
 
 - Create: `test/api-boundary.test.ts`
 
-- [ ] **Step 1: Write failing API boundary tests**
+- [x] **Step 1: Write failing API boundary tests**
 
 Create `test/api-boundary.test.ts`:
 
@@ -175,7 +175,7 @@ describe("plugin API boundary", () => {
 });
 ```
 
-- [ ] **Step 2: Run the boundary tests and confirm they fail**
+- [x] **Step 2: Run the boundary tests and confirm they fail**
 
 Run:
 
@@ -185,7 +185,7 @@ npx vitest run test/api-boundary.test.ts
 
 Expected: FAIL, listing current files such as `src/api.ts` and `src/runtime/local-console-client.ts`.
 
-- [ ] **Step 3: Commit the failing test**
+- [x] **Step 3: Commit the failing test**
 
 ```powershell
 git add test/api-boundary.test.ts
@@ -206,7 +206,7 @@ git commit -m "test: capture plugin api boundary"
 - Modify: `src/runtime/api-risk-adapter.ts`
 - Delete after imports move: `src/runtime/decision-client.ts`
 
-- [ ] **Step 1: Move remote service implementation**
+- [x] **Step 1: Move remote service implementation**
 
 Move the implementation currently in `src/api.ts` into `src/api/remote-safety-service.ts`. The exported names remain:
 
@@ -220,7 +220,7 @@ export async function fetchMaliciousSkillBlacklist(): Promise<SkillBlacklistResp
 export async function checkSkill(id: string, skillName: string, skillHash: string): Promise<SkillCheckResponse>;
 ```
 
-- [ ] **Step 2: Replace `src/api.ts` with a compatibility shim**
+- [x] **Step 2: Replace `src/api.ts` with a compatibility shim**
 
 Replace the body of `src/api.ts`:
 
@@ -228,7 +228,7 @@ Replace the body of `src/api.ts`:
 export * from "./api/remote-safety-service.js";
 ```
 
-- [ ] **Step 3: Create the Go control-plane client**
+- [x] **Step 3: Create the Go control-plane client**
 
 Create `src/api/go-control-plane.ts`:
 
@@ -305,7 +305,7 @@ export class GoControlPlaneClient {
 }
 ```
 
-- [ ] **Step 4: Add the API barrel**
+- [x] **Step 4: Add the API barrel**
 
 Create `src/api/index.ts`:
 
@@ -314,7 +314,7 @@ export * from "./go-control-plane.js";
 export * from "./remote-safety-service.js";
 ```
 
-- [ ] **Step 5: Update runtime imports**
+- [x] **Step 5: Update runtime imports**
 
 Replace imports:
 
@@ -340,11 +340,11 @@ with:
 } from "../api/remote-safety-service.js";
 ```
 
-- [ ] **Step 6: Delete the old decision client**
+- [x] **Step 6: Delete the old decision client**
 
 Delete `src/runtime/decision-client.ts` after all imports are moved.
 
-- [ ] **Step 7: Verify API boundary**
+- [x] **Step 7: Verify API boundary**
 
 Run:
 
@@ -355,7 +355,7 @@ npx tsc --noEmit
 
 Expected: tests pass and TypeScript compiles.
 
-- [ ] **Step 8: Commit Task 2**
+- [x] **Step 8: Commit Task 2**
 
 ```powershell
 git add src/api src/api.ts src/runtime/decision-broker.ts src/runtime/local-console-client.ts src/runtime/remote-weighting-service.ts src/runtime/api-risk-adapter.ts test/api-boundary.test.ts
@@ -375,7 +375,7 @@ git commit -m "refactor: centralize plugin api boundaries"
 - Delete after imports move: approval-related runtime files listed in the File Map
 - Test: existing approval tests under `test/`
 
-- [ ] **Step 1: Create approval fingerprint module**
+- [x] **Step 1: Create approval fingerprint module**
 
 Move `buildApprovalRequestFingerprint` into `src/approval/approval-fingerprint.ts` and export:
 
@@ -401,7 +401,7 @@ export function buildApprovalRequestFingerprint(input: ApprovalFingerprintInput)
 }
 ```
 
-- [ ] **Step 2: Create approval context module**
+- [x] **Step 2: Create approval context module**
 
 Move short-lived approval context and provenance helpers into `src/approval/approval-context.ts`. Preserve these exports used by `index.ts`:
 
@@ -415,7 +415,7 @@ export {
 };
 ```
 
-- [ ] **Step 3: Create approval bridge module**
+- [x] **Step 3: Create approval bridge module**
 
 Move ephemeral stores and approval runtime helpers into `src/approval/approval-bridge.ts`. Preserve these exports:
 
@@ -442,11 +442,11 @@ export {
 
 Keep durable grant write-through through the Go control-plane client.
 
-- [ ] **Step 4: Update imports**
+- [x] **Step 4: Update imports**
 
 Update `index.ts` and runtime modules to import from `src/approval/*` instead of `src/runtime/*` approval files.
 
-- [ ] **Step 5: Delete old approval files**
+- [x] **Step 5: Delete old approval files**
 
 Delete:
 
@@ -464,7 +464,7 @@ src/runtime/approval-request-fingerprint.ts
 src/runtime/plugin-approval-compat.ts
 ```
 
-- [ ] **Step 6: Verify approval bridge**
+- [x] **Step 6: Verify approval bridge**
 
 Run:
 
@@ -475,7 +475,7 @@ npx tsc --noEmit
 
 Expected: approval tests and compile pass.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 ```powershell
 git add src/approval index.ts src/runtime/hook-decision-handlers.ts
@@ -494,7 +494,7 @@ git commit -m "refactor: consolidate approval bridge"
 - Modify: `src/discovery/manual-lynx-check.ts`
 - Delete after imports move: `src/runtime/lynx-check-run-store.ts`, `src/runtime/managed-lynx-check-authorization-store.ts`, `src/runtime/scheduled-lynx-check.ts`
 
-- [ ] **Step 1: Create `lynx-check-bridge.ts`**
+- [x] **Step 1: Create `lynx-check-bridge.ts`**
 
 Move the local artifact bridge and Go task write-through helpers into `src/lynx-check/lynx-check-bridge.ts`. Preserve these exports:
 
@@ -510,7 +510,7 @@ export {
 };
 ```
 
-- [ ] **Step 2: Create `scheduled-lynx-check.ts`**
+- [x] **Step 2: Create `scheduled-lynx-check.ts`**
 
 Move scheduled check reconciliation into `src/lynx-check/scheduled-lynx-check.ts`. Preserve:
 
@@ -521,7 +521,7 @@ export {
 };
 ```
 
-- [ ] **Step 3: Create `report-producers.ts`**
+- [x] **Step 3: Create `report-producers.ts`**
 
 Move report producer orchestration into `src/lynx-check/report-producers.ts`. Export:
 
@@ -533,7 +533,7 @@ export {
 };
 ```
 
-- [ ] **Step 4: Update imports and delete old files**
+- [x] **Step 4: Update imports and delete old files**
 
 Update `index.ts` and `src/discovery/manual-lynx-check.ts`, then delete:
 
@@ -543,7 +543,7 @@ src/runtime/managed-lynx-check-authorization-store.ts
 src/runtime/scheduled-lynx-check.ts
 ```
 
-- [ ] **Step 5: Verify Lynx Check tests**
+- [x] **Step 5: Verify Lynx Check tests**
 
 Run:
 
@@ -554,7 +554,7 @@ npx tsc --noEmit
 
 Expected: focused tests and compile pass. If `test/scheduled-lynx-check.test.ts` is historical and still failing for pre-existing reasons, document the exact failure and keep the new bridge tests passing.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```powershell
 git add src/lynx-check index.ts src/discovery/manual-lynx-check.ts

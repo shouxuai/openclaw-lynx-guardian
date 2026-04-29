@@ -25,14 +25,14 @@ import {
 } from "./src/guard/result-guard.js";
 import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
-import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/runtime/security-audit-runner.js";
+import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/lynx-check/report-producers.js";
 import {
   getPendingOverride,
 } from "./src/runtime/pending-override-store.js";
 import {
   grantManagedLynxCheckAuthorization,
   hasManagedLynxCheckAuthorization,
-} from "./src/runtime/managed-lynx-check-authorization-store.js";
+} from "./src/lynx-check/lynx-check-bridge.js";
 import {
   claimRequesterProvenance,
   readRequesterProvenance,
@@ -78,7 +78,7 @@ import {
   formatContextRecommendation, formatModelRouting, formatBudgetStatus,
   buildOptimizationHints, isTokenOptimizerAvailable,
 } from "./src/runtime/token-optimizer-runner.js";
-import { reconcileScheduledLynxCheck, resolveScheduledLynxCheckConfig } from "./src/runtime/scheduled-lynx-check.js";
+import { reconcileScheduledLynxCheck, resolveScheduledLynxCheckConfig } from "./src/lynx-check/scheduled-lynx-check.js";
 import { CONFIG } from "./src/config.js";
 import {
   checkContentWeighted,
@@ -169,7 +169,7 @@ import {
   updateLynxCheckRunIntentStatus,
   waitForLynxCheckRunResultSettled,
   writeLynxCheckRunResult,
-} from "./src/runtime/lynx-check-run-store.js";
+} from "./src/lynx-check/lynx-check-bridge.js";
 import {
   buildLynxCheckFallbackFailureNotice,
   buildManualLynxCheckPrompt,

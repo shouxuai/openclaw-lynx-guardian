@@ -1,8 +1,7 @@
 export type RuntimeStoreOwner =
   | "go-task-plane"
   | "approval-bridge"
-  | "delivery-bridge"
-  | "managed-boundary";
+  | "delivery-bridge";
 
 export interface RuntimeStoreOwnershipEntry {
   file: string;
@@ -31,20 +30,12 @@ export const RUNTIME_STORE_OWNERSHIP_INVENTORY: RuntimeStoreOwnershipEntry[] = [
     notes: "Short-lived context bridge from before_agent_start to before_tool_call plus requester provenance exports.",
   },
   {
-    file: "lynx-check-run-store.ts",
+    file: "lynx-check/lynx-check-bridge.ts",
     owner: "go-task-plane",
     activeLocalWrites: true,
     goWriteThrough: true,
     preserveForDeliveryBridge: true,
-    notes: "Local intent/result artifacts remain compatibility evidence while task state is written through to Go.",
-  },
-  {
-    file: "managed-lynx-check-authorization-store.ts",
-    owner: "managed-boundary",
-    activeLocalWrites: true,
-    goWriteThrough: false,
-    preserveForDeliveryBridge: true,
-    notes: "Local managed-run boundary authorization is separate from Go task ownership.",
+    notes: "Consolidated local /lynx-check artifact bridge, Go task write-through, and managed-run boundary authorization.",
   },
   {
     file: "recent-active-delivery.ts",

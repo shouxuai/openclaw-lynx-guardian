@@ -11,12 +11,11 @@ describe("runtime store ownership inventory", () => {
     expect([...byFile.keys()].sort()).toEqual([
       "approval/approval-bridge.ts",
       "approval/approval-context.ts",
-      "lynx-check-run-store.ts",
-      "managed-lynx-check-authorization-store.ts",
+      "lynx-check/lynx-check-bridge.ts",
       "recent-active-delivery.ts",
     ].sort());
 
-    expect(byFile.get("lynx-check-run-store.ts")).toMatchObject({
+    expect(byFile.get("lynx-check/lynx-check-bridge.ts")).toMatchObject({
       owner: "go-task-plane",
       activeLocalWrites: true,
       goWriteThrough: true,

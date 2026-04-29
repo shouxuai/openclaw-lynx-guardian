@@ -1,8 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
-import type { ScheduledLynxDeliveryMode } from "./recent-active-delivery.js";
-import { grantManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
-import { resolveRuntimeHomeDir } from "./plugin-runtime-helpers.js";
+import type { ScheduledLynxDeliveryMode } from "../runtime/recent-active-delivery.js";
+import { grantManagedLynxCheckAuthorization } from "./lynx-check-bridge.js";
+import { resolveRuntimeHomeDir } from "../runtime/plugin-runtime-helpers.js";
 
 export const SCHEDULED_LYNX_CHECK_JOB_ID = "lynx-guardian-scheduled-lynx-check";
 

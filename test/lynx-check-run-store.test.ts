@@ -8,7 +8,7 @@ import {
   readLynxCheckRunIntent,
   readLynxCheckRunResult,
   writeLynxCheckRunResult,
-} from "../src/runtime/lynx-check-run-store.js";
+} from "../src/lynx-check/lynx-check-bridge.js";
 
 describe("lynx check run store", () => {
   const openclawHome = join(process.cwd(), "test-temp", "lynx-check-run-store-home");

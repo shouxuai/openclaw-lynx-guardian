@@ -4,12 +4,12 @@ import * as api from "../src/api.js";
 import { buildManualLynxCheckReport } from "../src/discovery/manual-lynx-check.js";
 import * as discoveryUtils from "../src/discovery/discovery-hook-utils.js";
 import { runManagedLynxAuditBoundaryCheck } from "../src/runtime/lynx-audit-runtime.js";
-import * as securityAuditRunner from "../src/runtime/security-audit-runner.js";
+import * as securityAuditRunner from "../src/lynx-check/report-producers.js";
 import * as skillGuard from "../src/skills/skill-guard.js";
 
 vi.mock("../src/api.js");
 vi.mock("../src/discovery/discovery-hook-utils.js");
-vi.mock("../src/runtime/security-audit-runner.js");
+vi.mock("../src/lynx-check/report-producers.js");
 vi.mock("../src/skills/skill-guard.js");
 
 describe("buildManualLynxCheckReport", () => {

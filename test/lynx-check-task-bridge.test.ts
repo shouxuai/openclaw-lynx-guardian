@@ -8,7 +8,7 @@ import {
   createLynxCheckRunIntent,
   updateLynxCheckRunIntentStatus,
   writeLynxCheckRunResult,
-} from "../src/runtime/lynx-check-run-store.js";
+} from "../src/lynx-check/lynx-check-bridge.js";
 
 function makeRootDir(): string {
   return mkdtempSync(join(tmpdir(), "lynx-check-task-bridge-"));

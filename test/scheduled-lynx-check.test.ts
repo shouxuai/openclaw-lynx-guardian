@@ -7,11 +7,11 @@ import {
   reconcileScheduledLynxCheck,
   resolveScheduledLynxCheckConfig,
   SCHEDULED_LYNX_CHECK_JOB_ID,
-} from "../src/runtime/scheduled-lynx-check.js";
+} from "../src/lynx-check/scheduled-lynx-check.js";
 import {
   clearManagedLynxCheckAuthorization,
   hasManagedLynxCheckAuthorization,
-} from "../src/runtime/managed-lynx-check-authorization-store.js";
+} from "../src/lynx-check/lynx-check-bridge.js";
 import { runManagedLynxAuditBoundaryCheck } from "../src/runtime/lynx-audit-runtime.js";
 
 describe("scheduled lynx-check", () => {

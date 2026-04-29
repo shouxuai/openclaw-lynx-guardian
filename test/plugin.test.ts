@@ -8,7 +8,7 @@ import * as api from '../src/api.js';
 import * as remoteApi from '../src/api/remote-safety-service.js';
 import * as discovery from '../src/discovery/openclaw-discovery.js';
 import * as runtimeConfig from '../src/discovery/discovery-runtime-config.js';
-import * as securityAuditRunner from '../src/runtime/security-audit-runner.js';
+import * as securityAuditRunner from '../src/lynx-check/report-producers.js';
 import * as skillGuard from '../src/skills/skill-guard.js';
 import * as safetyGuard from '../src/guard/safety-guard.js';
 import * as blacklist from '../src/blacklist.js';
@@ -20,7 +20,7 @@ import {
   clearManagedLynxCheckAuthorization,
   grantManagedLynxCheckAuthorization,
   hasManagedLynxCheckAuthorization,
-} from '../src/runtime/managed-lynx-check-authorization-store.js';
+} from '../src/lynx-check/lynx-check-bridge.js';
 import {
   clearRequesterProvenanceStore,
   readRequesterProvenance,
@@ -43,7 +43,7 @@ import {
   readLynxCheckRunIntent,
   readLynxCheckRunResult,
   writeLynxCheckRunResult,
-} from '../src/runtime/lynx-check-run-store.js';
+} from '../src/lynx-check/lynx-check-bridge.js';
 import {
   buildLynxCheckFallbackFailureNotice,
   buildManualLynxCheckPrompt,
@@ -71,7 +71,7 @@ vi.mock('../src/discovery/discovery-runtime-config.js', () => ({
   DISCOVERY_CONFIG_SOURCE_PATH: 'openclaw.plugin.json',
   loadDiscoveryRuntimeConfig: vi.fn(),
 }));
-vi.mock('../src/runtime/security-audit-runner.js', () => ({
+vi.mock('../src/lynx-check/report-producers.js', () => ({
   runSecurityAudit: vi.fn().mockResolvedValue(null),
   runMaliciousScriptScan: vi.fn().mockResolvedValue(null),
   formatAuditSummary: vi.fn().mockReturnValue('audit summary'),
@@ -1245,6 +1245,12 @@ describe('Plugin Setup', () => {
   });
 
   it('should block high risk tool call', async () => {
+    mockApi.config = {
+      localConsole: {
+        enabled: false,
+        autoStart: false,
+      },
+    };
     setup(mockApi);
     const handler = handlers['before_tool_call'];
     
@@ -1271,6 +1277,12 @@ describe('Plugin Setup', () => {
   });
 
   it('should allow safe tool call (no blacklist hit)', async () => {
+    mockApi.config = {
+      localConsole: {
+        enabled: false,
+        autoStart: false,
+      },
+    };
     setup(mockApi);
     const handler = handlers['before_tool_call'];
     
@@ -1496,6 +1508,12 @@ describe('Plugin Setup', () => {
   });
 
   it('should allow managed /lynx-check read-only exec inspection inside the plugin tree', async () => {
+    mockApi.config = {
+      localConsole: {
+        enabled: false,
+        autoStart: false,
+      },
+    };
     setup(mockApi);
     const beforeAgentStart = handlers['before_agent_start'];
     const toolHandler = handlers['before_tool_call'];
@@ -1584,6 +1602,10 @@ describe('Plugin Setup', () => {
   it('should require native approval for webchat tool guard and only reuse grant after onResolution', async () => {
     vi.stubEnv('OPENCLAW_VERSION', '2026.3.28');
     mockApi.config = {
+      localConsole: {
+        enabled: false,
+        autoStart: false,
+      },
       selfSafetyGuard: {
         policy: {
           toolApprovalTimeoutSeconds: 90,
@@ -2816,6 +2838,10 @@ describe('Plugin Setup', () => {
   it('should require native approval for blacklist-backed exec risk and reuse same-run grant only within the module', async () => {
     vi.stubEnv('OPENCLAW_VERSION', '2026.3.28');
     mockApi.config = {
+      localConsole: {
+        enabled: false,
+        autoStart: false,
+      },
       selfSafetyGuard: {
         policy: {
           toolApprovalTimeoutSeconds: 75,

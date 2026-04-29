@@ -21,7 +21,7 @@ import {
   readLynxCheckRunIntent,
   readLynxCheckRunResult,
   writeLynxCheckRunResult,
-} from "../src/runtime/lynx-check-run-store.js";
+} from "../src/lynx-check/lynx-check-bridge.js";
 
 function buildOverride(overrides: Partial<PendingOverride> = {}): PendingOverride {
   const now = Date.now();

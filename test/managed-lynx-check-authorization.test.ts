@@ -6,7 +6,7 @@ import {
   grantManagedLynxCheckAuthorization,
   hasManagedLynxCheckAuthorization,
   readManagedLynxCheckAuthorization,
-} from "../src/runtime/managed-lynx-check-authorization-store.js";
+} from "../src/lynx-check/lynx-check-bridge.js";
 
 describe("managed lynx-check authorization", () => {
   const stubHome = join(process.cwd(), "test-temp", "managed-lynx-check-authorization-home");

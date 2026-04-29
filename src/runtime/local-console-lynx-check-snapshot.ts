@@ -1,5 +1,5 @@
 import type { LynxCheckSnapshotInput } from "./local-console-event-builder.js";
-import type { LynxCheckRunIntent, LynxCheckRunResult } from "./lynx-check-run-store.js";
+import type { LynxCheckRunIntent, LynxCheckRunResult } from "../lynx-check/lynx-check-bridge.js";
 
 export function buildLocalConsoleLynxCheckSnapshot(
   intent: LynxCheckRunIntent,

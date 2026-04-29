@@ -43,7 +43,7 @@ import type {
 import { deliverLynxReport } from "./lynx-message-delivery.js";
 import {
   readLatestPendingLynxCheckRunIntent,
-} from "./lynx-check-run-store.js";
+} from "../lynx-check/lynx-check-bridge.js";
 import { deliverLynxFeishuApprovalPromptDirectly } from "./lynx-feishu-direct-delivery.js";
 import { buildApprovalRequestFingerprint } from "../approval/approval-fingerprint.js";
 import {
@@ -51,7 +51,7 @@ import {
   type GrantControlPlaneSync,
 } from "../approval/approval-bridge.js";
 import { buildParamSummary } from "./policy-runtime.js";
-import { hasManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
+import { hasManagedLynxCheckAuthorization } from "../lynx-check/lynx-check-bridge.js";
 import { appendLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";
 import { shouldSkipRoutineHeartbeatProbe } from "./local-console-heartbeat-filter.js";
 import { ensureParentDirectory } from "../discovery/pending-discovery-store.js";
