@@ -7,8 +7,8 @@ import {
   getPendingOverride,
   consumePendingOverride,
   clearPendingOverride,
-} from "../src/runtime/pending-override-store.js";
-import type { PendingOverride } from "../src/runtime/pending-override-store.js";
+} from "../src/approval/pending-override-store.js";
+import type { PendingOverride } from "../src/approval/pending-override-store.js";
 import {
   getRecentActiveDeliveryTarget,
   rememberRecentActiveDeliveryTarget,

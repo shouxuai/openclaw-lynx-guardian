@@ -6,14 +6,14 @@ import {
   isVersionAtLeast,
 } from "../runtime/hook-capabilities.js";
 import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
-import type { ApprovalTransportProfile, ChannelProfile } from "../runtime/requester-provenance-store.js";
+import type { ApprovalTransportProfile, ChannelProfile } from "./requester-provenance-store.js";
 
 export {
   claimRequesterProvenance,
   clearRequesterProvenanceStore,
   readRequesterProvenance,
   rememberRequesterProvenance,
-} from "../runtime/requester-provenance-store.js";
+} from "./requester-provenance-store.js";
 
 export type RunApprovalContext = {
   runId: string;

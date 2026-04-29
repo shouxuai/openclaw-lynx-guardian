@@ -1052,7 +1052,7 @@ describe("feishu local approval entry", () => {
           } as any;
         }
 
-        if (toolName === "read" && params?.file_path === "secrets.md") {
+        if (toolName === "read" && params?.file_path === "protected-higher-risk.md") {
           return {
             block: true,
             blockReason: "[Lynx Guardian] higher risk protected file tool",
@@ -1198,7 +1198,7 @@ describe("feishu local approval entry", () => {
     const higherRiskResult = await handlers.before_tool_call(
       {
         toolName: "read",
-        params: { file_path: "secrets.md" },
+        params: { file_path: "protected-higher-risk.md" },
         runId: "run-feishu-escalation-second",
         toolCallId: "tool-feishu-escalation-second-sensitive-read",
       },

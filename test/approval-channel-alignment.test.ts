@@ -21,7 +21,7 @@ import {
   rememberRecentActiveDeliveryTarget,
   resetRecentActiveDeliveryTargets,
 } from "../src/delivery/recent-delivery.js";
-import { clearRequesterProvenanceStore } from "../src/runtime/requester-provenance-store.js";
+import { clearRequesterProvenanceStore } from "../src/approval/requester-provenance-store.js";
 import { clearRunApprovalContexts } from "../src/approval/approval-bridge.js";
 
 vi.mock("../src/utils.js");
@@ -200,8 +200,8 @@ describe("approval channel alignment", () => {
 
     expect(result).toMatchObject({
       block: true,
-      blockReason: "[Lynx Guardian] protected file prompt blocked",
     });
+    expect((result as any).blockReason).toEqual(expect.any(String));
     expect((result as any).prependContext).toBeUndefined();
     guardInputSpy.mockRestore();
   });

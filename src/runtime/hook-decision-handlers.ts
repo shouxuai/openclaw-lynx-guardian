@@ -88,7 +88,7 @@ function decisionToBeforeToolCallResult(
   blockFallback: string,
   approvalFallbackTitle: string,
 ): void | BeforeToolCallResult {
-  if (decision.block) {
+  if (decisionRequiresHardBlock(decision)) {
     return { block: true, blockReason: decision.userMessage ?? blockFallback };
   }
   if (decision.requiresApproval || decision.action === "require_approval") {
@@ -102,6 +102,17 @@ function decisionToBeforeToolCallResult(
     };
   }
   return undefined;
+}
+
+function decisionRequiresHardBlock(decision: {
+  action?: string;
+  block?: boolean;
+  riskLevel?: string;
+}): boolean {
+  return decision.block === true
+    || decision.riskLevel === "L4"
+    || decision.action === "block"
+    || decision.action === "deny";
 }
 
 function skillInstallDecisionContext(event: ToolCallEvent, ctx: EventContext): DecisionContext | null {
@@ -212,7 +223,7 @@ export async function handleBeforeInstallEventDecision(
     toolArgs: event,
     targetUri: source ?? name,
   }), timeoutMs);
-  if (decision.block) {
+  if (decisionRequiresHardBlock(decision)) {
     return { block: true, blockReason: decision.userMessage ?? "Blocked by Lynx Guardian install decision." };
   }
   if (decision.requiresApproval || decision.action === "require_approval") {

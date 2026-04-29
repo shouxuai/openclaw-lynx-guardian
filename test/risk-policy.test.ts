@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveRiskPolicy } from "../src/runtime/policy-runtime.js";
+import { normalizePolicyConfig, resolveRiskPolicy } from "../src/runtime/policy-runtime.js";
 import type { RiskAssessment } from "../src/guard/safety-guard.js";
 import { inferBlacklistModules } from "../src/runtime/override-runtime.js";
 
@@ -10,7 +10,7 @@ const BASE_CONFIG = {
 };
 
 describe("Risk Policy Resolver", () => {
-  it("allows override for M2:protected_file_access at L4 score=9", () => {
+  it("does not allow override for M2:protected_file_access at L4 score=9", () => {
     const assessment: RiskAssessment = {
       level: "L4",
       score: 9,
@@ -19,12 +19,13 @@ describe("Risk Policy Resolver", () => {
       action: "deny",
     };
     const result = resolveRiskPolicy(assessment, BASE_CONFIG);
-    expect(result.override.allowed).toBe(true);
-    expect(result.override.confirmationPhrase).toBe("确认放行本次操作");
-    expect(result.override.reason).toBeUndefined();
+    expect(result.finalAction).toBe("deny");
+    expect(result.override.allowed).toBe(false);
+    expect(result.override.confirmationPhrase).toBeUndefined();
+    expect(result.override.reason).toBe("level_not_allowed");
   });
 
-  it("allows override for M2:protected_file_access at score=10 (anomaly inflation)", () => {
+  it("does not allow override for M2:protected_file_access at score=10 (anomaly inflation)", () => {
     const assessment: RiskAssessment = {
       level: "L4",
       score: 10,
@@ -33,9 +34,20 @@ describe("Risk Policy Resolver", () => {
       action: "deny",
     };
     const result = resolveRiskPolicy(assessment, BASE_CONFIG);
-    expect(result.override.allowed).toBe(true);
-    expect(result.override.confirmationPhrase).toBe("确认放行本次操作");
-    expect(result.override.reason).toBeUndefined();
+    expect(result.finalAction).toBe("deny");
+    expect(result.override.allowed).toBe(false);
+    expect(result.override.confirmationPhrase).toBeUndefined();
+    expect(result.override.reason).toBe("level_not_allowed");
+  });
+
+  it("filters L4 out of normalized approval levels", () => {
+    const config = normalizePolicyConfig({
+      allowOneTimeOverrideLevels: ["L2", "L4"],
+      confirmationPhrase: "确认放行本次操作",
+    });
+
+    expect(config.approvableRiskLevels).toEqual(["L2"]);
+    expect(config.allowOneTimeOverrideLevels).toEqual(["L2"]);
   });
 
   it("hard-denies M3:over_agency even when explicitly configured", () => {

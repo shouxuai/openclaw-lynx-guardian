@@ -147,6 +147,41 @@ describe("DecisionBroker", () => {
     expect(result?.requireApproval?.severity).toBe("warning");
   });
 
+  it("blocks L4 tool decisions even if Go response asks for approval", async () => {
+    const goClient = client({
+      decideTool: vi.fn(async () => response({
+        stage: "tool_call",
+        action: "require_approval",
+        block: false,
+        riskLevel: "L4",
+        requiresApproval: true,
+        userMessage: "L4 decisions are deny-only.",
+        approvalRequest: {
+          riskFamily: "plugin_integrity",
+          title: "Do not approve",
+          summary: "This malformed backend response must not create a user approval.",
+          scope: { toolName: "shell" },
+        },
+        audit: {
+          eventSeverity: "critical",
+          policyDecision: "require_approval",
+          enforcementAction: "require_approval",
+          color: "red",
+        },
+      })),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeToolCallDecision(broker, {
+      toolName: "shell",
+      params: { command: "ls /tmp" },
+    }, { sessionKey: "session-1" });
+
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("L4 decisions are deny-only");
+    expect(result?.requireApproval).toBeUndefined();
+  });
+
   it("routes skill installs to the install decision endpoint instead of generic tool decision", async () => {
     const goClient = client({
       decideInstall: vi.fn(async () => response({

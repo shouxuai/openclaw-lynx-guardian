@@ -3,6 +3,7 @@ import type { RiskAssessment, RiskLevel } from "../guard/safety-guard.js";
 
 const DEFAULT_CONFIRMATION_PHRASE = "确认放行本次操作";
 const DEFAULT_APPROVABLE_LEVELS = ["L2", "L3"] as const;
+const APPROVABLE_RISK_LEVELS = new Set<RiskLevel>(["L2", "L3"]);
 
 export type PolicyDecisionKind = "allow" | "warn" | "confirm" | "workflow_auth" | "block" | "deny";
 export type RiskLevelLabel = RiskLevel;
@@ -16,25 +17,8 @@ export interface PolicyRuntimeEvaluation {
   legacyRiskLevel: 0 | 1 | 2 | 3 | 4;
 }
 
-export interface EvidenceScoreResult {
-  compatibilityScore: number;
-  summaryHeat: number;
-  dimensionScores: Record<string, number>;
-  evidenceItems: unknown[];
-}
-
-export interface CompatibilityRiskAssessment extends RiskAssessment {
-  policyDecisionKind: PolicyDecisionKind;
-}
-
-export interface EvidenceBundleRuntimeEvaluation extends PolicyRuntimeEvaluation {
-  score: EvidenceScoreResult;
-  compatibilityAssessment: CompatibilityRiskAssessment;
-}
-
 export interface GuardPolicyResolution {
   legacyEvaluation: PolicyRuntimeEvaluation;
-  bundleEvaluation?: EvidenceBundleRuntimeEvaluation;
   finalDecision: {
     kind: PolicyDecisionKind;
   };
@@ -56,15 +40,6 @@ export interface GuardPolicyTrace {
     riskLevel: RiskLevelLabel;
     decision: PolicyDecisionKind;
     riskValue: 0 | 1 | 2 | 3 | 4;
-  };
-  evidence?: {
-    riskLevel: RiskLevelLabel;
-    decision: PolicyDecisionKind;
-    riskValue: 0 | 1 | 2 | 3 | 4;
-    compatibilityScore: number;
-    summaryHeat: number;
-    dimensionScores: Record<string, number>;
-    items: unknown[];
   };
   final: {
     decision: PolicyDecisionKind;
@@ -159,8 +134,13 @@ export function resolveRiskPolicy(
     reason = assessment.modules.some((m) => m.startsWith("M5:"))
       ? "credential_theft"
       : "module_not_allowed";
+  } else if (assessment.level === "L4") {
+    finalAction = "deny";
+    reason = "level_not_allowed";
   } else {
-    const allowedLevels = config.approvableRiskLevels ?? config.allowOneTimeOverrideLevels ?? [];
+    const allowedLevels = normalizeApprovableRiskLevels(
+      config.approvableRiskLevels ?? config.allowOneTimeOverrideLevels ?? [],
+    );
     overrideAllowed = allowedLevels.includes(assessment.level);
     if (!overrideAllowed) {
       reason = "level_not_allowed";
@@ -175,6 +155,13 @@ export function resolveRiskPolicy(
   };
 }
 
+function normalizeApprovableRiskLevels(value: unknown): RiskLevel[] {
+  const levels = Array.isArray(value) ? value : [];
+  return levels.filter((level): level is RiskLevel =>
+    typeof level === "string" && APPROVABLE_RISK_LEVELS.has(level as RiskLevel),
+  );
+}
+
 interface GuardEvidenceBundleLike {
   modules?: string[];
   summary?: string;
@@ -182,10 +169,11 @@ interface GuardEvidenceBundleLike {
 }
 
 export function normalizePolicyConfig(policy: any = {}) {
-  const approvableRiskLevels =
+  const approvableRiskLevels = normalizeApprovableRiskLevels(
     policy.approvableRiskLevels
     ?? policy.allowOneTimeOverrideLevels
-    ?? [...DEFAULT_APPROVABLE_LEVELS];
+    ?? [...DEFAULT_APPROVABLE_LEVELS],
+  );
   const toolApprovalTimeoutSeconds = Math.max(
     30,
     Number(policy.toolApprovalTimeoutSeconds ?? 120),
@@ -247,23 +235,6 @@ function mapAssessmentActionToPolicyKind(
   }
 }
 
-function mapPolicyKindToAssessmentAction(
-  policyKind: PolicyDecisionKind,
-): RiskAssessment["action"] {
-  switch (policyKind) {
-    case "deny":
-      return "deny";
-    case "block":
-      return "block";
-    case "warn":
-    case "confirm":
-    case "workflow_auth":
-      return "warn";
-    default:
-      return "allow";
-  }
-}
-
 export function evaluateRiskAssessment(
   assessment: RiskAssessment,
   _options?: {
@@ -284,51 +255,6 @@ export function evaluateRiskAssessment(
       kind: decisionKind,
     },
     legacyRiskLevel: riskLevelValue,
-  };
-}
-
-export function evaluateEvidenceBundle(
-  bundle: GuardEvidenceBundleLike,
-): EvidenceBundleRuntimeEvaluation {
-  const evidenceItems = Array.isArray(bundle.evidenceItems) ? bundle.evidenceItems : [];
-  const compatibilityScore = Math.min(10, evidenceItems.length);
-  const riskLevelLabel: RiskLevelLabel = compatibilityScore >= 8
-    ? "L4"
-    : compatibilityScore >= 5
-      ? "L3"
-      : compatibilityScore >= 2
-        ? "L2"
-        : "L0";
-  const riskLevelValue = riskLevelValueFromLabel(riskLevelLabel);
-  const decisionKind: PolicyDecisionKind = riskLevelValue >= 4
-    ? "deny"
-    : riskLevelValue >= 3
-      ? "block"
-      : riskLevelValue >= 2
-        ? "warn"
-        : "allow";
-
-  return {
-    riskLevelLabel,
-    riskLevelValue,
-    decision: {
-      kind: decisionKind,
-    },
-    legacyRiskLevel: riskLevelValue,
-    score: {
-      compatibilityScore,
-      summaryHeat: compatibilityScore,
-      dimensionScores: {},
-      evidenceItems,
-    },
-    compatibilityAssessment: {
-      level: riskLevelLabel,
-      score: compatibilityScore,
-      modules: bundle.modules ?? [],
-      description: bundle.summary ?? "compatibility evidence bundle",
-      action: mapPolicyKindToAssessmentAction(decisionKind),
-      policyDecisionKind: decisionKind,
-    },
   };
 }
 

@@ -1012,7 +1012,7 @@ git commit -m "refactor: move skill judgement corpora to go"
 - Modify: `src/runtime/hook-decision-handlers.ts`
 - Modify: approval tests under `test/`
 
-- [ ] **Step 1: Add approval boundary tests**
+- [x] **Step 1: Add approval boundary tests**
 
 Extend existing approval tests to assert:
 
@@ -1021,7 +1021,13 @@ Extend existing approval tests to assert:
 - requester, owner, and approver identities remain distinct;
 - local L4 denies cannot be approved through workflow override.
 
-- [ ] **Step 2: Move short-lived approval files to `src/approval`**
+Implemented in Task 7:
+
+- `test/decision-broker.test.ts` blocks malformed Go `L4 + require_approval` tool decisions instead of creating OpenClaw approval;
+- `test/risk-policy.test.ts` proves local `L4` is filtered out of approval levels and cannot be override-approved;
+- approval/channel tests keep requester/owner/approver routing distinct while avoiding deterministic local L4 cases as approval fixtures.
+
+- [x] **Step 2: Move short-lived approval files to `src/approval`**
 
 Move these runtime responsibilities into `src/approval/approval-bridge.ts` or smaller files under `src/approval`:
 
@@ -1032,7 +1038,7 @@ Move these runtime responsibilities into `src/approval/approval-bridge.ts` or sm
 
 Keep durable policy state in Go.
 
-- [ ] **Step 3: Reduce `policy-runtime.ts`**
+- [x] **Step 3: Reduce `policy-runtime.ts`**
 
 Keep only:
 
@@ -1040,7 +1046,9 @@ Keep only:
 - display-friendly policy trace construction from Go response;
 - no independent risk scoring or final action override.
 
-- [ ] **Step 4: Verify Task 7**
+Task 7 reduced the active runtime policy adapter by removing the unused local evidence-bundle scorer and adding an ownership audit that forbids `evaluateEvidenceBundle` / `compatibilityScore` in `src/runtime/policy-runtime.ts`. Short-lived approval stores now live under `src/approval`, with runtime files reduced to compatibility re-export shims.
+
+- [x] **Step 4: Verify Task 7**
 
 Run:
 
@@ -1050,6 +1058,19 @@ npx tsc --noEmit
 ```
 
 Expected: approval bridge works, but Go remains durable policy owner.
+
+Verified on 2026-04-29:
+
+```powershell
+$files = @(
+  Get-ChildItem test -File | Where-Object { $_.Name -like '*approval*.test.ts' -or $_.Name -like '*override*.test.ts' } | ForEach-Object { $_.FullName }
+)
+& npx vitest run @files test/decision-broker.test.ts test/src-file-ownership-audit.test.ts test/requester-provenance-store.test.ts test/risk-policy.test.ts
+# PASS: 15 files, 89 tests
+
+npx tsc --noEmit
+# PASS
+```
 
 - [ ] **Step 5: Commit Task 7**
 

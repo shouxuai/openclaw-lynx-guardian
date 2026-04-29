@@ -3,7 +3,7 @@ import {
   clearRequesterProvenanceStore,
   rememberRequesterProvenance,
   readRequesterProvenance,
-} from "../src/runtime/requester-provenance-store.js";
+} from "../src/approval/requester-provenance-store.js";
 
 describe("requester provenance store", () => {
   it("prefers the freshest record for the same session", () => {

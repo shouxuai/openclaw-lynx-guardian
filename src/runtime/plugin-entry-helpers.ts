@@ -160,10 +160,7 @@ export function resolveGuardPolicyState(decision: GuardDecision) {
   });
   const effectiveAssessment = policyResolution.effectiveAssessment;
   const legacyAssessmentSelected = effectiveAssessment === decision.riskAssessment;
-  const policyEvaluation = policyResolution.bundleEvaluation
-    && effectiveAssessment === policyResolution.bundleEvaluation.compatibilityAssessment
-    ? policyResolution.bundleEvaluation
-    : policyResolution.legacyEvaluation;
+  const policyEvaluation = policyResolution.legacyEvaluation;
 
   return {
     policyResolution,

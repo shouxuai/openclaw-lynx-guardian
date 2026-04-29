@@ -22,6 +22,8 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/api/go-control-plane.ts": "keep-ts",
   "src/api/remote-safety-service.ts": "keep-ts",
   "src/approval/approval-bridge.ts": "split",
+  "src/approval/pending-override-store.ts": "keep-ts",
+  "src/approval/requester-provenance-store.ts": "keep-ts",
   "src/console/event-builder.ts": "split",
   "src/console/ingest-client.ts": "keep-ts",
   "src/console/runtime.ts": "keep-ts",
@@ -140,5 +142,24 @@ describe("src file ownership audit", () => {
   it("keeps sync-only output protection independent from safety-guard", () => {
     const source = read("src/local-guard/output-protection.ts");
     expect(source).not.toContain("../guard/safety-guard");
+  });
+
+  it("keeps approval callback stores implemented under src/approval", () => {
+    expect(existsSync(join(repoRoot, "src/approval/pending-override-store.ts"))).toBe(true);
+    expect(existsSync(join(repoRoot, "src/approval/requester-provenance-store.ts"))).toBe(true);
+
+    const pendingRuntimeShim = read("src/runtime/pending-override-store.ts");
+    const requesterRuntimeShim = read("src/runtime/requester-provenance-store.ts");
+
+    expect(pendingRuntimeShim).toContain("../approval/pending-override-store.js");
+    expect(requesterRuntimeShim).toContain("../approval/requester-provenance-store.js");
+    expect(pendingRuntimeShim).not.toContain("new Map");
+    expect(requesterRuntimeShim).not.toContain("new Map");
+  });
+
+  it("keeps runtime policy adapter free of local evidence scoring", () => {
+    const source = read("src/runtime/policy-runtime.ts");
+    expect(source).not.toContain("evaluateEvidenceBundle");
+    expect(source).not.toContain("compatibilityScore");
   });
 });
