@@ -838,7 +838,7 @@ Required mirrored families in this task:
 - OpenClaw/Lynx config disable;
 - sensitive source external send.
 
-- [ ] **Step 6: Verify Task 4**
+- [x] **Step 6: Verify Task 4**
 
 Run:
 
@@ -854,7 +854,9 @@ Expected: local L4 blocks high-confidence command/path cases without Go, and Go 
 
 Observed during Task 4: `go test ./test -run TestGoMirrorsPluginLocalL4Families -count=1`, `test/blacklist.test.ts`, `test/local-l4-fast-path.test.ts`, and `npx tsc --noEmit` pass. The combined ownership-audit command still fails only on the known Task 5 `output-protection` dependency on `safety-guard`, so this verification checkbox remains open until Task 5 removes that dependency.
 
-- [ ] **Step 7: Commit Task 4**
+Task 5 follow-up verification removed the known output-protection dependency, and the full Task 4 gate now passes with ownership audit included.
+
+- [x] **Step 7: Commit Task 4**
 
 ```powershell
 git add backend/test/decision_l4_dual_corpus_contract_test.go src/local-guard/tool-command-hard-deny.ts src/local-guard/path-hard-deny.ts src/local-guard/local-l4-fast-path.ts src/blacklist.ts src/path-glob-protection.ts src/hooks/tool-hooks.ts test/blacklist.test.ts test/local-l4-fast-path.test.ts test/src-file-ownership-audit.test.ts
@@ -876,7 +878,7 @@ git commit -m "refactor: isolate local tool and path hard deny"
 - Modify: `test/safety-guard.test.ts`
 - Modify: `test/src-file-ownership-audit.test.ts`
 
-- [ ] **Step 1: Add tests for guard facade behavior**
+- [x] **Step 1: Add tests for guard facade behavior**
 
 Update `test/safety-guard.test.ts` so it asserts:
 
@@ -885,7 +887,7 @@ Update `test/safety-guard.test.ts` so it asserts:
 - `guardOutput()` blocks concrete secret/prompt leakage;
 - non-L4 semantic warning text is not decided by TypeScript guard.
 
-- [ ] **Step 2: Remove `output-protection` dependency on `safety-guard`**
+- [x] **Step 2: Remove `output-protection` dependency on `safety-guard`**
 
 Replace:
 
@@ -897,7 +899,7 @@ with local output-protection types and functions in `src/local-guard/output-prot
 
 The local output protection module must be able to block/redact sync-only output without importing `src/guard/*`.
 
-- [ ] **Step 3: Move prompt and concealed execution hard-deny**
+- [x] **Step 3: Move prompt and concealed execution hard-deny**
 
 Move only high-confidence L4 patterns into:
 
@@ -906,13 +908,13 @@ Move only high-confidence L4 patterns into:
 
 Do not move broad warning corpora into these files.
 
-- [ ] **Step 4: Delete or neutralize `risk-policy.ts`**
+- [x] **Step 4: Delete or neutralize `risk-policy.ts`**
 
 If `resolveRiskPolicy()` is still used, move the minimal adapter to `src/runtime/policy-runtime.ts`. Otherwise delete `src/guard/risk-policy.ts`.
 
 Final action policy belongs to Go. TypeScript can only map an already returned Go `DecisionResponse` to an OpenClaw hook result.
 
-- [ ] **Step 5: Verify Task 5**
+- [x] **Step 5: Verify Task 5**
 
 Run:
 
@@ -923,7 +925,9 @@ npx tsc --noEmit
 
 Expected: `src/guard` no longer owns rich semantic corpora in active path, and output protection is independent from `safety-guard`.
 
-- [ ] **Step 6: Commit Task 5**
+Observed during Task 5: `npx vitest run test/safety-guard.test.ts test/output-guard-redesign.test.ts test/src-file-ownership-audit.test.ts test/go-decision-ownership.test.ts` passes with 121 passed and 13 skipped, and `npx tsc --noEmit` passes.
+
+- [x] **Step 6: Commit Task 5**
 
 ```powershell
 git add src/guard src/local-guard src/runtime/policy-runtime.ts test/safety-guard.test.ts test/output-guard-redesign.test.ts test/src-file-ownership-audit.test.ts test/go-decision-ownership.test.ts

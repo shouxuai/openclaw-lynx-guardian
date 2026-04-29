@@ -24,7 +24,6 @@ import {
   guardToolResultPersistence,
 } from "./src/local-guard/output-protection.js";
 import { buildSecurityAwarenessInjection } from "./src/runtime/visible-input-warning.js";
-import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/lynx-check/report-producers.js";
 import {
   getPendingOverride,
@@ -115,6 +114,7 @@ import {
   evaluateGuardDecisionPolicy,
   evaluateRiskAssessment,
   normalizePolicyConfig,
+  resolveRiskPolicy,
 } from "./src/runtime/policy-runtime.js";
 import {
   LOCAL_TOOL_APPROVAL_COMMAND,

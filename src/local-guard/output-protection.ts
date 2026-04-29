@@ -1,4 +1,3 @@
-import { guardOutput, type GuardDecision } from "../guard/safety-guard.js";
 import { SensitiveDataBlocker } from "./sensitive-patterns.js";
 import { createReplacementMessage, extractMessageText } from "../runtime/plugin-runtime-helpers.js";
 
@@ -29,6 +28,19 @@ export interface TextGuardDecision {
   warning?: string;
 }
 
+export interface LocalOutputRiskAssessment {
+  level: string;
+  score: number;
+  modules: string[];
+  description?: string;
+}
+
+export interface LocalOutputGuardDecision {
+  block: boolean;
+  warning?: string;
+  riskAssessment: LocalOutputRiskAssessment;
+}
+
 interface DirectProtectedResultPattern {
   label: string;
   regex: RegExp;
@@ -45,6 +57,13 @@ const redactableOutputModules = new Set([
 ]);
 
 const sensitiveDataBlocker = new SensitiveDataBlocker();
+const CORE_PROMPT_FILE_PATTERN = /\b(?:SOUL|IDENTITY|USER|AGENTS|TOOLS|SHIELD|MEMORY|SKILL)\.md\b/i;
+const RAW_PROMPT_LEAK_PATTERN =
+  /\b(?:raw|verbatim|full|complete|dump|secret|hidden|content\s+(?:says|follows)|exact\s+text|paste\s+the\s+contents?|internal\s+tool\s+boundaries)\b/i;
+const METADATA_ONLY_PROMPT_PATTERN =
+  /\b(?:summary|overview|metadata|description|version|current\s+path|guidance|摘要|概述)\b/i;
+const OPENCLAW_MEMORY_SESSION_PATTERN =
+  /(?:\.openclaw[\\/]memory[\\/]|\.openclaw[\\/]agents[\\/][^\\/]+[\\/]sessions[\\/]|openclaw-memory|"scope"\s*:\s*"openclaw-memory")/i;
 
 function resolveOutputEnforcementMode(options?: ResultGuardOptions): OutputEnforcementMode {
   return options?.enforcementMode ?? "block";
@@ -56,7 +75,7 @@ function detectDirectProtectedResults(text: string): string[] {
     .map(({ label }) => label);
 }
 
-function formatDiagnosticReason(guardDecision: GuardDecision): string {
+function formatDiagnosticReason(guardDecision: LocalOutputGuardDecision): string {
   const description = guardDecision.riskAssessment.description?.trim();
   if (description && !/output_safe|输出安全/i.test(description)) {
     return description;
@@ -88,14 +107,14 @@ function buildDiagnosticMessage(args: {
   return parts.join(" | ");
 }
 
-function canLocallyRedact(guardDecision: GuardDecision): boolean {
+function canLocallyRedact(guardDecision: LocalOutputGuardDecision): boolean {
   const modules = guardDecision.riskAssessment.modules;
   return modules.length > 0 && modules.every((moduleId) => redactableOutputModules.has(moduleId));
 }
 
 function applyEnforcementToText(
   text: string,
-  guardDecision: GuardDecision,
+  guardDecision: LocalOutputGuardDecision,
   subject: string,
   options?: ResultGuardOptions,
   extra?: {
@@ -229,7 +248,28 @@ export function guardOutputText(
     };
   }
 
-  const decision = guardOutput(text, sessionKey, options);
+  const directMatches = detectDirectProtectedResults(text);
+  if (directMatches.length > 0) {
+    return applyDirectResultEnforcement(
+      text,
+      directMatches,
+      extra?.subject ?? "assistant output",
+      options,
+      { toolName: extra?.toolName },
+    );
+  }
+
+  const localRedaction = applyHighConfidenceRedactions(
+    text,
+    extra?.subject ?? "assistant output",
+    options,
+    { toolName: extra?.toolName },
+  );
+  if (localRedaction) {
+    return localRedaction;
+  }
+
+  const decision = evaluateLocalOutputProtection(text, sessionKey, options);
   return enforceGuardDecisionText(
     text,
     decision,
@@ -240,7 +280,7 @@ export function guardOutputText(
 
 export function enforceGuardDecisionText(
   text: string,
-  decision: Pick<GuardDecision, "block" | "warning" | "riskAssessment">,
+  decision: Pick<LocalOutputGuardDecision, "block" | "warning" | "riskAssessment">,
   options?: ResultGuardOptions,
   extra?: {
     subject?: string;
@@ -269,6 +309,70 @@ export function enforceGuardDecisionText(
     options,
     { toolName: extra?.toolName },
   );
+}
+
+function evaluateLocalOutputProtection(
+  text: string,
+  sessionKey?: string,
+  options?: ResultGuardOptions,
+): LocalOutputGuardDecision {
+  void sessionKey;
+  void options;
+
+  if (OPENCLAW_MEMORY_SESSION_PATTERN.test(text)) {
+    return {
+      block: true,
+      warning: "L4 OpenClaw memory or session content leak",
+      riskAssessment: {
+        level: "L4",
+        score: 9,
+        modules: ["M2:memory_session_privacy"],
+        description: "OpenClaw memory or session content appears in persisted output",
+      },
+    };
+  }
+
+  if (CORE_PROMPT_FILE_PATTERN.test(text)) {
+    const label = protectedPromptLabel(text);
+    if (RAW_PROMPT_LEAK_PATTERN.test(text) && !METADATA_ONLY_PROMPT_PATTERN.test(text)) {
+      return {
+        block: true,
+        warning: `L3 system prompt leak(${label})`,
+        riskAssessment: {
+          level: "L3",
+          score: 7,
+          modules: ["M2:system_prompt_leak"],
+          description: `系统提示泄露(${label})`,
+        },
+      };
+    }
+
+    return {
+      block: false,
+      warning: `L2 系统提示泄露(${label})`,
+      riskAssessment: {
+        level: "L2",
+        score: 3,
+        modules: ["M2:system_prompt_leak"],
+        description: `系统提示泄露(${label})`,
+      },
+    };
+  }
+
+  return {
+    block: false,
+    riskAssessment: {
+      level: "L0",
+      score: 0,
+      modules: [],
+      description: "output_safe",
+    },
+  };
+}
+
+function protectedPromptLabel(text: string): string {
+  const match = CORE_PROMPT_FILE_PATTERN.exec(text);
+  return match?.[0] ?? "protected_file";
 }
 
 export function guardToolResultPersistence(

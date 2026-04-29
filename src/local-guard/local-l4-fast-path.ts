@@ -1,6 +1,8 @@
 import type { DecisionResponse, DecisionStage } from "../../shared/src/decision.js";
 import type { DecisionContext } from "../runtime/decision-context.js";
+import { findLocalConcealedExecutionHardDeny } from "./concealed-execution-hard-deny.js";
 import { findLocalHardDenyPath, type LocalPathHardDenyHit } from "./path-hard-deny.js";
+import { findLocalPromptHardDeny } from "./prompt-hard-deny.js";
 import { findLocalToolHardDeny } from "./tool-command-hard-deny.js";
 
 interface PluginProtectionNormalizationRule {
@@ -116,6 +118,22 @@ const localL4Rules: LocalL4Rule[] = [
 
 export function evaluateLocalL4FastPath(context: DecisionContext): LocalL4Decision {
   const text = normalizeContextText(context);
+  const promptHit = findLocalPromptHardDeny(text);
+  if (promptHit) {
+    return {
+      matched: true,
+      decision: buildLocalL4Decision(context.stage, promptHit.module, promptHit.reason),
+    };
+  }
+
+  const concealedExecutionHit = findLocalConcealedExecutionHardDeny(text);
+  if (concealedExecutionHit) {
+    return {
+      matched: true,
+      decision: buildLocalL4Decision(context.stage, concealedExecutionHit.module, concealedExecutionHit.reason),
+    };
+  }
+
   const toolHit = findLocalToolHardDeny({
     content: context.content,
     toolName: context.toolName,

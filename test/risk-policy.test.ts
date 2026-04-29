@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveRiskPolicy } from "../src/guard/risk-policy.js";
+import { resolveRiskPolicy } from "../src/runtime/policy-runtime.js";
 import type { RiskAssessment } from "../src/guard/safety-guard.js";
 import { inferBlacklistModules } from "../src/runtime/override-runtime.js";
 

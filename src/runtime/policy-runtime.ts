@@ -76,6 +76,105 @@ export interface GuardPolicyTrace {
   };
 }
 
+export interface RiskPolicyConfig {
+  absoluteRejectScore?: number;
+  confirmationPhrase?: string;
+  approvableRiskLevels?: RiskLevel[];
+  allowOneTimeOverrideLevels?: RiskLevel[];
+  toolApprovalTimeoutSeconds?: number;
+  grantWindowSeconds?: number;
+  workflowAuthWindowSeconds?: number;
+  moduleOverrides?: {
+    M2?: {
+      protectedFileAccess?: { allowOneTimeOverride?: boolean };
+    };
+    M3?: {
+      allowOneTimeOverride?: boolean;
+    };
+  };
+}
+
+export interface RiskPolicyOverrideResult {
+  allowed: boolean;
+  confirmationPhrase?: string;
+  reason?: RiskPolicyOverrideReason;
+}
+
+export type RiskPolicyOverrideReason =
+  | "credential_theft"
+  | "level_not_allowed"
+  | "module_not_allowed";
+
+export interface RiskPolicyResult {
+  finalAction: RiskAssessment["action"];
+  override: RiskPolicyOverrideResult;
+}
+
+const MODULE_OVERRIDE_ELIGIBLE: Record<string, boolean> = {
+  "M0:identity_verification": true,
+  "M2:memory_session_privacy": false,
+  "M2:protected_file_access": true,
+  "M2:runtime_config_integrity": false,
+  "M2:plugin_integrity": false,
+  "M3:over_agency": false,
+  "M3:remote_access_control": false,
+  "M3:system_availability": false,
+  "M1:prompt_injection": false,
+  "M2:system_prompt_extraction": false,
+  "M2:system_prompt_leak": false,
+  "M5:credential_theft": false,
+  "M6:malicious_code": false,
+  "fatal_triangle": false,
+};
+
+function isModuleOverridable(mod: string, config: RiskPolicyConfig): boolean {
+  const eligible = MODULE_OVERRIDE_ELIGIBLE[mod];
+  if (eligible === undefined || eligible === false) return false;
+  if (mod.startsWith("M3:")) {
+    return config.moduleOverrides?.M3?.allowOneTimeOverride === true;
+  }
+  if (mod === "M2:protected_file_access") {
+    const m2cfg = config.moduleOverrides?.M2?.protectedFileAccess;
+    return m2cfg === undefined || m2cfg.allowOneTimeOverride !== false;
+  }
+  return true;
+}
+
+function areAllModulesOverridable(modules: string[], config: RiskPolicyConfig): boolean {
+  if (modules.length === 0) return false;
+  return modules.every((mod) => isModuleOverridable(mod, config));
+}
+
+export function resolveRiskPolicy(
+  assessment: RiskAssessment,
+  config: RiskPolicyConfig = {},
+): RiskPolicyResult {
+  let finalAction = assessment.action;
+  let overrideAllowed = false;
+  let confirmationPhrase: string | undefined;
+  let reason: RiskPolicyOverrideReason | undefined;
+
+  if (!areAllModulesOverridable(assessment.modules, config)) {
+    finalAction = "deny";
+    reason = assessment.modules.some((m) => m.startsWith("M5:"))
+      ? "credential_theft"
+      : "module_not_allowed";
+  } else {
+    const allowedLevels = config.approvableRiskLevels ?? config.allowOneTimeOverrideLevels ?? [];
+    overrideAllowed = allowedLevels.includes(assessment.level);
+    if (!overrideAllowed) {
+      reason = "level_not_allowed";
+    } else if (config.confirmationPhrase) {
+      confirmationPhrase = config.confirmationPhrase;
+    }
+  }
+
+  return {
+    finalAction,
+    override: { allowed: overrideAllowed, confirmationPhrase, reason },
+  };
+}
+
 interface GuardEvidenceBundleLike {
   modules?: string[];
   summary?: string;
