@@ -6,7 +6,7 @@ import { detectPromptInjection } from '../src/guard/prompt-injection.js';
 import { checkExecBlacklist } from '../src/blacklist.js';
 import { guardInput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
 import { extractContentAfterDate } from '../src/utils.js';
-import { SensitiveDataBlocker } from '../src/guard/sensitive.js';
+import { SensitiveDataBlocker } from '../src/local-guard/sensitive-patterns.js';
 
 describe('P0 Regression Tests', () => {
   describe('P0-1: Array content normalization', () => {
@@ -218,7 +218,7 @@ describe('P1 Regression Tests', () => {
       ];
       const filesToCheck = [
         'index.ts',
-        'src/guard/result-guard.ts',
+        'src/local-guard/output-protection.ts',
         'skills/openclaw-plugin-dev-workflow/SKILL.md',
         'test/plugin.test.ts',
         'docs/MEMORY.md',
@@ -246,7 +246,7 @@ describe('P1 Regression Tests', () => {
       ];
       const filesToCheck = [
         'index.ts',
-        'src/guard/result-guard.ts',
+        'src/local-guard/output-protection.ts',
         'src/runtime/plugin-runtime-helpers.ts',
       ];
 

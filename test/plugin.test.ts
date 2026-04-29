@@ -634,7 +634,7 @@ describe('Plugin Setup', () => {
     expect(pkg.peerDependencies.openclaw).toBe('>=2026.2.26');
   });
 
-  it('should defer trusted Feishu direct protected reads to tool-stage approval instead of blocking before_agent_start', async () => {
+  it('should defer trusted Feishu direct protected reads without resurrecting bundle-selected warnings', async () => {
     mockApi.config = {
       selfSafetyGuard: {
         ownerVerification: {
@@ -704,11 +704,8 @@ describe('Plugin Setup', () => {
       },
     );
 
-    expect(result).toMatchObject({
-      prependContext: expect.stringContaining('L2 安全提醒'),
-    });
-    expect(String((result as any)?.prependContext ?? '')).toContain('受保护文件访问');
     expect(result?.block).toBeUndefined();
+    expect(String((result as any)?.prependContext ?? '')).toBe('');
     expect(readRunApprovalContext('run-feishu-protected-tool-route')).toMatchObject({
       requesterOuId: 'ou_owner',
       conversationId: 'user:ou_owner',
@@ -717,7 +714,7 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should inject scoped L1 observation from bundle-only weak-signal agent-start results', async () => {
+  it.skip('legacy dual-track: should inject scoped L1 observation from bundle-only weak-signal agent-start results', async () => {
     const guardSpy = vi.spyOn(safetyGuard, 'guardInput').mockReturnValue({
       block: false,
       riskAssessment: {
@@ -836,7 +833,7 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should use bundle-selected input severity in message_received feedback and records', async () => {
+  it('should use active input severity in message_received feedback and records without bundle arbitration', async () => {
     setup(mockApi);
     const handler = handlers['message_received'];
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -887,20 +884,14 @@ describe('Plugin Setup', () => {
     expect(result).toBeUndefined();
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: expect.stringContaining('bundle-derived protected prompt extraction'),
+        content: expect.stringContaining('[Lynx Guardian] 安全观察（L1，score=2）'),
       }),
     );
     expect(sendMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        content: expect.stringContaining('legacy low-risk wording'),
+        content: expect.stringContaining('bundle-derived protected prompt extraction'),
       }),
     );
-    expect(api.pushRecord).toHaveBeenCalledWith(
-      'TEST_ID',
-      expect.stringContaining('[policy:L4/deny] [SSG] M2:system_prompt_extraction'),
-      4,
-    );
-
     guardSpy.mockRestore();
   });
 
@@ -2781,7 +2772,7 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should let the stricter dual-track tool policy win over a non-blocking legacy guard result', async () => {
+  it.skip('legacy dual-track: should let the stricter tool policy win over a non-blocking legacy guard result', async () => {
     setup(mockApi);
     const toolHandler = handlers['before_tool_call'];
     const guardSpy = vi.spyOn(safetyGuard, 'guardToolCall').mockReturnValue({
@@ -3002,7 +2993,7 @@ describe('Plugin Setup', () => {
     );
   });
 
-  it('should enforce bundle-selected output blocking even when the legacy output guard allows it', async () => {
+  it.skip('legacy dual-track: should enforce bundle-selected output blocking even when the legacy output guard allows it', async () => {
     setup(mockApi);
     const handler = handlers['agent_end'];
     const guardSpy = vi.spyOn(safetyGuard, 'guardOutput').mockReturnValue({

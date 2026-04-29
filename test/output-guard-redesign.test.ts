@@ -5,7 +5,7 @@ import {
   guardOutputText,
   guardToolResultPersistence,
   type OutputSink,
-} from "../src/guard/result-guard.js";
+} from "../src/local-guard/output-protection.js";
 
 describe("sink-aware output guard", () => {
   it("defines the expected output sinks", () => {

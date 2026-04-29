@@ -14,7 +14,7 @@ import type {
   SessionUpsertItem,
   ToolCallUpsertItem,
 } from "../../shared/src/ingest.js";
-import { SensitiveDataBlocker } from "../guard/sensitive.js";
+import { SensitiveDataBlocker } from "../local-guard/sensitive-patterns.js";
 
 type JsonRecord = Record<string, unknown>;
 

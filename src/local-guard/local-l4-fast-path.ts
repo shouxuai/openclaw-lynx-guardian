@@ -1,5 +1,5 @@
 import type { DecisionResponse, DecisionStage } from "../../shared/src/decision.js";
-import type { DecisionContext } from "./decision-context.js";
+import type { DecisionContext } from "../runtime/decision-context.js";
 
 export interface LocalL4Decision {
   matched: boolean;
@@ -74,6 +74,56 @@ export function evaluateLocalL4FastPath(context: DecisionContext): LocalL4Decisi
     matched: true,
     decision: buildLocalL4Decision(context.stage, matched.module, matched.reason),
   };
+}
+
+export function evaluateLocalL4Input(
+  content: string,
+  options: Partial<Omit<DecisionContext, "stage" | "hook" | "content" | "createdAt">> & {
+    hook?: string;
+    createdAt?: string;
+  } = {},
+): LocalL4Decision {
+  return evaluateLocalL4FastPath({
+    ...options,
+    stage: "input",
+    hook: options.hook ?? "before_dispatch",
+    content,
+    createdAt: options.createdAt ?? new Date().toISOString(),
+  });
+}
+
+export function evaluateLocalL4ToolCall(
+  toolName: string,
+  toolArgs: Record<string, unknown> = {},
+  options: Partial<Omit<DecisionContext, "stage" | "hook" | "toolName" | "toolArgs" | "createdAt">> & {
+    hook?: string;
+    createdAt?: string;
+  } = {},
+): LocalL4Decision {
+  return evaluateLocalL4FastPath({
+    ...options,
+    stage: "tool_call",
+    hook: options.hook ?? "before_tool_call",
+    toolName,
+    toolArgs,
+    createdAt: options.createdAt ?? new Date().toISOString(),
+  });
+}
+
+export function evaluateLocalL4Output(
+  content: string,
+  options: Partial<Omit<DecisionContext, "stage" | "hook" | "content" | "createdAt">> & {
+    hook?: string;
+    createdAt?: string;
+  } = {},
+): LocalL4Decision {
+  return evaluateLocalL4FastPath({
+    ...options,
+    stage: "outbound_message",
+    hook: options.hook ?? "message_sending",
+    content,
+    createdAt: options.createdAt ?? new Date().toISOString(),
+  });
 }
 
 function buildLocalL4Decision(stage: DecisionStage, module: string, reason: string): DecisionResponse {

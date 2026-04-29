@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateLocalL4FastPath } from "../src/runtime/local-l4-fast-path.js";
+import { evaluateLocalL4FastPath } from "../src/local-guard/local-l4-fast-path.js";
 import type { DecisionContext } from "../src/runtime/decision-context.js";
 
 function context(overrides: Partial<DecisionContext>): DecisionContext {

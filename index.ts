@@ -14,7 +14,7 @@ import {
 } from "./src/utils.js";
 import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
 import type { CheckExecBlacklistContext } from "./src/blacklist.js";
-import { SensitiveDataBlocker } from "./src/guard/sensitive.js";
+import { SensitiveDataBlocker } from "./src/local-guard/sensitive-patterns.js";
 import { guardInput, guardOutput, guardToolCall } from "./src/guard/safety-guard.js";
 import type { GuardDecision } from "./src/guard/safety-guard.js";
 import {
@@ -22,7 +22,7 @@ import {
   guardAssistantPersistence,
   guardOutputText,
   guardToolResultPersistence,
-} from "./src/guard/result-guard.js";
+} from "./src/local-guard/output-protection.js";
 import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/lynx-check/report-producers.js";

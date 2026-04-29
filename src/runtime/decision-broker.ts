@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import type { DecisionRequest, DecisionResponse } from "../../shared/src/decision.js";
 import type { DecisionContext } from "./decision-context.js";
 import { decisionRequestFromContext } from "./decision-context.js";
-import { evaluateLocalL4FastPath } from "./local-l4-fast-path.js";
+import { evaluateLocalL4FastPath } from "../local-guard/local-l4-fast-path.js";
 
 export interface DecisionClientLike {
   decideInput(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResponse>;

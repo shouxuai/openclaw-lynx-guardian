@@ -15,27 +15,34 @@ import {
   type ConcealedIntentDetection,
 } from "./concealed-intent.js";
 import { matchGlobalInputAllowlistRule } from "./global-allowlist.js";
-import { normalizePluginProtectionText } from "./plugin-protection-normalization.js";
-import { SensitiveDataBlocker } from "./sensitive.js";
-import {
-  buildInputEvidenceBundle,
-  buildOutputEvidenceBundle,
-  buildToolEvidenceBundle,
-} from "./policy/evidence-bundle-builder.js";
-import type { GuardEvidenceBundle } from "./policy/evidence-bundle.js";
-import { advanceAttackGraph, type AttackGraphEvent, type AttackGraphState } from "./policy/attack-graph.js";
-import {
-  advanceAttackGraphState,
-  clearGuardPolicyState,
-  markGuardArtifactTaint,
-  readAttackGraphState,
-  readGuardArtifactTaint,
-} from "../runtime/guard-policy-state.js";
+import { normalizePluginProtectionText } from "../local-guard/plugin-protection-normalization.js";
+import { SensitiveDataBlocker } from "../local-guard/sensitive-patterns.js";
 import {
   findObfuscatedLynxPluginPath,
   findObfuscatedProtectedReferenceLabels,
   findObfuscatedSystemAuthPath,
 } from "../path-glob-protection.js";
+
+interface GuardEvidenceBundle {
+  modules: string[];
+  summary: string;
+  [key: string]: unknown;
+}
+
+type AttackStage =
+  | "idle"
+  | "sensitive_scope_entered"
+  | "artifact_prepared"
+  | "execution_ready"
+  | "exfiltration_ready";
+
+interface AttackGraphState {
+  stage: AttackStage;
+}
+
+interface AttackGraphEvent {
+  action: "sensitive_read" | "artifact_write" | "artifact_exec" | "external_send";
+}
 
 // ── Risk Levels ────────────────────────────────────────────────────
 
@@ -1220,19 +1227,10 @@ function extractOutputArtifactPaths(output: string): string[] {
 }
 
 function deriveOutputArtifactTaintReadLabels(
-  output: string,
-  sessionKey?: string,
+  _output: string,
+  _sessionKey?: string,
 ): string[] {
-  const labels = new Set<string>();
-
-  for (const path of extractOutputArtifactPaths(output)) {
-    const taintRecord = readGuardArtifactTaint(sessionKey, path);
-    for (const taint of taintRecord?.taints ?? []) {
-      labels.add(taint);
-    }
-  }
-
-  return [...labels];
+  return [];
 }
 
 function deriveOutputTaintReadLabels(
@@ -1315,16 +1313,7 @@ function shouldInstantDenyConcealedInput(
 export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
   const globalAllowlistRule = matchGlobalInputAllowlistRule(text);
-  const atMs = Date.now();
-  const finalizeInputDecision = (decision: GuardDecision): GuardDecision => ({
-    ...decision,
-    evidenceBundle: buildInputEvidenceBundle({
-      text,
-      assessment: decision.riskAssessment,
-      sessionKey,
-      atMs,
-    }),
-  });
+  const finalizeInputDecision = (decision: GuardDecision): GuardDecision => decision;
 
   // === 即时危险通道（early-return，直接 L4）===
 
@@ -1676,40 +1665,7 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
     };
   }
 
-  const atMs = Date.now();
-  const finalizeOutputDecision = (decision: GuardDecision): GuardDecision => {
-    const priorChainState = readAttackGraphState(sessionKey);
-    const artifactTaintReadLabels = deriveOutputArtifactTaintReadLabels(output, sessionKey);
-    const taintReadLabels = deriveOutputTaintReadLabels(artifactTaintReadLabels, priorChainState);
-    const attackEvent = deriveOutputAttackGraphEvent({
-      output,
-      priorChainState,
-      artifactTaintReadLabels,
-    });
-    const chainProgress = attackEvent
-      ? advanceAttackGraph(priorChainState ?? undefined, attackEvent)
-      : priorChainState;
-
-    if (!decision.block && attackEvent && shouldPersistOutputAttackEvent({
-      attackEvent,
-      priorChainState,
-      chainProgress: chainProgress ?? null,
-    })) {
-      advanceAttackGraphState(sessionKey, attackEvent);
-    }
-
-    return {
-      ...decision,
-      evidenceBundle: buildOutputEvidenceBundle({
-        output,
-        assessment: decision.riskAssessment,
-        sessionKey,
-        chainProgress,
-        taintReadLabels,
-        atMs,
-      }),
-    };
-  };
+  const finalizeOutputDecision = (decision: GuardDecision): GuardDecision => decision;
 
   if (detectOpenClawMemorySessionLeak(output)) {
     return finalizeOutputDecision(buildInstantDeny("M2:memory_session_privacy", "attempt to reveal OpenClaw memory/session records"));
@@ -1843,15 +1799,12 @@ export function guardToolCall(
   const normalizedToolName = toolName.trim().toLowerCase();
   const normalizedToolAction = toolAction.trim().toLowerCase();
   const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
-  const atMs = Date.now();
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
   const memorySessionAccess = detectOpenClawMemorySessionArtifactAccess(combined, toolName);
   const credTheft = detectCredentialTheft(combined);
   const triangle = checkFatalTriangle(toolName, params);
   const artifactPath = inferToolArtifactPath(normalizedToolName, filePath, command);
-  const taintReadLabels = artifactPath
-    ? (readGuardArtifactTaint(sessionKey, artifactPath)?.taints ?? [])
-    : [];
+  const taintReadLabels: string[] = [];
   const attackEvent = deriveToolAttackGraphEvent({
     normalizedToolName,
     protectedAccess,
@@ -1864,45 +1817,7 @@ export function guardToolCall(
   });
   let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
 
-  const finalizeToolDecision = (decision: GuardDecision): GuardDecision => {
-    const priorChainState = readAttackGraphState(sessionKey);
-    const chainProgress = attackEvent
-      ? advanceAttackGraph(priorChainState ?? undefined, attackEvent)
-      : priorChainState;
-    const taintWriteLabels = deriveToolTaintWriteLabels({
-      normalizedToolName,
-      artifactPath,
-      priorChainState,
-      taintReadLabels,
-    });
-
-    if (shouldPersistToolAttackEvent({
-      decision,
-      attackEvent,
-      priorChainState,
-      chainProgress,
-    })) {
-      advanceAttackGraphState(sessionKey, attackEvent);
-    }
-
-    if (artifactPath && taintWriteLabels.length > 0 && !decision.block) {
-      markGuardArtifactTaint(sessionKey, artifactPath, taintWriteLabels, { atMs });
-    }
-
-    return {
-      ...decision,
-      evidenceBundle: buildToolEvidenceBundle({
-        toolName: normalizedToolName || toolName,
-        params,
-        assessment: decision.riskAssessment,
-        sessionKey,
-        chainProgress,
-        taintReadLabels,
-        taintWriteLabels,
-        atMs,
-      }),
-    };
-  };
+  const finalizeToolDecision = (decision: GuardDecision): GuardDecision => decision;
 
   if (normalizedToolName === "gateway" && /^config\.(?:patch|set|replace|update)$/i.test(normalizedToolAction)) {
     return finalizeToolDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
@@ -2127,5 +2042,4 @@ function buildDescription(modules: string[], level: RiskLevel): string {
 
 export function clearSessionState(sessionKey: string): void {
   sessionStates.delete(sessionKey);
-  clearGuardPolicyState(sessionKey);
 }

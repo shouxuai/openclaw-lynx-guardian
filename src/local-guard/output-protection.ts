@@ -1,5 +1,5 @@
-import { guardOutput, type GuardDecision } from "./safety-guard.js";
-import { SensitiveDataBlocker } from "./sensitive.js";
+import { guardOutput, type GuardDecision } from "../guard/safety-guard.js";
+import { SensitiveDataBlocker } from "./sensitive-patterns.js";
 import { createReplacementMessage, extractMessageText } from "../runtime/plugin-runtime-helpers.js";
 
 export type OutputEnforcementMode = "warn" | "redact" | "block";
