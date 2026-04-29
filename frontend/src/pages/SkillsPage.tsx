@@ -13,7 +13,7 @@ function trustTone(value: string): "neutral" | "info" | "warning" | "danger" | "
   if (value === "hash_mismatch" || value === "blocked") {
     return "danger";
   }
-  if (value === "unknown" || value === "missing_manifest") {
+  if (value === "unknown" || value === "missing_manifest" || value === "first_seen") {
     return "warning";
   }
   return "neutral";
@@ -25,6 +25,7 @@ function formatTrustState(value: string): string {
     ok: "可信",
     hash_mismatch: "哈希不一致",
     missing_manifest: "缺少清单",
+    first_seen: "首次发现",
     unknown: "未知来源",
   };
   return labels[value] ?? value;

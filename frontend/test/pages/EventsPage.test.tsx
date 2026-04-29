@@ -106,6 +106,62 @@ describe("EventsPage", () => {
     expect(screen.queryByRole("dialog", { name: "初始审计事件" })).not.toBeInTheDocument();
   });
 
+  it("summarizes control-plane evidence from real list fields and optional top-level evidence", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse({
+      items: [
+        {
+          ...createEvent("EVT-FIELDS", "列表字段证据"),
+          primaryModule: "M2:protected_file_access",
+          riskScore: 88,
+          requestId: "REQ-001",
+          approvalId: "APR-001",
+        },
+        {
+          ...createEvent("EVT-TOPLEVEL", "列表顶层证据"),
+          winningArbiter: "evidence_score",
+          matchedRules: ["critical_exec"],
+          scoreBreakdown: [{ ruleId: "chain.recent_denial", delta: 30 }],
+          evidence: [{ id: "taint.recent_sensitive_read", module: "taint_context" }],
+        },
+      ],
+    }));
+
+    renderEventsPage();
+
+    await screen.findByText("EVT-FIELDS");
+    expect(screen.getByText(/module:M2:protected_file_access/)).toBeInTheDocument();
+    expect(screen.getByText(/score:88/)).toBeInTheDocument();
+    expect(screen.getByText(/request:REQ-001/)).toBeInTheDocument();
+    expect(screen.getByText(/approval:APR-001/)).toBeInTheDocument();
+    expect(screen.getByText(/arbiter:evidence_score/)).toBeInTheDocument();
+    expect(screen.getByText(/rules:critical_exec/)).toBeInTheDocument();
+    expect(screen.getByText(/trace:chain\.recent_denial \+30/)).toBeInTheDocument();
+    expect(screen.getByText(/evidence:taint\.recent_sensitive_read/)).toBeInTheDocument();
+    expect(screen.queryByText("暂无控制面证据")).not.toBeInTheDocument();
+  });
+
+  it("does not say control-plane evidence is absent when list rows omit detail payloadJson", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse({
+      items: [
+        {
+          ...createEvent("EVT-DETAIL-ONLY", "详情包含控制面证据"),
+          policyDecision: undefined,
+          primaryModule: undefined,
+          requestId: undefined,
+          approvalId: undefined,
+          toolCallId: undefined,
+          riskScore: undefined,
+        },
+      ],
+    }));
+
+    renderEventsPage();
+
+    await screen.findByText("EVT-DETAIL-ONLY");
+    expect(screen.getByText(/列表未包含控制面证据/)).toBeInTheDocument();
+    expect(screen.queryByText("暂无控制面证据")).not.toBeInTheDocument();
+  });
+
   it("supports cursor pagination, page selection, page size, and filters", async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse({

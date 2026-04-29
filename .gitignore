@@ -106,7 +106,6 @@ test-results/
 *.temp
 
 # Repo-local development material not packaged as extension source
-/test/
 /test-temp
 /tests/
 /docs

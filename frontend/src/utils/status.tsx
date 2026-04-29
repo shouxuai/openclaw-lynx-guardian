@@ -31,6 +31,8 @@ const POLICY_DECISION_LABELS: Record<string, string> = {
   allow_with_logging: "允许并记录",
   confirm: "人工确认",
   deliver_report: "投递报告",
+  require_approval: "需要审批",
+  requireApproval: "需要审批",
   redact_sensitive_fields: "敏感字段脱敏",
   require_human_review: "人工复核",
   warn_and_continue: "告警继续",
@@ -111,17 +113,25 @@ export function getDecisionTone(input: {
   block?: boolean;
   riskLevel?: "L0" | "L1" | "L2" | "L3" | "L4";
   action?: string;
+  enforcementAction?: string;
   eventSeverity?: "info" | "warn" | "error" | "critical";
+  requiresApproval?: boolean;
+  degraded?: boolean;
 }): "default" | "processing" | "warning" | "error" {
+  const action = input.action;
+  const enforcementAction = input.enforcementAction;
+
   if (
-    input.eventSeverity === "critical"
+    input.block
+    || input.eventSeverity === "critical"
     || input.riskLevel === "L4"
-    || input.action === "deny"
+    || action === "deny"
+    || enforcementAction === "deny"
   ) {
     return "error";
   }
 
-  if (input.eventSeverity === "error" || input.action === "block") {
+  if (input.eventSeverity === "error" || action === "block" || enforcementAction === "block") {
     return "error";
   }
 
@@ -129,13 +139,21 @@ export function getDecisionTone(input: {
     input.eventSeverity === "warn"
     || input.riskLevel === "L2"
     || input.riskLevel === "L3"
-    || input.action === "require_approval"
-    || input.action === "warn"
+    || input.requiresApproval
+    || input.degraded
+    || action === "require_approval"
+    || action === "requireApproval"
+    || action === "redact"
+    || action === "warn"
+    || enforcementAction === "require_approval"
+    || enforcementAction === "requireApproval"
+    || enforcementAction === "redact"
+    || enforcementAction === "warn"
   ) {
     return "warning";
   }
 
-  if (input.riskLevel === "L1" || input.action === "log_only") {
+  if (input.riskLevel === "L1" || action === "log_only" || enforcementAction === "logOnly" || enforcementAction === "log_only") {
     return "processing";
   }
 

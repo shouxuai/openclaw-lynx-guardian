@@ -6,7 +6,7 @@ import { StatusBadge } from "../components/feedback/StatusBadge";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { formatInteger } from "../utils/format";
-import { getDecisionTone, renderActionBadge, renderRiskBadge } from "../utils/status";
+import { getDecisionTone, renderActionBadge, renderPolicyDecisionBadge, renderRiskBadge } from "../utils/status";
 
 const EMPTY_DECISIONS: DecisionResponse[] = [];
 
@@ -18,7 +18,10 @@ function formatDecisionTone(decision: DecisionResponse): "neutral" | "info" | "w
   const tone = getDecisionTone({
     action: decision.action,
     block: decision.block,
+    degraded: Boolean(decision.degraded),
+    enforcementAction: decision.audit.enforcementAction,
     eventSeverity: decision.audit.eventSeverity,
+    requiresApproval: decision.requiresApproval,
     riskLevel: decision.riskLevel,
   });
 
@@ -50,6 +53,32 @@ function formatScoreBreakdown(breakdown: ScoreBreakdown[]): string {
   return breakdown
     .map((item) => `${item.ruleId} ${formatScoreDelta(item.delta)}`)
     .join("；");
+}
+
+function collectMatchedRules(decision: DecisionResponse): string[] {
+  const rules = new Set<string>();
+  for (const arbiter of decision.arbiters) {
+    for (const evidence of arbiter.evidence ?? []) {
+      if (evidence.id) {
+        rules.add(evidence.id);
+      }
+    }
+    for (const score of arbiter.scoreBreakdown ?? []) {
+      if (score.ruleId) {
+        rules.add(score.ruleId);
+      }
+    }
+  }
+  return Array.from(rules);
+}
+
+function formatMatchedRules(decision: DecisionResponse): string {
+  const rules = collectMatchedRules(decision);
+  return rules.length > 0 ? rules.join(", ") : "暂无";
+}
+
+function formatApprovalState(decision: DecisionResponse): string {
+  return decision.requiresApproval ? "需要审批" : "无需审批";
 }
 
 function formatDegradedReason(decision: DecisionResponse): string {
@@ -145,9 +174,13 @@ export function DecisionsPage() {
             { key: "stage", label: "阶段", maxWidth: 140, minWidth: 110, width: 120 },
             { key: "risk", label: "风险", maxWidth: 140, minWidth: 110, width: 120 },
             { key: "action", label: "动作", maxWidth: 150, minWidth: 118, width: 132 },
+            { key: "policy", label: "Policy", maxWidth: 160, minWidth: 128, width: 144 },
+            { key: "enforcement", label: "Enforcement", maxWidth: 160, minWidth: 128, width: 144 },
+            { key: "approval", label: "审批", maxWidth: 140, minWidth: 110, width: 120 },
             { key: "block", label: "阻断", maxWidth: 140, minWidth: 110, width: 120 },
             { key: "arbiter", label: "获胜仲裁器", maxWidth: 180, minWidth: 140, width: 160 },
             { key: "modules", label: "命中模块", maxWidth: 220, minWidth: 160, width: 190 },
+            { key: "rules", label: "Matched Rules", maxWidth: 260, minWidth: 190, width: 230 },
             { key: "score", label: "评分轨迹", maxWidth: 320, minWidth: 230, width: 280 },
             { key: "degraded", label: "降级原因", maxWidth: 240, minWidth: 180, width: 210 },
           ]}
@@ -157,6 +190,9 @@ export function DecisionsPage() {
             stage: decision.stage,
             risk: renderRiskBadge(decision.riskLevel),
             action: renderActionBadge(decision.action),
+            policy: renderPolicyDecisionBadge(decision.audit.policyDecision, decision.audit.enforcementAction),
+            enforcement: renderActionBadge(decision.audit.enforcementAction),
+            approval: formatApprovalState(decision),
             block: (
               <StatusBadge
                 label={formatBlockState(decision.block)}
@@ -165,6 +201,7 @@ export function DecisionsPage() {
             ),
             arbiter: decision.winningArbiter,
             modules: decision.matchedModules.length > 0 ? decision.matchedModules.join(", ") : "暂无",
+            rules: formatMatchedRules(decision),
             score: formatScoreBreakdown(collectScoreBreakdown(decision)),
             degraded: formatDegradedReason(decision),
           }))}

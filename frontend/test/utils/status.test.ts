@@ -29,4 +29,49 @@ describe("getDecisionTone", () => {
       eventSeverity: "info",
     })).toBe("default");
   });
+
+  it("treats explicit block true as error even when other fields look low risk", () => {
+    expect(getDecisionTone({
+      block: true,
+      riskLevel: "L0",
+      action: "allow",
+      eventSeverity: "info",
+    })).toBe("error");
+  });
+
+  it("does not treat approval or degraded block false decisions as neutral", () => {
+    expect(getDecisionTone({
+      block: false,
+      riskLevel: "L0",
+      action: "requireApproval",
+      eventSeverity: "info",
+      requiresApproval: true,
+    })).toBe("warning");
+
+    expect(getDecisionTone({
+      block: false,
+      riskLevel: "L0",
+      action: "allow",
+      eventSeverity: "info",
+      degraded: true,
+    })).toBe("warning");
+  });
+
+  it("uses enforcement action when block and action look neutral", () => {
+    expect(getDecisionTone({
+      block: false,
+      riskLevel: "L0",
+      action: "allow",
+      eventSeverity: "info",
+      enforcementAction: "requireApproval",
+    })).toBe("warning");
+
+    expect(getDecisionTone({
+      block: false,
+      riskLevel: "L0",
+      action: "allow",
+      eventSeverity: "info",
+      enforcementAction: "block",
+    })).toBe("error");
+  });
 });

@@ -233,6 +233,243 @@ func TestChainLifecycleRevokesActiveGrants(t *testing.T) {
 	}
 }
 
+func TestChainSummaryAccumulatesEvents(t *testing.T) {
+	router := setupGrantRouter(t)
+
+	var first api.ChainSummary
+	postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-accumulate",
+		SessionKey:     "session-accumulate",
+		ChannelProfile: "webchat",
+		ConversationID: "conversation-accumulate",
+		RequesterID:    "requester-accumulate",
+		EventType:      "before_dispatch",
+		Hook:           "before_dispatch",
+		RiskLevel:      "L4",
+		Action:         "deny",
+		Content:        "blocked prompt",
+	}, &first)
+	if !containsString(first.RecentDenials, "before_dispatch") {
+		t.Fatalf("first summary missing denial: %#v", first)
+	}
+
+	var second api.ChainSummary
+	postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-accumulate",
+		SessionKey:     "session-accumulate",
+		ChannelProfile: "webchat",
+		ConversationID: "conversation-accumulate",
+		RequesterID:    "requester-accumulate",
+		EventType:      "before_tool_call",
+		Hook:           "before_tool_call",
+		RiskLevel:      "L3",
+		Action:         "require_approval",
+		ToolName:       "read_file",
+		TargetURI:      "C:/Users/example/.env",
+		Metadata: map[string]any{
+			"taintReadLabels": []string{"secret-file"},
+			"pendingApproval": "approval-accumulate",
+		},
+	}, &second)
+
+	if !containsString(second.RecentDenials, "before_dispatch") {
+		t.Fatalf("second summary lost prior denial: %#v", second)
+	}
+	if !containsString(second.RecentApprovals, "before_tool_call") {
+		t.Fatalf("second summary missing approval signal: %#v", second)
+	}
+	if !containsString(second.RecentTools, "read_file") {
+		t.Fatalf("second summary missing tool signal: %#v", second)
+	}
+	if !containsString(second.RecentSensitive, "C:/Users/example/.env") {
+		t.Fatalf("second summary missing sensitive target: %#v", second)
+	}
+	if !containsString(second.RecentTaintReads, "secret-file") {
+		t.Fatalf("second summary missing taint signal: %#v", second)
+	}
+	if second.PendingApproval != "approval-accumulate" {
+		t.Fatalf("pending approval = %q, want approval-accumulate", second.PendingApproval)
+	}
+}
+
+func TestChainSummaryClearsPendingApprovalAfterGrantResolution(t *testing.T) {
+	router := setupGrantRouter(t)
+
+	var pending api.ChainSummary
+	postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-clear-pending",
+		SessionKey:     "session-clear-pending",
+		ChannelProfile: "webchat",
+		ConversationID: "conversation-clear-pending",
+		RequesterID:    "requester-clear-pending",
+		EventType:      "before_tool_call",
+		Hook:           "before_tool_call",
+		RiskLevel:      "L3",
+		Action:         "require_approval",
+		Metadata: map[string]any{
+			"pendingApproval": "approval-clear-pending",
+		},
+	}, &pending)
+	if pending.PendingApproval != "approval-clear-pending" {
+		t.Fatalf("pending approval not recorded: %#v", pending)
+	}
+
+	var resolved api.ChainSummary
+	postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-clear-pending",
+		SessionKey:     "session-clear-pending",
+		ChannelProfile: "webchat",
+		ConversationID: "conversation-clear-pending",
+		RequesterID:    "requester-clear-pending",
+		EventType:      "approval_resolved",
+		Hook:           "approval_resolved",
+		Action:         "allow",
+		Metadata: map[string]any{
+			"activeGrantId":    "grant-clear-pending",
+			"approvalResolved": true,
+		},
+	}, &resolved)
+
+	if resolved.PendingApproval != "" {
+		t.Fatalf("pending approval persisted after grant resolution: %#v", resolved)
+	}
+	if resolved.ActiveGrantID != "grant-clear-pending" {
+		t.Fatalf("active grant not recorded after resolution: %#v", resolved)
+	}
+}
+
+func TestChainSummaryClearsPendingApprovalOnDenyBlockAndLifecycleEnd(t *testing.T) {
+	router := setupGrantRouter(t)
+
+	cases := []struct {
+		name      string
+		eventType string
+		action    string
+	}{
+		{name: "deny", eventType: "before_dispatch", action: "deny"},
+		{name: "block", eventType: "before_tool_call", action: "block"},
+		{name: "lifecycle", eventType: "agent_end", action: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chainID := "chain-clear-pending-" + tc.name
+			var pending api.ChainSummary
+			postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+				ChainID:        chainID,
+				SessionKey:     "session-" + tc.name,
+				ChannelProfile: "webchat",
+				ConversationID: "conversation-" + tc.name,
+				RequesterID:    "requester-" + tc.name,
+				EventType:      "approval_requested",
+				Hook:           "before_tool_call",
+				RiskLevel:      "L3",
+				Action:         "require_approval",
+				Metadata: map[string]any{
+					"pendingApproval": "approval-" + tc.name,
+				},
+			}, &pending)
+			if pending.PendingApproval == "" {
+				t.Fatalf("pending approval not recorded before clear: %#v", pending)
+			}
+
+			var cleared api.ChainSummary
+			postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+				ChainID:        chainID,
+				SessionKey:     "session-" + tc.name,
+				ChannelProfile: "webchat",
+				ConversationID: "conversation-" + tc.name,
+				RequesterID:    "requester-" + tc.name,
+				EventType:      tc.eventType,
+				Hook:           tc.eventType,
+				Action:         tc.action,
+			}, &cleared)
+
+			if cleared.PendingApproval != "" {
+				t.Fatalf("pending approval persisted after %s: %#v", tc.name, cleared)
+			}
+		})
+	}
+}
+
+func TestChainSummaryClearsActiveGrantOnRevocationAndLifecycleEnd(t *testing.T) {
+	router := setupGrantRouter(t)
+
+	cases := []struct {
+		name      string
+		eventType string
+	}{
+		{name: "revocation", eventType: "grant_revoked"},
+		{name: "lifecycle", eventType: "agent_end"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chainID := "chain-clear-active-grant-" + tc.name
+			var active api.ChainSummary
+			postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+				ChainID:        chainID,
+				SessionKey:     "session-active-" + tc.name,
+				ChannelProfile: "webchat",
+				ConversationID: "conversation-active-" + tc.name,
+				RequesterID:    "requester-active-" + tc.name,
+				EventType:      "approval_resolved",
+				Hook:           "approval_resolved",
+				Action:         "allow",
+				Metadata: map[string]any{
+					"activeGrantId": "grant-active-" + tc.name,
+				},
+			}, &active)
+			if active.ActiveGrantID == "" {
+				t.Fatalf("active grant not recorded before clear: %#v", active)
+			}
+
+			var cleared api.ChainSummary
+			postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+				ChainID:        chainID,
+				SessionKey:     "session-active-" + tc.name,
+				ChannelProfile: "webchat",
+				ConversationID: "conversation-active-" + tc.name,
+				RequesterID:    "requester-active-" + tc.name,
+				EventType:      tc.eventType,
+				Hook:           tc.eventType,
+			}, &cleared)
+
+			if cleared.ActiveGrantID != "" {
+				t.Fatalf("active grant persisted after %s: %#v", tc.name, cleared)
+			}
+		})
+	}
+}
+
+func TestChainSummaryTruncatesLargeSignals(t *testing.T) {
+	router := setupGrantRouter(t)
+	longTarget := "C:/Users/example/" + strings.Repeat("secret-token-", 40) + ".env"
+	longTaint := "taint-" + strings.Repeat("very-long-label-", 40)
+
+	var summary api.ChainSummary
+	postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-truncate",
+		SessionKey:     "session-truncate",
+		ChannelProfile: "webchat",
+		ConversationID: "conversation-truncate",
+		RequesterID:    "requester-truncate",
+		EventType:      "after_tool_call",
+		Hook:           "after_tool_call",
+		TargetURI:      longTarget,
+		Metadata: map[string]any{
+			"taintReadLabels": []string{longTaint},
+		},
+	}, &summary)
+
+	if len(summary.RecentSensitive) != 1 || len([]rune(summary.RecentSensitive[0])) > 160 {
+		t.Fatalf("sensitive target was not capped: length=%d value=%q", len([]rune(firstValue(summary.RecentSensitive))), firstValue(summary.RecentSensitive))
+	}
+	if len(summary.RecentTaintReads) != 1 || len([]rune(summary.RecentTaintReads[0])) > 160 {
+		t.Fatalf("taint label was not capped: length=%d value=%q", len([]rune(firstValue(summary.RecentTaintReads))), firstValue(summary.RecentTaintReads))
+	}
+}
+
 type grantResolveBody struct {
 	ApprovalID     string `json:"approvalId"`
 	ChainID        string `json:"chainId"`
@@ -293,6 +530,13 @@ func checkGrant(t *testing.T, router http.Handler, body api.GrantCheckRequest) a
 	var result api.GrantCheckResult
 	postJSONInto(t, router, http.MethodPost, "/lynx/internal/v1/grants/check", body, &result)
 	return result
+}
+
+func firstValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func postJSON(t *testing.T, router http.Handler, method string, path string, body any) {

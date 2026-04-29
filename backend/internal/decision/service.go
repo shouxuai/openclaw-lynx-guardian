@@ -9,7 +9,15 @@ import (
 )
 
 func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.DecisionResponse, error) {
-	chain := ChainSummary{}
+	chain := ChainSummaryFromRequest(req)
+	persistedChain, persistedTaint, err := s.repo.LoadChainSummaryForDecision(ctx, req)
+	if err != nil {
+		return api.DecisionResponse{}, err
+	}
+	chain = MergeChainSummaries(ChainSummary{
+		ChainSummary: persistedChain,
+		TaintSummary: persistedTaint,
+	}, chain)
 	semantic, err := s.semanticArbiter.Evaluate(ctx, req, chain)
 	if err != nil {
 		return api.DecisionResponse{}, err
@@ -39,11 +47,11 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 		Audit: api.DecisionAudit{
 			EventSeverity:     eventSeverityFor(winner.RiskLevel, winner.Action),
 			PolicyDecision:    winner.Action,
-			EnforcementAction: winner.Action,
+			EnforcementAction: enforcementActionFor(winner.Action),
 			Color:             auditColorFor(winner.RiskLevel, winner.Action),
 		},
 	}
-	if err := s.repo.InsertDecision(ctx, response); err != nil {
+	if err := s.repo.InsertDecision(ctx, req, response); err != nil {
 		return api.DecisionResponse{}, err
 	}
 	return response, nil

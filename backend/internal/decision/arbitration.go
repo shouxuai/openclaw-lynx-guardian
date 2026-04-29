@@ -39,6 +39,13 @@ func finalActionBlocks(action api.DecisionAction) bool {
 	return action == "block" || action == "deny"
 }
 
+func enforcementActionFor(action api.DecisionAction) api.DecisionAction {
+	if action == "deny" {
+		return "block"
+	}
+	return action
+}
+
 func requiresApproval(action api.DecisionAction) bool {
 	return action == "require_approval"
 }

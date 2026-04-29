@@ -1,7 +1,8 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useState, type CSSProperties } from "react";
 import type {
   TokenSummaryDto,
   TokenTrendDto,
+  TokenTrendPointDto,
   TokenUsageListItemDto,
 } from "@lynx/local-console-shared";
 
@@ -27,6 +28,8 @@ const EMPTY_TOKEN_TREND: TokenTrendDto = {
   bucket: "hour",
   points: [],
 };
+
+const TOKEN_TREND_POINT_LIMIT = 7;
 
 function percent(value: number, total: number): number {
   if (total === 0) {
@@ -55,6 +58,34 @@ function formatSourceTypeLabel(sourceType: "actual" | "estimated" | "unavailable
     unavailable: "不可用",
   };
   return labels[sourceType];
+}
+
+function formatTrendLabel(point: TokenTrendPointDto): string {
+  return formatTimestamp(point.bucketStartMs).split(" ")[0];
+}
+
+function clampTokenCount(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function buildTrendBarHeight(point: TokenTrendPointDto, maxTotalTokens: number): string {
+  const totalTokens = clampTokenCount(point.totalTokens);
+  if (totalTokens === 0 || maxTotalTokens === 0) {
+    return "2%";
+  }
+
+  return `${Math.max((totalTokens / maxTotalTokens) * 100, 8)}%`;
+}
+
+function buildTrendSegmentStyle(value: number, totalTokens: number, background: string): CSSProperties {
+  const safeValue = clampTokenCount(value);
+  const safeTotal = clampTokenCount(totalTokens);
+
+  return {
+    background,
+    display: safeValue > 0 ? "block" : "none",
+    flexBasis: safeTotal > 0 ? `${(safeValue / safeTotal) * 100}%` : "0%",
+  };
 }
 
 export function TokensPage() {
@@ -192,13 +223,23 @@ export function TokensPage() {
   const outputPercent = percent(summary.outputTokens, totalTransferTokens);
   const estimatedCount = summary.estimatedCount ?? 0;
   const unavailableCount = summary.unavailableCount ?? 0;
+  const visibleTrendPoints = useMemo(() => trend.points.slice(-TOKEN_TREND_POINT_LIMIT), [trend.points]);
   const trendLabels = useMemo(() => {
-    if (trend.points.length > 0) {
-      return trend.points.slice(-7).map((point) => formatTimestamp(point.bucketStartMs).split(" ")[0]);
+    if (visibleTrendPoints.length > 0) {
+      return visibleTrendPoints.map(formatTrendLabel);
     }
 
     return ["10/21", "10/22", "10/23", "10/24", "10/25", "10/26", "今日"];
-  }, [trend.points]);
+  }, [visibleTrendPoints]);
+  const maxTrendTotalTokens = Math.max(...visibleTrendPoints.map((point) => clampTokenCount(point.totalTokens)), 0);
+  const topModelLegend = useMemo(() => {
+    const models = summary.topModels
+      .map((item) => item.model)
+      .filter((model) => model.trim().length > 0)
+      .slice(0, 2);
+
+    return models.length > 0 ? models : ["暂无模型"];
+  }, [summary.topModels]);
   const loading = summaryLoading || usageLoading || trendLoading;
   const loadStatus = error ? `实时数据不可用：${error}` : loading ? "正在刷新中" : "实时刷新中";
 
@@ -315,17 +356,122 @@ export function TokensPage() {
         <div className="panel__header">
           <h2 className="panel__title">7 日消耗趋势分析</h2>
           <div className="trend-panel__legend">
-            <span><i className="legend-swatch legend-swatch--blue" />GPT-4o</span>
-            <span><i className="legend-swatch legend-swatch--black" />Claude 3.5</span>
-          </div>
-        </div>
-        <div className="chart-empty-grid">
-          <div className="chart-empty-grid__axis">
-            {trendLabels.map((label, index) => (
-              <span key={`${label}-${index}`}>{label}</span>
+            {topModelLegend.map((model, index) => (
+              <span key={model}>
+                <i className={`legend-swatch ${index === 0 ? "legend-swatch--blue" : "legend-swatch--black"}`} />
+                {model}
+              </span>
             ))}
           </div>
         </div>
+        {visibleTrendPoints.length > 0 ? (
+          <div
+            aria-label="Token 消耗趋势"
+            className="chart-empty-grid"
+            data-testid="token-trend-chart"
+            role="img"
+            style={{
+              alignItems: "stretch",
+              gap: "14px",
+              gridTemplateRows: "1fr auto",
+            }}
+          >
+            <div
+              style={{
+                alignItems: "end",
+                borderBottom: "1px solid var(--line)",
+                display: "grid",
+                gap: "14px",
+                gridTemplateColumns: `repeat(${visibleTrendPoints.length}, minmax(0, 1fr))`,
+                minHeight: "232px",
+              }}
+            >
+              {visibleTrendPoints.map((point, index) => {
+                const totalTokens = clampTokenCount(point.totalTokens);
+                const inputTokens = clampTokenCount(point.inputTokens);
+                const outputTokens = clampTokenCount(point.outputTokens);
+
+                return (
+                  <div
+                    key={`${point.bucketStartMs}-${index}`}
+                    aria-label={`${formatTrendLabel(point)} 总计 ${formatInteger(totalTokens)} tokens，输入 ${formatInteger(inputTokens)}，输出 ${formatInteger(outputTokens)}`}
+                    style={{
+                      alignItems: "stretch",
+                      display: "grid",
+                      gap: "6px",
+                      gridTemplateRows: "1fr auto auto auto",
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      data-testid={`token-trend-total-${index}`}
+                      data-total-tokens={totalTokens}
+                      style={{
+                        alignSelf: "end",
+                        background: "#e8edf5",
+                        border: "1px solid rgba(148, 163, 184, 0.35)",
+                        borderRadius: "8px 8px 4px 4px",
+                        boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.5)",
+                        display: "flex",
+                        flexDirection: "column-reverse",
+                        height: buildTrendBarHeight(point, maxTrendTotalTokens),
+                        minHeight: totalTokens > 0 ? "16px" : "4px",
+                        overflow: "hidden",
+                        width: "100%",
+                      }}
+                      title={`总计 ${formatInteger(totalTokens)} tokens`}
+                    >
+                      <span
+                        data-input-tokens={inputTokens}
+                        data-testid={`token-trend-input-${index}`}
+                        style={buildTrendSegmentStyle(inputTokens, totalTokens, "var(--accent)")}
+                        title={`输入 ${formatInteger(inputTokens)}`}
+                      />
+                      <span
+                        data-output-tokens={outputTokens}
+                        data-testid={`token-trend-output-${index}`}
+                        style={buildTrendSegmentStyle(outputTokens, totalTokens, "#6d28d9")}
+                        title={`输出 ${formatInteger(outputTokens)}`}
+                      />
+                    </div>
+                    <strong style={{ color: "#334155", fontSize: "0.78rem", overflowWrap: "anywhere" }}>
+                      总计 {formatInteger(totalTokens)}
+                    </strong>
+                    <span style={{ color: "#64748b", fontSize: "0.72rem", overflowWrap: "anywhere" }}>
+                      输入 {formatInteger(inputTokens)}
+                    </span>
+                    <span style={{ color: "#64748b", fontSize: "0.72rem", overflowWrap: "anywhere" }}>
+                      输出 {formatInteger(outputTokens)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="chart-empty-grid__axis">
+              {trendLabels.map((label, index) => (
+                <span key={`${label}-${index}`}>{label}</span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div
+            aria-label="Token 趋势为空"
+            className="chart-empty-grid"
+            style={{
+              alignItems: "center",
+              gap: "20px",
+              gridTemplateRows: "1fr auto",
+              justifyItems: "center",
+            }}
+          >
+            <p className="small-note">暂无 Token 趋势点</p>
+            <div className="chart-empty-grid__axis" style={{ width: "100%" }}>
+              {trendLabels.map((label, index) => (
+                <span key={`${label}-${index}`}>{label}</span>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="table-panel token-table">

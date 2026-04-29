@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TokensPage } from "../../src/pages/TokensPage";
@@ -19,6 +19,7 @@ describe("TokensPage", () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
   });
 
@@ -71,7 +72,7 @@ describe("TokensPage", () => {
         }],
       }));
 
-    render(<TokensPage />);
+    const { container } = render(<TokensPage />);
 
     expect(screen.getByText("Token 统计报表")).toBeInTheDocument();
     expect(screen.getByText("今日消耗总数")).toBeInTheDocument();
@@ -81,6 +82,17 @@ describe("TokensPage", () => {
     await screen.findByText("bailian / glm-5");
     expect(screen.getAllByText("1,322").length).toBeGreaterThan(0);
     expect(screen.getAllByText("估算").length).toBeGreaterThan(0);
+    const trendLegend = container.querySelector(".trend-panel__legend");
+    expect(trendLegend).toHaveTextContent("glm-5");
+    expect(trendLegend).not.toHaveTextContent("GPT-4o");
+    expect(trendLegend).not.toHaveTextContent("Claude 3.5");
+    const trendChart = await screen.findByTestId("token-trend-chart");
+    expect(within(trendChart).getByText("总计 1,322")).toBeInTheDocument();
+    expect(within(trendChart).getByText("输入 1,300")).toBeInTheDocument();
+    expect(within(trendChart).getByText("输出 22")).toBeInTheDocument();
+    expect(within(trendChart).getByTestId("token-trend-total-0")).toHaveAttribute("data-total-tokens", "1322");
+    expect(within(trendChart).getByTestId("token-trend-input-0")).toHaveAttribute("data-input-tokens", "1300");
+    expect(within(trendChart).getByTestId("token-trend-output-0")).toHaveAttribute("data-output-tokens", "22");
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -94,5 +106,32 @@ describe("TokensPage", () => {
 
     await screen.findByText("#LX-90821-BF");
     expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/tokens/usage?limit=20&cursor=cursor-token-page-2");
+  });
+
+  it("keeps the trend panel in an empty state when trend points are unavailable", async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse({
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        estimatedCount: 0,
+        unavailableCount: 0,
+        topModels: [],
+      }))
+      .mockResolvedValueOnce(createJsonResponse({ items: [] }))
+      .mockResolvedValueOnce(createJsonResponse({
+        bucket: "hour",
+        points: [],
+      }));
+
+    render(<TokensPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+    expect(screen.getByText("暂无 Token 趋势点")).toBeInTheDocument();
+    expect(screen.queryByTestId("token-trend-chart")).not.toBeInTheDocument();
   });
 });

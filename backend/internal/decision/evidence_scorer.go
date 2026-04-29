@@ -15,7 +15,7 @@ func (evidenceArbiter) Name() string { return "evidence_score" }
 func (evidenceArbiter) Evaluate(
 	_ context.Context,
 	req api.DecisionRequest,
-	_ ChainSummary,
+	chain ChainSummary,
 ) (api.ArbiterResult, error) {
 	rules := evidenceRulesFor(req)
 	evidence := make([]api.EvidenceItem, 0)
@@ -43,6 +43,20 @@ func (evidenceArbiter) Evaluate(
 			})
 		}
 	}
+	for _, item := range chainEvidenceItems(chain) {
+		score += item.ScoreDelta
+		evidence = append(evidence, item)
+		breakdown = append(breakdown, api.ScoreBreakdown{
+			RuleID: item.ID,
+			Label:  item.ID,
+			Delta:  item.ScoreDelta,
+			Reason: chainEvidenceReason(item.ID),
+		})
+		if _, ok := moduleSeen[item.Module]; !ok {
+			moduleSeen[item.Module] = struct{}{}
+			matchedModules = append(matchedModules, item.Module)
+		}
+	}
 
 	riskLevel, action := riskActionForScore(score)
 	mapped := api.ArbiterResult{RiskLevel: riskLevel, Action: action}
@@ -57,6 +71,91 @@ func (evidenceArbiter) Evaluate(
 		ScoreBreakdown: breakdown,
 		Reason:         evidenceReason(winner.RiskLevel, score, breakdown),
 	}, nil
+}
+
+func chainEvidenceItems(chain ChainSummary) []api.EvidenceItem {
+	items := make([]api.EvidenceItem, 0)
+	if len(chain.RecentDenials) > 0 {
+		items = append(items, api.EvidenceItem{
+			ID:         "chain.recent_denial",
+			Module:     "chain_context",
+			Kind:       "recent_denial",
+			Value:      chain.RecentDenials[len(chain.RecentDenials)-1],
+			Severity:   "warn",
+			ScoreDelta: 30,
+			Source:     "chain",
+		})
+	}
+	if len(chain.RecentEvasions) > 0 {
+		items = append(items, api.EvidenceItem{
+			ID:         "chain.recent_evasion",
+			Module:     "chain_context",
+			Kind:       "recent_evasion",
+			Value:      chain.RecentEvasions[len(chain.RecentEvasions)-1],
+			Severity:   "warn",
+			ScoreDelta: 40,
+			Source:     "chain",
+		})
+	}
+	if chain.PendingApproval != "" {
+		items = append(items, api.EvidenceItem{
+			ID:         "chain.pending_approval",
+			Module:     "chain_context",
+			Kind:       "pending_approval",
+			Value:      chain.PendingApproval,
+			Severity:   "warn",
+			ScoreDelta: 30,
+			Source:     "chain",
+		})
+	}
+	if chain.ActiveGrantID != "" {
+		items = append(items, api.EvidenceItem{
+			ID:         "chain.active_grant",
+			Module:     "chain_context",
+			Kind:       "active_grant",
+			Value:      chain.ActiveGrantID,
+			Severity:   "info",
+			ScoreDelta: 0,
+			Source:     "chain",
+		})
+	}
+	if len(chain.RecentTaintReads) > 0 || len(chain.TaintSummary) > 0 {
+		value := lastOrFallback(chain.RecentTaintReads, "taint_summary")
+		items = append(items, api.EvidenceItem{
+			ID:         "taint.recent_sensitive_read",
+			Module:     "taint_context",
+			Kind:       "recent_sensitive_read",
+			Value:      value,
+			Severity:   "warn",
+			ScoreDelta: 30,
+			Source:     "taint",
+		})
+	}
+	return items
+}
+
+func chainEvidenceReason(ruleID string) string {
+	switch ruleID {
+	case "chain.recent_denial":
+		return "chain has a recent denial signal"
+	case "chain.recent_evasion":
+		return "chain has recent evasion or hidden execution signal"
+	case "chain.pending_approval":
+		return "chain has a pending approval"
+	case "chain.active_grant":
+		return "chain has an active approval grant"
+	case "taint.recent_sensitive_read":
+		return "chain or request carries recent sensitive taint"
+	default:
+		return "chain context evidence"
+	}
+}
+
+func lastOrFallback(values []string, fallback string) string {
+	if len(values) == 0 {
+		return fallback
+	}
+	return values[len(values)-1]
 }
 
 type evidenceRule struct {

@@ -163,6 +163,16 @@ function formatUnknownList(value: unknown): string {
   return "暂无";
 }
 
+function formatUnknownScalar(value: unknown): string {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "暂无";
+}
+
 function formatScoreBreakdown(value: unknown): string {
   if (!Array.isArray(value) || value.length === 0) {
     return "暂无";
@@ -181,19 +191,102 @@ function formatScoreBreakdown(value: unknown): string {
     .join("；");
 }
 
-function formatControlPlaneSummary(event: AuditEventListItemDto): string {
-  const payload = (event as AuditEventDetailDto).payloadJson;
-  const winningArbiter = payload?.winningArbiter ?? payload?.winning_arbiter;
-  const matchedRules = payload?.matchedRules ?? payload?.matched_rules ?? payload?.matchedModules;
-
-  if (!winningArbiter && !matchedRules) {
-    return "暂无控制面证据";
+function formatEvidenceSummary(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) {
+    return "暂无";
   }
 
-  return [
-    winningArbiter ? `arbiter:${String(winningArbiter)}` : undefined,
-    matchedRules ? `rules:${formatUnknownList(matchedRules)}` : undefined,
-  ].filter(Boolean).join("；");
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return String(entry);
+      }
+      const record = entry as Record<string, unknown>;
+      return String(record.id ?? record.ruleId ?? record.module ?? record.kind ?? "unknown_evidence");
+    })
+    .join("；");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function hasDisplayValue(value: unknown): boolean {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  return true;
+}
+
+function pushControlSignal(parts: string[], label: string, value: unknown): void {
+  if (!hasDisplayValue(value)) {
+    return;
+  }
+  parts.push(`${label}:${Array.isArray(value) || typeof value === "string" ? formatUnknownList(value) : String(value)}`);
+}
+
+function formatControlPlaneSummary(event: AuditEventListItemDto): string {
+  const payload = asRecord((event as AuditEventDetailDto).payloadJson);
+  const listFields = event as AuditEventListItemDto & Record<string, unknown>;
+  const winningArbiter =
+    payload?.winningArbiter
+    ?? payload?.winning_arbiter
+    ?? listFields.winningArbiter
+    ?? listFields.winning_arbiter;
+  const matchedRules =
+    payload?.matchedRules
+    ?? payload?.matched_rules
+    ?? payload?.matchedModules
+    ?? payload?.matched_modules
+    ?? listFields.matchedRules
+    ?? listFields.matched_rules
+    ?? listFields.matchedModules
+    ?? listFields.matched_modules;
+  const scoreBreakdown =
+    payload?.scoreBreakdown
+    ?? payload?.score_breakdown
+    ?? listFields.scoreBreakdown
+    ?? listFields.score_breakdown;
+  const evidence =
+    payload?.evidence
+    ?? payload?.evidenceItems
+    ?? payload?.evidence_items
+    ?? listFields.evidence
+    ?? listFields.evidenceItems
+    ?? listFields.evidence_items;
+  const parts: string[] = [];
+
+  pushControlSignal(parts, "arbiter", winningArbiter);
+  pushControlSignal(parts, "rules", matchedRules);
+  if (hasDisplayValue(scoreBreakdown)) {
+    pushControlSignal(parts, "trace", formatScoreBreakdown(scoreBreakdown));
+  }
+  if (hasDisplayValue(evidence)) {
+    pushControlSignal(parts, "evidence", formatEvidenceSummary(evidence));
+  }
+  pushControlSignal(parts, "module", event.primaryModule);
+  pushControlSignal(parts, "score", event.riskScore);
+  pushControlSignal(parts, "request", event.requestId);
+  pushControlSignal(parts, "approval", event.approvalId);
+  pushControlSignal(parts, "tool", event.toolCallId);
+  pushControlSignal(parts, "decision", event.policyDecision);
+
+  if (parts.length > 0) {
+    return parts.join("；");
+  }
+
+  return payload
+    ? "列表 Payload 未包含控制面证据"
+    : "列表未包含控制面证据；打开详情查看完整证据";
 }
 
 export function EventsPage() {
@@ -495,8 +588,21 @@ export function EventsPage() {
             { label: "完整脱敏摘要", value: selectedDetail?.contentExcerpt ?? "暂无" },
             { label: "处置建议", value: selectedDetail?.recommendation ?? selectedDetail?.summary ?? "暂无" },
             { label: "模块", value: selectedDetail?.modules?.join(", ") || selectedDetail?.primaryModule || "暂无" },
-            { label: "Decision ID", value: selectedDetail?.payloadJson?.decisionId ?? selectedDetail?.requestId ?? "暂无" },
-            { label: "Winning Arbiter", value: selectedDetail?.payloadJson?.winningArbiter ?? "暂无" },
+            {
+              label: "Decision ID",
+              value: formatUnknownScalar(
+                selectedDetail?.payloadJson?.decisionId
+                ?? selectedDetail?.payloadJson?.decision_id
+                ?? selectedDetail?.requestId,
+              ),
+            },
+            {
+              label: "Winning Arbiter",
+              value: formatUnknownScalar(
+                selectedDetail?.payloadJson?.winningArbiter
+                ?? selectedDetail?.payloadJson?.winning_arbiter,
+              ),
+            },
             { label: "Matched Rules", value: formatUnknownList(selectedDetail?.payloadJson?.matchedRules ?? selectedDetail?.payloadJson?.matchedModules) },
             { label: "Score Breakdown", value: formatScoreBreakdown(selectedDetail?.payloadJson?.scoreBreakdown) },
             { label: "block:false 说明", value: "block:false 只表示未阻断，不等于安全" },

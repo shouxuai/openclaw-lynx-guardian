@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 )
@@ -22,7 +24,141 @@ func NewDecisionRepository(db *sql.DB) *DecisionRepository {
 	return &DecisionRepository{db: db}
 }
 
-func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.DecisionResponse) error {
+func (r *DecisionRepository) LoadChainSummaryForDecision(ctx context.Context, req api.DecisionRequest) (api.ChainSummary, map[string]any, error) {
+	summary, err := r.lookupChainSummaryForDecision(ctx, req)
+	if err != nil {
+		return api.ChainSummary{}, nil, err
+	}
+	if activeGrantID, err := r.lookupActiveGrantIDForDecision(ctx, summary.ChainID); err != nil {
+		return api.ChainSummary{}, nil, err
+	} else if activeGrantID != "" {
+		summary.ActiveGrantID = activeGrantID
+	}
+	taintLabels, err := r.lookupTaintLabelsForDecision(ctx, req, summary.ChainID, summary.SessionKey)
+	if err != nil {
+		return api.ChainSummary{}, nil, err
+	}
+	for _, label := range taintLabels {
+		summary.RecentTaintReads = appendUniqueString(summary.RecentTaintReads, label, 12)
+	}
+	var taintSummary map[string]any
+	if len(taintLabels) > 0 {
+		taintSummary = map[string]any{"recentReads": taintLabels}
+	}
+	return summary, taintSummary, nil
+}
+
+func (r *DecisionRepository) lookupChainSummaryForDecision(ctx context.Context, req api.DecisionRequest) (api.ChainSummary, error) {
+	where := make([]string, 0)
+	args := make([]any, 0)
+	if chainID := stringFromAnyMap(req.ChainSummary, "chainId", "chain_id"); chainID != "" {
+		where = append(where, "chain_id = ?")
+		args = append(args, chainID)
+	} else {
+		if req.SessionKey == "" && req.ConversationID == "" {
+			return api.ChainSummary{}, nil
+		}
+		if req.SessionKey != "" {
+			where = append(where, "session_key = ?")
+			args = append(args, req.SessionKey)
+		}
+		if req.ChannelProfile != "" {
+			where = append(where, "channel_profile = ?")
+			args = append(args, req.ChannelProfile)
+		}
+		if req.ConversationID != "" {
+			where = append(where, "conversation_id = ?")
+			args = append(args, req.ConversationID)
+		}
+		if req.RequesterID != "" {
+			where = append(where, "requester_id = ?")
+			args = append(args, req.RequesterID)
+		}
+	}
+	if len(where) == 0 {
+		return api.ChainSummary{}, nil
+	}
+
+	var chainID, sessionKey, summaryJSON, activeGrantID, pendingApprovalID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT chain_id, session_key, summary_json, active_grant_id, pending_approval_id
+		FROM chains
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, updated_at DESC, chain_id DESC
+		LIMIT 1`,
+		args...,
+	).Scan(&chainID, &sessionKey, &summaryJSON, &activeGrantID, &pendingApprovalID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return api.ChainSummary{}, nil
+	}
+	if err != nil {
+		return api.ChainSummary{}, err
+	}
+
+	var summary api.ChainSummary
+	unmarshalJSONText(summaryJSON, &summary)
+	summary.ChainID = nonEmptyString(summary.ChainID, chainID)
+	summary.SessionKey = nonEmptyString(summary.SessionKey, sessionKey)
+	summary.ActiveGrantID = nonEmptyString(summary.ActiveGrantID, activeGrantID)
+	summary.PendingApproval = nonEmptyString(summary.PendingApproval, pendingApprovalID)
+	return summary, nil
+}
+
+func (r *DecisionRepository) lookupActiveGrantIDForDecision(ctx context.Context, chainID string) (string, error) {
+	if chainID == "" {
+		return "", nil
+	}
+	var grantID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT grant_id
+		FROM approval_grants
+		WHERE chain_id = ? AND revoked_at IS NULL AND expires_at > ?
+		ORDER BY created_at DESC, grant_id DESC
+		LIMIT 1`,
+		chainID,
+		time.Now().UTC().Format(time.RFC3339Nano),
+	).Scan(&grantID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return grantID, err
+}
+
+func (r *DecisionRepository) lookupTaintLabelsForDecision(ctx context.Context, req api.DecisionRequest, chainID string, sessionKey string) ([]string, error) {
+	sessionKey = nonEmptyString(sessionKey, req.SessionKey)
+	if chainID == "" && sessionKey == "" {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT label
+		FROM taint_labels
+		WHERE ((? != '' AND chain_id = ?) OR (? != '' AND session_key = ?))
+		  AND (expires_at IS NULL OR expires_at = '' OR expires_at > ?)
+		ORDER BY created_at DESC, id DESC
+		LIMIT 12`,
+		chainID,
+		chainID,
+		sessionKey,
+		sessionKey,
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	labels := make([]string, 0)
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			return nil, err
+		}
+		labels = appendUniqueString(labels, label, 12)
+	}
+	return labels, rows.Err()
+}
+
+func (r *DecisionRepository) InsertDecision(ctx context.Context, req api.DecisionRequest, decision api.DecisionResponse) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -33,10 +169,7 @@ func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.De
 		}
 	}()
 
-	now := decision.DecisionID
-	if now == "" {
-		now = "unknown"
-	}
+	createdAt := decisionCreatedAt(req, decision.DecisionID)
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO decisions (
 			id, request_id, stage, hook, session_key, channel_profile, conversation_id,
@@ -45,11 +178,15 @@ func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.De
 			redactions_json, prompt_context, user_message, audit_json, degraded_json,
 			created_at
 		)
-		VALUES (?, ?, ?, ?, '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		decision.DecisionID,
-		decision.DecisionID,
+		nonEmptyString(req.RequestID, decision.DecisionID),
 		string(decision.Stage),
-		string(decision.Stage),
+		req.Hook,
+		req.SessionKey,
+		req.ChannelProfile,
+		req.ConversationID,
+		req.RequesterID,
 		string(decision.RiskLevel),
 		string(decision.Action),
 		boolToInt(decision.Block),
@@ -63,7 +200,7 @@ func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.De
 		decision.UserMessage,
 		toJSONText(decision.Audit, "{}"),
 		toJSONText(decision.Degraded, "{}"),
-		now,
+		createdAt.Text,
 	); err != nil {
 		return err
 	}
@@ -86,7 +223,7 @@ func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.De
 			toJSONText(arbiter.Evidence, "[]"),
 			toJSONText(arbiter.ScoreBreakdown, "[]"),
 			arbiter.Reason,
-			now,
+			createdAt.Text,
 		); err != nil {
 			return err
 		}
@@ -104,13 +241,210 @@ func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.De
 				string(evidence.Severity),
 				evidence.ScoreDelta,
 				string(evidence.Source),
-				now,
+				createdAt.Text,
 			); err != nil {
 				return err
 			}
 		}
 	}
+	if err = insertDecisionAuditEvent(ctx, tx, req, decision, createdAt); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+type decisionTimestamp struct {
+	Text   string
+	UnixMs int64
+}
+
+func decisionCreatedAt(req api.DecisionRequest, _ string) decisionTimestamp {
+	if req.CreatedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, req.CreatedAt); err == nil {
+			return decisionTimestamp{Text: parsed.UTC().Format(time.RFC3339Nano), UnixMs: parsed.UTC().UnixMilli()}
+		}
+		return decisionTimestamp{Text: req.CreatedAt, UnixMs: time.Now().UTC().UnixMilli()}
+	}
+	now := time.Now().UTC()
+	return decisionTimestamp{Text: now.Format(time.RFC3339Nano), UnixMs: now.UnixMilli()}
+}
+
+func insertDecisionAuditEvent(
+	ctx context.Context,
+	tx *sql.Tx,
+	req api.DecisionRequest,
+	decision api.DecisionResponse,
+	createdAt decisionTimestamp,
+) error {
+	payload := decisionAuditPayload(req, decision)
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events (
+			event_id, session_key, request_id, source_kind, hook_name, event_type,
+			category, sub_category, direction, content_kind, primary_module,
+			modules_json, risk_level, risk_score, policy_decision, enforcement_action,
+			title, summary, recommendation, content_excerpt, occurred_at, ingested_at,
+			payload_json
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		decision.DecisionID+"-audit",
+		req.SessionKey,
+		nonEmptyString(req.RequestID, decision.DecisionID),
+		"go_control_plane",
+		nonEmptyString(req.Hook, string(decision.Stage)),
+		string(decision.Stage),
+		"decision",
+		string(decision.WinningArbiter),
+		string(decision.Stage),
+		decisionContentKind(req),
+		firstString(decision.MatchedModules),
+		toJSONText(decision.MatchedModules, "[]"),
+		string(decision.RiskLevel),
+		int(decision.Score),
+		string(decision.Audit.PolicyDecision),
+		string(decision.Audit.EnforcementAction),
+		"Lynx Guardian decision",
+		decisionAuditSummary(decision),
+		"",
+		truncate(decisionContentExcerpt(req), 240),
+		createdAt.UnixMs,
+		time.Now().UTC().UnixMilli(),
+		toJSONText(payload, "{}"),
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf("insert decision audit event affected %d rows", rowsAffected)
+	}
+	return nil
+}
+
+func decisionAuditPayload(req api.DecisionRequest, decision api.DecisionResponse) map[string]any {
+	matchedRules := make([]string, 0)
+	scoreBreakdown := make([]api.ScoreBreakdown, 0)
+	evidence := make([]api.EvidenceItem, 0)
+	for _, arbiter := range decision.Arbiters {
+		for _, item := range arbiter.Evidence {
+			matchedRules = appendUniqueString(matchedRules, item.ID, 64)
+			evidence = append(evidence, item)
+		}
+		scoreBreakdown = append(scoreBreakdown, arbiter.ScoreBreakdown...)
+	}
+	return map[string]any{
+		"decisionId":        decision.DecisionID,
+		"requestId":         nonEmptyString(req.RequestID, decision.DecisionID),
+		"stage":             decision.Stage,
+		"hook":              req.Hook,
+		"sessionKey":        req.SessionKey,
+		"channelProfile":    req.ChannelProfile,
+		"conversationId":    req.ConversationID,
+		"requesterId":       req.RequesterID,
+		"riskLevel":         decision.RiskLevel,
+		"action":            decision.Action,
+		"block":             decision.Block,
+		"score":             decision.Score,
+		"riskScore":         int(decision.Score),
+		"winningArbiter":    decision.WinningArbiter,
+		"matchedModules":    decision.MatchedModules,
+		"matchedRules":      matchedRules,
+		"scoreBreakdown":    scoreBreakdown,
+		"evidence":          evidence,
+		"arbiters":          decision.Arbiters,
+		"audit":             decision.Audit,
+		"requiresApproval":  decision.RequiresApproval,
+		"policyDecision":    decision.Audit.PolicyDecision,
+		"enforcementAction": decision.Audit.EnforcementAction,
+		"request":           req,
+		"decision":          decision,
+	}
+}
+
+func decisionContentKind(req api.DecisionRequest) string {
+	if req.ToolName != "" {
+		return "tool"
+	}
+	if req.TargetURI != "" {
+		return "resource"
+	}
+	return "text"
+}
+
+func decisionContentExcerpt(req api.DecisionRequest) string {
+	parts := []string{req.Content, req.ToolName, req.TargetURI}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func decisionAuditSummary(decision api.DecisionResponse) string {
+	return fmt.Sprintf("%s %s via %s", decision.RiskLevel, decision.Action, decision.WinningArbiter)
+}
+
+func auditEventEnforcementAction(action api.DecisionAction) string {
+	if action == "deny" {
+		return "block"
+	}
+	return string(action)
+}
+
+func firstString(values []string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringFromAnyMap(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			text := strings.TrimSpace(fmt.Sprint(value))
+			if text != "" && text != "<nil>" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func appendUniqueString(values []string, next string, limit int) []string {
+	next = normalizeDecisionContextSignal(next)
+	if next == "" {
+		return values
+	}
+	for _, value := range values {
+		if value == next {
+			return values
+		}
+	}
+	values = append(values, next)
+	if limit > 0 && len(values) > limit {
+		return values[len(values)-limit:]
+	}
+	return values
+}
+
+func normalizeDecisionContextSignal(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "<nil>" {
+		return ""
+	}
+	const maxSignalRunes = 160
+	runes := []rune(value)
+	if len(runes) <= maxSignalRunes {
+		return value
+	}
+	return string(runes[:maxSignalRunes-3]) + "..."
+}
+
+func nonEmptyString(value string, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 func decisionEvidenceRowID(decisionID string, evidenceID string, arbiterIndex int, evidenceIndex int) string {

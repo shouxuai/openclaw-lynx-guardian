@@ -13,12 +13,16 @@ func (semanticArbiter) Name() string { return "semantic_intent" }
 func (semanticArbiter) Evaluate(
 	_ context.Context,
 	req api.DecisionRequest,
-	_ ChainSummary,
+	chain ChainSummary,
 ) (api.ArbiterResult, error) {
 	text := requestText(req)
 	switch {
 	case asksSecurityEducationWithoutCode(text):
 		return semanticResult("L1", "log_only", 10, "semantic.security_education", "security education request without code generation"), nil
+	case chainHasPendingApproval(chain):
+		return semanticResult("L3", "require_approval", 70, "chain_context.pending_approval", "chain context has a pending approval"), nil
+	case chainHasSensitiveFollowup(chain):
+		return semanticResult("L2", "warn", 45, "chain_context.sensitive_followup", "chain context has recent denial, evasion, or taint signals"), nil
 	case asksForProtectedPrompt(text):
 		return semanticResult("L4", "deny", 100, "semantic.protected_prompt_extraction", "request asks for protected prompt, developer instruction, or raw safety rules"), nil
 	case asksToBypassApproval(text):
@@ -30,6 +34,17 @@ func (semanticArbiter) Evaluate(
 	default:
 		return semanticResult("L0", "allow", 0, "semantic.ordinary_business", "ordinary business request"), nil
 	}
+}
+
+func chainHasPendingApproval(chain ChainSummary) bool {
+	return chain.PendingApproval != ""
+}
+
+func chainHasSensitiveFollowup(chain ChainSummary) bool {
+	return len(chain.RecentDenials) > 0 ||
+		len(chain.RecentEvasions) > 0 ||
+		len(chain.RecentTaintReads) > 0 ||
+		len(chain.TaintSummary) > 0
 }
 
 func asksForProtectedPrompt(text string) bool {
