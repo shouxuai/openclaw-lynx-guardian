@@ -43,6 +43,12 @@ describe("plugin runtime slimming target", () => {
     expect(countTsFiles("src/guard")).toBeLessThanOrEqual(10);
   });
 
+  it("keeps rich semantic judgement out of plugin guard runtime", () => {
+    const srcFiles = listTsFiles(join(repoRoot, "src")).map(relativeUnix);
+
+    expect(srcFiles).not.toContain("src/guard/evasive-intent-cn.ts");
+  });
+
   it("keeps index as hook orchestration", () => {
     const lineCount = readFileSync(join(repoRoot, "index.ts"), "utf8").split(/\r?\n/).length;
     expect(lineCount).toBeLessThan(2200);

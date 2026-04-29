@@ -1808,7 +1808,7 @@ git commit -m "refactor: move evasive intent ownership to go"
 - Test: `backend/internal/decision/legacy_plugin_fixture_test.go`
 - Test: `test/go-decision-ownership.test.ts`
 
-- [ ] **Step 1: Extend final audit**
+- [x] **Step 1: Extend final audit**
 
 Modify `test/runtime-slimming-audit.test.ts` to include:
 
@@ -1821,7 +1821,7 @@ it("keeps rich semantic judgement out of plugin guard runtime", () => {
 });
 ```
 
-- [ ] **Step 2: Run final local audit**
+- [x] **Step 2: Run final local audit**
 
 Run:
 
@@ -1834,7 +1834,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 3: Run broad local verification**
+- [x] **Step 3: Run broad local verification**
 
 Run:
 
@@ -1852,7 +1852,7 @@ Expected:
 - root Vitest passes;
 - backend Go tests pass.
 
-- [ ] **Step 4: Commit Task 9**
+- [x] **Step 4: Commit Task 9**
 
 ```powershell
 git add test/runtime-slimming-audit.test.ts test/go-decision-ownership.test.ts backend/internal/decision

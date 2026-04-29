@@ -90,6 +90,24 @@ describe("visible input warning", () => {
     expect(text!.length).toBeLessThan(360);
   });
 
+  it("formats Go decision module labels without reusing plugin M4 ids", () => {
+    const text = buildVisibleInputGuardModelContext({
+      assessment: {
+        level: "L2",
+        score: 4,
+        modules: ["evasive_intent_cn", "concealed_execution", "approval_bypass"],
+        description: "Go decision warning",
+        action: "warn",
+      },
+      policyDecisionKind: "warn",
+    });
+
+    expect(text).toContain("中文规避意图");
+    expect(text).toContain("隐藏执行链");
+    expect(text).toContain("审批绕过");
+    expect(text).not.toContain("M4:evasive_intent_cn");
+  });
+
   it("does not emit visible feedback for clean L0 input", () => {
     const text = buildVisibleInputGuardWarning({
       assessment: {

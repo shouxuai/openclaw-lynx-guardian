@@ -25,10 +25,16 @@ function readRel(path: string): string {
 
 describe("Go decision ownership", () => {
   it("keeps rich Chinese evasive intent detector out of active plugin runtime", () => {
-    const offenders = listFiles(join(repoRoot, "src"))
-      .filter((file) => readFileSync(file, "utf8").includes("detectChineseEvasiveIntent"))
+    const srcFiles = listFiles(join(repoRoot, "src"));
+    const offenders = srcFiles
+      .filter((file) => {
+        const content = readFileSync(file, "utf8");
+        return content.includes("detectChineseEvasiveIntent")
+          || content.includes("M4:evasive_intent_cn");
+      })
       .map(rel);
 
+    expect(srcFiles.map(rel)).not.toContain("src/guard/evasive-intent-cn.ts");
     expect(offenders).toEqual([]);
   });
 
