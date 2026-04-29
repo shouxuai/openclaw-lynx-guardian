@@ -82,6 +82,9 @@ func (s *LynxCheckService) ApplyEvent(
 	if nextStatus == "" {
 		nextStatus = current.Status
 	}
+	if isTerminal(current.Status) && nextStatus != current.Status {
+		return current, nil
+	}
 	if !canTransition(current.Status, nextStatus) {
 		return api.LynxCheckTask{}, fmt.Errorf("invalid lynx check transition %s -> %s", current.Status, nextStatus)
 	}

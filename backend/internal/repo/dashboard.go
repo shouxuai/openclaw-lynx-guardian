@@ -32,7 +32,11 @@ func (r *DashboardRepository) GetOverview(query DashboardOverviewQuery) (map[str
 	if err != nil {
 		return nil, err
 	}
-	totalTokens, err := scalarCount(r, `SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage `+tokensRange.Where(), tokensRange.Params()...)
+	totalTokens, err := scalarCount(
+		r,
+		`SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage `+andWhere(tokensRange, "source_type = 'actual'"),
+		tokensRange.Params()...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +197,7 @@ func (r *DashboardRepository) tokenTrend(filter *Filter) ([]map[string]any, erro
 			CAST(occurred_at / 3600000 AS INTEGER) * 3600000,
 			COALESCE(SUM(total_tokens), 0)
 		FROM token_usage
-		`+filter.Where()+`
+		`+andWhere(filter, "source_type = 'actual'")+`
 		GROUP BY 1
 		ORDER BY 1 ASC`,
 		filter.Params()...,

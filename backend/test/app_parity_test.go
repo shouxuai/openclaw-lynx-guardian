@@ -124,6 +124,88 @@ func TestSplitIngestEndpointPersistsOnlyMatchingItems(t *testing.T) {
 	expectNumber(t, mismatchBody, "rejectedCount", 1)
 }
 
+func TestLynxCheckUpsertCompatibilityPreservesTaskStateMachineStatus(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	start := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/tasks/lynx-check/start", map[string]any{
+		"requestId":  "compat-task-1",
+		"trigger":    "manual",
+		"source":     "lynx_command",
+		"sessionKey": "agent:main:main",
+		"targetKey":  "current",
+	}, true)
+	decodeObjectStatus(t, start, http.StatusOK)
+
+	legacyRunning := map[string]any{
+		"kind":         "lynxCheckUpsert",
+		"itemId":       "compat-task-running",
+		"occurredAtMs": parityBaseTimeMs,
+		"data": map[string]any{
+			"requestId":           "compat-task-1",
+			"source":              "manual",
+			"trigger":             "lynx_command",
+			"preferredTargetKind": "current",
+			"sessionKey":          "agent:main:main",
+			"targetKey":           "current",
+			"status":              "running",
+			"sendAttempted":       false,
+			"sendSucceeded":       false,
+			"transport":           "precomputed",
+			"reportPath":          "/tmp/compat-report.md",
+			"createdAtMs":         parityBaseTimeMs,
+		},
+	}
+	ingest := doJSON(
+		t,
+		handler,
+		http.MethodPost,
+		"/lynx/internal/v1/ingest/batch",
+		fixtureBatchWithItems("compat-task-running-batch", []any{legacyRunning}),
+		true,
+	)
+	decodeObjectStatus(t, ingest, http.StatusOK)
+
+	complete := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/tasks/lynx-check/compat-task-1/event", map[string]any{
+		"status":          "completed",
+		"deliveryChannel": "inline-message",
+		"deliveryStatus":  "sent",
+	}, true)
+	decodeObjectStatus(t, complete, http.StatusOK)
+
+	detail := doJSON(t, handler, http.MethodGet, "/lynx/lynx-checks/compat-task-1", nil, false)
+	detailBody := decodeObjectStatus(t, detail, http.StatusOK)
+	expectString(t, detailBody, "status", "completed")
+	expectBool(t, detailBody, "sendSucceeded", true)
+
+	lateRunning := legacyRunning
+	lateRunning["itemId"] = "compat-task-running-late"
+	lateRunning["occurredAtMs"] = parityBaseTimeMs + 1000
+	lateData := make(map[string]any)
+	for key, value := range legacyRunning["data"].(map[string]any) {
+		lateData[key] = value
+	}
+	lateData["createdAtMs"] = parityBaseTimeMs + 1000
+	lateRunning["data"] = lateData
+	lateIngest := doJSON(
+		t,
+		handler,
+		http.MethodPost,
+		"/lynx/internal/v1/ingest/batch",
+		fixtureBatchWithItems("compat-task-late-running-batch", []any{lateRunning}),
+		true,
+	)
+	decodeObjectStatus(t, lateIngest, http.StatusOK)
+
+	afterLate := doJSON(t, handler, http.MethodGet, "/lynx/lynx-checks/compat-task-1", nil, false)
+	afterLateBody := decodeObjectStatus(t, afterLate, http.StatusOK)
+	expectString(t, afterLateBody, "status", "completed")
+}
+
 func TestToolCallAfterUpsertDoesNotDowngradeRiskEnforcement(t *testing.T) {
 	handler, closer := buildParityHandler(t)
 	t.Cleanup(func() {
@@ -267,7 +349,7 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 	expectNumber(t, totals, "toolCallCount", 2)
 	expectNumber(t, totals, "approvalCount", 1)
 	expectNumber(t, totals, "lynxCheckCount", 1)
-	expectNumber(t, totals, "totalTokens", 435)
+	expectNumber(t, totals, "totalTokens", 315)
 
 	tokenUsage := doJSON(t, handler, http.MethodGet, "/lynx/tokens/usage?limit=5&provider=openai&isEstimated=true", nil, false)
 	tokenItems := expectItems(t, tokenUsage, http.StatusOK)
@@ -276,7 +358,7 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 
 	tokenSummary := doJSON(t, handler, http.MethodGet, "/lynx/tokens/summary?provider=openai", nil, false)
 	tokenSummaryBody := decodeObjectStatus(t, tokenSummary, http.StatusOK)
-	expectNumber(t, tokenSummaryBody, "totalTokens", 435)
+	expectNumber(t, tokenSummaryBody, "totalTokens", 315)
 	expectNumber(t, tokenSummaryBody, "estimatedCount", 1)
 
 	tokenTrend := doJSON(t, handler, http.MethodGet, "/lynx/tokens/trend?bucket=hour&provider=openai", nil, false)

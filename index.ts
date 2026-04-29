@@ -218,6 +218,8 @@ import {
   appendLocalConsoleWebviewFootnote,
   appendLocalConsoleWebviewFootnoteForL4Reply,
 } from "./src/runtime/local-console-webview-note.js";
+import { guardInboundMessageBeforeWrite } from "./src/runtime/message-write-input-guard.js";
+import { guardPromptBuildInput } from "./src/runtime/prompt-build-input-guard.js";
 import {
   buildVisibleInputGuardModelContext,
   buildVisibleInputGuardWarning,
@@ -941,6 +943,50 @@ export default function setup(api: OpenClawPluginApi) {
       return;
     } catch (err: any) {
       log.error(`[lynx-guardian] message_received handler failed: ${err.message}`);
+    }
+  });
+
+  (api.on as any)("before_prompt_build", (event: any, ctx: any) => {
+    try {
+      appendLifecycleProbe("before_prompt_build", event, ctx);
+      if (selfSafetyGuardConfig.inputGuard === false) return;
+
+      const promptBuildGuard = guardPromptBuildInput(event, {
+        sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        guardContext: buildGuardContext(config, event, ctx) as any,
+      });
+      if (!promptBuildGuard.blocked) return;
+
+      const assessment = promptBuildGuard.decision?.riskAssessment;
+      log.warn(
+        `[lynx-guardian] before_prompt_build injected forced denial context: ${assessment?.description ?? promptBuildGuard.reason ?? "blocked input"}`,
+      );
+      localConsoleHooks?.beforeAgentStart({
+        occurredAtMs: Date.now(),
+        sessionKey: normalizeString(ctx.sessionKey) || undefined,
+        runId: normalizeString(ctx.runId) || undefined,
+        summary: promptBuildGuard.reason ?? "Prompt build input guard injected forced denial context.",
+        promptText: promptBuildGuard.promptText,
+        contentExcerpt: promptBuildGuard.promptText,
+        contentKind: "text",
+        primaryModule: assessment?.modules[0],
+        modules: assessment?.modules,
+        riskLevel: assessment?.level as any,
+        riskScore: assessment?.score,
+        policyDecision: "deny",
+        enforcementAction: "block",
+        payloadJson: {
+          promptBuildInputGuard: true,
+          hookName: "before_prompt_build",
+        },
+      });
+      return {
+        systemPrompt: promptBuildGuard.systemPrompt,
+        prependContext: promptBuildGuard.prependContext,
+      };
+    } catch (err: any) {
+      log.error(`[lynx-guardian] before_prompt_build handler failed: ${err.message}`);
+      return undefined;
     }
   });
 
@@ -1969,6 +2015,32 @@ export default function setup(api: OpenClawPluginApi) {
       const localConsoleOccurredAtMs = Date.now();
       const originalMessage = event?.message;
       if (!originalMessage) return;
+
+      if (selfSafetyGuardConfig.inputGuard !== false && originalMessage.role !== "assistant") {
+        const inputWriteGuard = guardInboundMessageBeforeWrite(originalMessage, {
+          sessionKey: normalizeString(ctx.sessionKey) || undefined,
+          guardContext: buildGuardContext(config, event, ctx) as any,
+        });
+        if (inputWriteGuard.blocked && inputWriteGuard.message) {
+          localConsoleHooks?.beforeMessageWrite({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            summary: inputWriteGuard.reason ?? "Inbound message was blocked before persistence.",
+            contentExcerpt: extractMessageText(inputWriteGuard.message),
+            contentKind: "user_message",
+            messageRole: originalMessage.role,
+            blocked: true,
+            enforcementAction: "block",
+            payloadJson: {
+              fallbackInputGuard: true,
+              modules: inputWriteGuard.decision?.riskAssessment.modules,
+            },
+          });
+          return {
+            message: inputWriteGuard.message,
+          };
+        }
+      }
 
       let nextMessage = decorateAssistantMessage(originalMessage);
       if (nextMessage.role === "assistant") {

@@ -38,7 +38,11 @@ func asksForProtectedPrompt(text string) bool {
 }
 
 func asksToBypassApproval(text string) bool {
-	return containsAny(text, "绕过审批", "跳过授权", "免确认", "不要授权", "别弹", "queren", "shouquan", "shenpi")
+	return containsAny(text,
+		"绕过审批", "跳过授权", "免确认", "不要授权", "别弹", "queren", "shouquan", "shenpi",
+		"skip confirmation", "skip authorization", "skip approval", "bypass approval", "bypass authorization",
+		"without approval", "without authorization", "do not ask for approval", "don't ask for approval",
+	)
 }
 
 func asksHiddenExecution(text string) bool {

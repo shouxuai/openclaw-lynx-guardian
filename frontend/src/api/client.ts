@@ -20,7 +20,7 @@ function resolveRequestPath(path: string): string {
     return path;
   }
 
-  if (path.startsWith(API_BASE_PATH)) {
+  if (path === API_BASE_PATH || path.startsWith(`${API_BASE_PATH}/`)) {
     return path;
   }
 

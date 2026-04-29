@@ -2,11 +2,13 @@ package routes
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
@@ -109,6 +111,49 @@ func TestSkillHashMismatchCreatesFinding(t *testing.T) {
 		t.Fatalf("expected finding object, got %#v", findings[0])
 	}
 	assertSkillField(t, first, "ruleId", "hash_mismatch")
+}
+
+func TestSkillInventoryListDoesNotBlockWhileLoadingFindings(t *testing.T) {
+	router := setupSkillRouter(t)
+
+	postSkillJSON(t, router, http.MethodPost, "/lynx/internal/v1/skills/inventory/sync", map[string]any{
+		"items": []map[string]any{
+			{
+				"skillId":       "skill-list-drift",
+				"name":          "List Drift Skill",
+				"source":        "local",
+				"installPath":   "C:/Users/example/.openclaw/skills/list-drift",
+				"manifestPath":  "C:/Users/example/.openclaw/skills/list-drift/SKILL.md",
+				"hashAlgorithm": "sha256",
+				"baselineHash":  "baseline-hash",
+				"currentHash":   "changed-hash",
+				"trustState":    "trusted",
+				"lastSeenAt":    "2026-04-28T00:00:00Z",
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/lynx/skills", nil).WithContext(ctx)
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d for list: %s", recorder.Code, recorder.Body.String())
+	}
+	page := decodeSkillJSON(t, recorder)
+	items, ok := page["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected one skill list item, got %#v", page["items"])
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected skill object, got %#v", items[0])
+	}
+	findings, ok := item["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("expected list item findings, got %#v", item["findings"])
+	}
 }
 
 func TestTokenSummaryAggregatesActualOnly(t *testing.T) {

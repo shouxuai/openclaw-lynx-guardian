@@ -91,16 +91,12 @@ func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.De
 			return err
 		}
 		for evidenceIndex, evidence := range arbiter.Evidence {
-			evidenceID := evidence.ID
-			if evidenceID == "" {
-				evidenceID = fmt.Sprintf("%s-evidence-%d-%d", decision.DecisionID, index, evidenceIndex)
-			}
 			if _, err = tx.ExecContext(ctx, `
 				INSERT INTO decision_evidence (
 					id, decision_id, module, kind, value, severity, score_delta, source, created_at
 				)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				fmt.Sprintf("%s-%d-%d", evidenceID, index, evidenceIndex),
+				decisionEvidenceRowID(decision.DecisionID, evidence.ID, index, evidenceIndex),
 				decision.DecisionID,
 				evidence.Module,
 				evidence.Kind,
@@ -115,6 +111,13 @@ func (r *DecisionRepository) InsertDecision(ctx context.Context, decision api.De
 		}
 	}
 	return tx.Commit()
+}
+
+func decisionEvidenceRowID(decisionID string, evidenceID string, arbiterIndex int, evidenceIndex int) string {
+	if evidenceID == "" {
+		return fmt.Sprintf("%s-evidence-%d-%d", decisionID, arbiterIndex, evidenceIndex)
+	}
+	return fmt.Sprintf("%s-%s-%d-%d", decisionID, evidenceID, arbiterIndex, evidenceIndex)
 }
 
 func (r *DecisionRepository) GetDecision(ctx context.Context, id string) (api.DecisionResponse, error) {

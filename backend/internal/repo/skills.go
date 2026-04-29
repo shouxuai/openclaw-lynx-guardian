@@ -127,14 +127,24 @@ func (r *SkillRepository) List(ctx context.Context, query SkillListQuery) (servi
 	if err != nil {
 		return service.CursorPage[api.SkillDetail]{}, err
 	}
-	defer rows.Close()
 
-	items := make([]api.SkillDetail, 0)
+	inventory := make([]api.SkillInventoryItem, 0)
 	for rows.Next() {
 		item, err := scanSkillInventory(rows)
 		if err != nil {
 			return service.CursorPage[api.SkillDetail]{}, err
 		}
+		inventory = append(inventory, item)
+	}
+	if err := rows.Err(); err != nil {
+		return service.CursorPage[api.SkillDetail]{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return service.CursorPage[api.SkillDetail]{}, err
+	}
+
+	items := make([]api.SkillDetail, 0, len(inventory))
+	for _, item := range inventory {
 		findings, err := r.ListFindings(ctx, item.SkillID)
 		if err != nil {
 			return service.CursorPage[api.SkillDetail]{}, err
@@ -143,9 +153,6 @@ func (r *SkillRepository) List(ctx context.Context, query SkillListQuery) (servi
 			SkillInventoryItem: item,
 			Findings:           findings,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		return service.CursorPage[api.SkillDetail]{}, err
 	}
 	return service.CursorPage[api.SkillDetail]{Items: items}, nil
 }

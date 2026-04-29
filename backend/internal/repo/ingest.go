@@ -3,6 +3,7 @@ package repo
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 type PersistResult struct {
@@ -447,7 +448,87 @@ func (r *IngestRepository) PersistLynxCheck(exec sqlExecer, item LynxCheckUpsert
 	if err != nil {
 		return PersistResult{}, err
 	}
+	if err := r.persistLynxCheckTaskCompatibility(exec, item); err != nil {
+		return PersistResult{}, err
+	}
 	return resultStatus(result)
+}
+
+func (r *IngestRepository) persistLynxCheckTaskCompatibility(exec sqlExecer, item LynxCheckUpsertItem) error {
+	createdAt := unixMillisRFC3339(item.Data.CreatedAtMs)
+	updatedAt := createdAt
+	var completedAt any
+	if item.Data.CompletedAtMs != nil {
+		updatedAt = unixMillisRFC3339(*item.Data.CompletedAtMs)
+		completedAt = updatedAt
+	}
+	deliveryChannel := firstNonEmpty(optionalString(item.Data.Transport), optionalString(item.Data.MessageProvider))
+	deliveryStatus := legacyDeliveryStatus(item.Data.SendAttempted, item.Data.SendSucceeded)
+	taskStatus := legacyLynxCheckTaskStatus(item.Data.Status)
+	var deliveredAt any
+	if item.Data.SendSucceeded != nil && *item.Data.SendSucceeded {
+		if item.Data.CompletedAtMs != nil {
+			deliveredAt = unixMillisRFC3339(*item.Data.CompletedAtMs)
+		} else {
+			deliveredAt = updatedAt
+		}
+	}
+
+	_, err := exec.Exec(
+		`
+		INSERT INTO lynx_check_tasks (
+			id, request_id, trigger, source, requester_id, session_key, target_key,
+			status, facts_json, evidence_bundle_json, report_skeleton, delivery_channel,
+			delivery_target, delivery_status, delivery_error, created_at, updated_at,
+			delivered_at, completed_at
+		)
+		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, '{}', '', ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(request_id) DO UPDATE SET
+			trigger = COALESCE(NULLIF(excluded.trigger, ''), lynx_check_tasks.trigger),
+			source = COALESCE(NULLIF(excluded.source, ''), lynx_check_tasks.source),
+			session_key = COALESCE(NULLIF(excluded.session_key, ''), lynx_check_tasks.session_key),
+			target_key = COALESCE(NULLIF(excluded.target_key, ''), lynx_check_tasks.target_key),
+			status = CASE
+				WHEN lynx_check_tasks.status IN ('completed', 'failed', 'cancelled')
+					THEN lynx_check_tasks.status
+				WHEN excluded.status = 'created' AND lynx_check_tasks.status <> ''
+					THEN lynx_check_tasks.status
+				WHEN excluded.status = 'collecting'
+					AND lynx_check_tasks.status IN ('analyzing', 'report_skeleton_ready', 'awaiting_llm_report', 'delivering')
+					THEN lynx_check_tasks.status
+				ELSE COALESCE(NULLIF(excluded.status, ''), lynx_check_tasks.status)
+			END,
+			facts_json = COALESCE(NULLIF(excluded.facts_json, '{}'), lynx_check_tasks.facts_json),
+			delivery_channel = COALESCE(NULLIF(excluded.delivery_channel, ''), lynx_check_tasks.delivery_channel),
+			delivery_target = COALESCE(NULLIF(excluded.delivery_target, ''), lynx_check_tasks.delivery_target),
+			delivery_status = COALESCE(NULLIF(excluded.delivery_status, ''), lynx_check_tasks.delivery_status),
+			delivery_error = COALESCE(NULLIF(excluded.delivery_error, ''), lynx_check_tasks.delivery_error),
+			updated_at = excluded.updated_at,
+			delivered_at = COALESCE(excluded.delivered_at, lynx_check_tasks.delivered_at),
+			completed_at = COALESCE(excluded.completed_at, lynx_check_tasks.completed_at)`,
+		item.Data.RequestID,
+		item.Data.RequestID,
+		item.Data.Trigger,
+		item.Data.Source,
+		optionalString(item.Data.SessionKey),
+		optionalString(item.Data.TargetKey),
+		taskStatus,
+		toJSON(map[string]any{
+			"preferredTargetKind": item.Data.PreferredTargetKind,
+			"channelId":           optionalString(item.Data.ChannelID),
+			"messageProvider":     optionalString(item.Data.MessageProvider),
+			"reportPath":          optionalString(item.Data.ReportPath),
+		}),
+		deliveryChannel,
+		optionalString(item.Data.TargetKey),
+		deliveryStatus,
+		optionalString(item.Data.ErrorMessage),
+		createdAt,
+		updatedAt,
+		deliveredAt,
+		completedAt,
+	)
+	return err
 }
 
 func (r *IngestRepository) PersistTokenUsage(exec sqlExecer, item TokenUsageItem, ingestedAtMs int64) (PersistResult, error) {
@@ -495,6 +576,49 @@ func normalizeTokenSourceType(sourceType *string, isEstimated *bool) string {
 		return "estimated"
 	}
 	return "actual"
+}
+
+func unixMillisRFC3339(value int64) string {
+	return time.UnixMilli(value).UTC().Format(time.RFC3339Nano)
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func legacyLynxCheckTaskStatus(status string) string {
+	switch status {
+	case "pending":
+		return "created"
+	case "running":
+		return "collecting"
+	case "completed", "failed":
+		return status
+	default:
+		return ""
+	}
+}
+
+func legacyDeliveryStatus(sendAttempted *bool, sendSucceeded *bool) string {
+	if sendSucceeded != nil && *sendSucceeded {
+		return "sent"
+	}
+	if sendAttempted != nil && *sendAttempted {
+		return "attempted"
+	}
+	return ""
 }
 
 func zeroIfNil(value *int64) int64 {

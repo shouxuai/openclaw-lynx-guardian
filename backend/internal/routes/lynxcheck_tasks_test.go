@@ -97,6 +97,30 @@ func TestLynxCheckTaskFailedEventRecordsError(t *testing.T) {
 	assertLynxField(t, detail, "errorMessage", "report generation failed")
 }
 
+func TestLynxCheckTaskIgnoresStaleEventsAfterTerminalState(t *testing.T) {
+	router := setupLynxCheckTaskRouter(t)
+
+	postLynxJSON(t, router, http.MethodPost, "/lynx/internal/v1/tasks/lynx-check/start", map[string]any{
+		"requestId": "stale-1",
+		"trigger":   "manual",
+		"source":    "lynx_command",
+	})
+	postLynxJSON(t, router, http.MethodPost, "/lynx/internal/v1/tasks/lynx-check/stale-1/event", map[string]any{
+		"status":       "failed",
+		"errorMessage": "delivery failed",
+	})
+	postLynxJSON(t, router, http.MethodPost, "/lynx/internal/v1/tasks/lynx-check/stale-1/event", map[string]any{
+		"status": "collecting",
+		"facts": map[string]any{
+			"late": "scanner-started",
+		},
+	})
+
+	detail := getLynxJSON(t, router, "/lynx/lynx-checks/stale-1")
+	assertLynxField(t, detail, "status", "failed")
+	assertLynxField(t, detail, "errorMessage", "delivery failed")
+}
+
 func TestLynxCheckTaskDeliveryLifecycle(t *testing.T) {
 	router := setupLynxCheckTaskRouter(t)
 
