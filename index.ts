@@ -23,7 +23,7 @@ import {
   guardOutputText,
   guardToolResultPersistence,
 } from "./src/local-guard/output-protection.js";
-import { buildSecurityAwarenessInjection } from "./src/guard/security-awareness.js";
+import { buildSecurityAwarenessInjection } from "./src/runtime/visible-input-warning.js";
 import { resolveRiskPolicy } from "./src/guard/risk-policy.js";
 import { runSecurityAudit, runMaliciousScriptScan, formatAuditSummary } from "./src/lynx-check/report-producers.js";
 import {
@@ -39,7 +39,7 @@ import {
   rememberRequesterProvenance,
   readRunApprovalContext,
   saveRunApprovalContext,
-} from "./src/approval/approval-context.js";
+} from "./src/approval/approval-bridge.js";
 import {
   consumeFeishuLocalApprovalGrant,
   consumeFeishuLocalApprovalReplay,
@@ -58,7 +58,7 @@ import {
   buildToolApprovalRequest,
   toApprovalRiskLevel,
 } from "./src/approval/approval-bridge.js";
-import { buildApprovalRequestFingerprint } from "./src/approval/approval-fingerprint.js";
+import { buildApprovalRequestFingerprint } from "./src/approval/approval-bridge.js";
 import { deliverLynxFeishuApprovalPromptDirectly } from "./src/delivery/message-delivery.js";
 import {
   assessSkillRisk,
@@ -67,8 +67,8 @@ import {
   quickBlacklistCheck,
   verifyAllInstalledSkills,
 } from "./src/skills/skill-guard.js";
-import { quarantineSkill } from "./src/skills/skill-cleanup.js";
-import type { MaliciousSkillEntry } from "./src/skills/skill-blacklist-data.js";
+import { quarantineSkill } from "./src/skills/skill-guard.js";
+import type { MaliciousSkillEntry } from "./src/skills/skill-guard.js";
 import {
   DISCOVERY_CONFIG_SOURCE_PATH,
   loadDiscoveryRuntimeConfig,
@@ -176,10 +176,6 @@ import {
 } from "./src/runtime/lynx-check-prompt.js";
 import { deliverManagedLynxAuditReport } from "./src/runtime/lynx-audit-runtime.js";
 import {
-  adaptContentCheckResult,
-  adaptToolCheckResult,
-} from "./src/runtime/api-risk-adapter.js";
-import {
   createLocalConsoleTokenProvider,
   ensureLocalConsoleToken,
 } from "./src/console/runtime.js";
@@ -208,8 +204,6 @@ import {
   appendLocalConsoleWebviewFootnoteForL4Reply,
   isTrustedManagedLynxCheckReportText,
 } from "./src/delivery/message-delivery.js";
-import { guardInboundMessageBeforeWrite } from "./src/runtime/message-write-input-guard.js";
-import { guardPromptBuildInput } from "./src/runtime/prompt-build-input-guard.js";
 import {
   buildVisibleInputGuardModelContext,
   buildVisibleInputGuardWarning,
@@ -225,7 +219,13 @@ import {
   resolveToolApprovalProtectedTargetSummary,
 } from "./src/runtime/plugin-setup-helpers.js";
 
-import { registerLynxHooks } from "./src/hooks/setup.js";
+import {
+  adaptContentCheckResult,
+  adaptToolCheckResult,
+  guardInboundMessageBeforeWrite,
+  guardPromptBuildInput,
+  registerLynxHooks,
+} from "./src/hooks/setup.js";
 import { registerInputHooks } from "./src/hooks/input-hooks.js";
 import { registerToolHooks } from "./src/hooks/tool-hooks.js";
 import { registerOutputHooks } from "./src/hooks/output-hooks.js";

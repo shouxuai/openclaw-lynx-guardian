@@ -1,6 +1,6 @@
 import type { OpenClawPluginApi } from "../types.js";
 import type { CheckExecBlacklistContext } from "../blacklist.js";
-import type { MaliciousSkillEntry } from "../skills/skill-blacklist-data.js";
+import type { MaliciousSkillEntry } from "../skills/skill-guard.js";
 import type { LynxHookRuntimeContext } from "./setup.js";
 import * as blacklist from "../blacklist.js";
 import * as safetyGuard from "../guard/safety-guard.js";

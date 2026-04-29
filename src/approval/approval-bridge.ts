@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import type { ToolApprovalRequest, ToolApprovalResolution } from "../types.js";
 import { GoControlPlaneClient } from "../api/go-control-plane.js";
 import {
@@ -5,7 +6,104 @@ import {
   isVersionAtLeast,
 } from "../runtime/hook-capabilities.js";
 import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
-import type { ChannelProfile } from "../runtime/requester-provenance-store.js";
+import type { ApprovalTransportProfile, ChannelProfile } from "../runtime/requester-provenance-store.js";
+
+export {
+  claimRequesterProvenance,
+  clearRequesterProvenanceStore,
+  readRequesterProvenance,
+  rememberRequesterProvenance,
+} from "../runtime/requester-provenance-store.js";
+
+export type RunApprovalContext = {
+  runId: string;
+  sessionKey?: string;
+  channelProfile?: ChannelProfile;
+  approvalTransport?: ApprovalTransportProfile;
+  requesterId?: string;
+  requesterOuId?: string;
+  accountId?: string;
+  conversationId?: string;
+  promptText?: string;
+  threadId?: string | number;
+  isGroup: boolean;
+  createdAt: number;
+  expiresAt: number;
+};
+
+const runApprovalContexts = new Map<string, RunApprovalContext>();
+
+function pruneRunApprovalContexts(now: number = Date.now()): void {
+  for (const [runId, context] of runApprovalContexts) {
+    if (context.expiresAt <= now) {
+      runApprovalContexts.delete(runId);
+    }
+  }
+}
+
+export function saveRunApprovalContext(context: RunApprovalContext): void {
+  pruneRunApprovalContexts();
+  runApprovalContexts.set(context.runId, { ...context });
+}
+
+export function readRunApprovalContext(runId?: string): RunApprovalContext | undefined {
+  if (!runId) {
+    return undefined;
+  }
+
+  pruneRunApprovalContexts();
+  const context = runApprovalContexts.get(runId);
+  return context ? { ...context } : undefined;
+}
+
+export function clearRunApprovalContexts(): void {
+  runApprovalContexts.clear();
+}
+
+export interface ApprovalFingerprintInput {
+  sessionKey?: string;
+  toolName?: string;
+  command?: string;
+  targetUri?: string;
+  requesterId?: string;
+  channelId?: string;
+  channelProfile?: ChannelProfile;
+  accountId?: string;
+  conversationId?: string;
+  requesterOuId?: string;
+  promptText?: string;
+  module?: string;
+  protectedTargetSummary?: string;
+}
+
+function normalizeToken(value?: string): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizePromptText(value?: string): string {
+  return normalizeToken(value).replace(/\s+/g, " ").toLowerCase();
+}
+
+export function buildApprovalRequestFingerprint(input: ApprovalFingerprintInput): string {
+  const payload = {
+    sessionKey: normalizeToken(input.sessionKey),
+    channelProfile: normalizeToken(input.channelProfile).toLowerCase(),
+    channelId: normalizeToken(input.channelId),
+    accountId: normalizeToken(input.accountId),
+    conversationId: normalizeToken(input.conversationId),
+    requesterId: normalizeToken(input.requesterId),
+    requesterOuId: normalizeToken(input.requesterOuId),
+    promptText: normalizePromptText(input.promptText ?? input.command),
+    toolName: normalizeToken(input.toolName).toLowerCase(),
+    module: normalizeToken(input.module),
+    targetUri: normalizeToken(input.targetUri),
+    protectedTargetSummary: normalizeToken(input.protectedTargetSummary),
+  };
+
+  return createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+}
 
 export type ApprovalRiskLevel = "L2" | "L3";
 

@@ -3,7 +3,7 @@ import {
   clearRunApprovalContexts,
   saveRunApprovalContext,
   readRunApprovalContext,
-} from "../src/approval/approval-context.js";
+} from "../src/approval/approval-bridge.js";
 
 describe("run approval context store", () => {
   it("binds requester identity to a specific run", () => {

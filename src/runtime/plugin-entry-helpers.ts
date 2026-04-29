@@ -17,7 +17,7 @@ import {
 import {
   readRequesterProvenance,
   rememberRequesterProvenance,
-} from "../approval/approval-context.js";
+} from "../approval/approval-bridge.js";
 
 export const LOCAL_TOOL_APPROVAL_COMMAND = "/lynx-approve";
 const RECENT_FEISHU_DM_APPROVAL_CONTEXT_TTL_MS = 5 * 60 * 1000;

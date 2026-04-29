@@ -45,7 +45,7 @@ import {
   readLatestPendingLynxCheckRunIntent,
 } from "../lynx-check/lynx-check-bridge.js";
 import { deliverLynxFeishuApprovalPromptDirectly } from "../delivery/message-delivery.js";
-import { buildApprovalRequestFingerprint } from "../approval/approval-fingerprint.js";
+import { buildApprovalRequestFingerprint } from "../approval/approval-bridge.js";
 import {
   persistGrantFromApproval,
   type GrantControlPlaneSync,

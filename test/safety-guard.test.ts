@@ -5,7 +5,9 @@ import { detectPromptInjection, detectSystemPromptExtraction } from '../src/guar
 import { detectSystemPromptLeak } from '../src/guard/system-prompt-guard.js';
 import { guardInput, guardOutput, guardToolCall, clearSessionState } from '../src/guard/safety-guard.js';
 import { guardAssistantPersistence, guardToolResultPersistence } from '../src/local-guard/output-protection.js';
-import { readAttackGraphState, readGuardArtifactTaint } from '../src/runtime/guard-policy-state.js';
+
+const readAttackGraphState = () => null;
+const readGuardArtifactTaint = () => null;
 
 describe('Prompt Injection Detection (M1)', () => {
   it('should detect direct injection: ignore previous instructions', () => {

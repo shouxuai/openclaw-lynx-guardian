@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { guardInboundMessageBeforeWrite } from "../src/runtime/message-write-input-guard.js";
+import { guardInboundMessageBeforeWrite } from "../src/hooks/setup.js";
 
 describe("guardInboundMessageBeforeWrite", () => {
   it("replaces protected prompt extraction user messages before persistence", () => {

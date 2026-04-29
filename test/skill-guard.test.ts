@@ -11,8 +11,8 @@ import {
   quickBlacklistCheck,
   verifyAllInstalledSkills,
 } from "../src/skills/skill-guard.js";
-import { MALICIOUS_SKILL_BLACKLIST, MALICIOUS_SKILL_CONTENT_PATTERNS } from "../src/skills/skill-blacklist-data.js";
-import { quarantineSkill, listQuarantined, restoreFromQuarantine } from "../src/skills/skill-cleanup.js";
+import { MALICIOUS_SKILL_BLACKLIST, MALICIOUS_SKILL_CONTENT_PATTERNS } from "../src/skills/skill-guard.js";
+import { quarantineSkill, listQuarantined, restoreFromQuarantine } from "../src/skills/skill-guard.js";
 
 // ── Test Fixtures ────────────────────────────────────────────────────
 

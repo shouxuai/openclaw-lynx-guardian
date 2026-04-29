@@ -639,23 +639,23 @@ git commit -m "refactor: consolidate delivery bridge"
 - Modify: `src/api/go-control-plane.ts`
 - Delete after imports move: local-console runtime files listed in the File Map
 
-- [ ] **Step 1: Move ingest client**
+- [x] **Step 1: Move ingest client**
 
 Move `createLocalConsoleIngestClient` and ingest types from `src/runtime/local-console-client.ts` into `src/console/ingest-client.ts`. Remove decision URL building from the ingest client.
 
-- [ ] **Step 2: Move event builder**
+- [x] **Step 2: Move event builder**
 
 Move event construction from `src/runtime/local-console-event-builder.ts` into `src/console/event-builder.ts`.
 
-- [ ] **Step 3: Move console runtime helpers**
+- [x] **Step 3: Move console runtime helpers**
 
 Move config, auth, port, launch, supervisor, gateway-route registration, heartbeat filtering, and local-console hook helpers into `src/console/runtime.ts`. Preserve exports currently consumed by `index.ts`.
 
-- [ ] **Step 4: Move token usage bridge**
+- [x] **Step 4: Move token usage bridge**
 
 Move token hook and token estimator into `src/console/token-usage.ts`. Keep token source semantics aligned with Go: `actual`, `estimated`, and `unavailable`.
 
-- [ ] **Step 5: Delete replaced local-console files**
+- [x] **Step 5: Delete replaced local-console files**
 
 Delete files after imports move:
 
@@ -669,7 +669,7 @@ src/runtime/local-console-hook-handlers.ts
 
 Keep files such as config/auth/port/launch/supervisor only until their exports are merged into `src/console/runtime.ts`, then delete the originals in the same task.
 
-- [ ] **Step 6: Verify local console bridge**
+- [x] **Step 6: Verify local console bridge**
 
 Run:
 
@@ -680,7 +680,7 @@ npx tsc --noEmit
 
 Expected: focused tests and compile pass.
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```powershell
 git add src/console src/api/go-control-plane.ts index.ts
@@ -700,7 +700,7 @@ git commit -m "refactor: consolidate local console bridge"
 - Modify: `index.ts`
 - Delete after imports move: Go-owned `src/guard/policy/*` files listed in the File Map
 
-- [ ] **Step 1: Move local L4 enforcement**
+- [x] **Step 1: Move local L4 enforcement**
 
 Move hard-deny logic required without Go into `src/local-guard/local-l4-fast-path.ts`. Export:
 
@@ -714,7 +714,7 @@ export {
 
 These functions must cover plugin-disable, config mutation, protected secret reads, prompt/developer instruction extraction, explicit approval bypass, concealed execution chains, and high-confidence exfiltration.
 
-- [ ] **Step 2: Move sync-only output protection**
+- [x] **Step 2: Move sync-only output protection**
 
 Move persisted-output redaction and blocking into `src/local-guard/output-protection.ts`. Export:
 
@@ -726,11 +726,11 @@ export {
 };
 ```
 
-- [ ] **Step 3: Reduce `safety-guard.ts` to a compatibility facade**
+- [x] **Step 3: Reduce `safety-guard.ts` to a compatibility facade**
 
 Keep `guardInput`, `guardToolCall`, and `guardOutput` only as wrappers around local L4 and Go decision handling. Remove internal evidence scoring, semantic scoring, long-term session escalation, and policy arbitration from the active path.
 
-- [ ] **Step 4: Delete Go-owned policy modules**
+- [x] **Step 4: Delete Go-owned policy modules**
 
 Delete:
 
@@ -745,7 +745,7 @@ src/guard/policy/artifact-taint-store.ts
 
 If a type is still required, move that type into `src/local-guard/local-l4-fast-path.ts` or `shared/src/decision.ts` instead of keeping the policy directory alive.
 
-- [ ] **Step 5: Verify local guard behavior**
+- [x] **Step 5: Verify local guard behavior**
 
 Run:
 
@@ -761,7 +761,7 @@ Expected:
 - PEM/API key/system prompt leakage remains blocked or redacted;
 - compile passes.
 
-- [ ] **Step 6: Commit Task 7**
+- [x] **Step 6: Commit Task 7**
 
 ```powershell
 git add src/local-guard src/guard/safety-guard.ts src/guard/result-guard.ts src/runtime/hook-decision-handlers.ts index.ts
@@ -780,7 +780,7 @@ git commit -m "refactor: slim guard to local enforcement"
 - Create: `src/hooks/lifecycle-hooks.ts`
 - Modify: `index.ts`
 
-- [ ] **Step 1: Create hook setup module**
+- [x] **Step 1: Create hook setup module**
 
 Create `src/hooks/setup.ts` with:
 
@@ -802,27 +802,27 @@ export function registerLynxHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
 }
 ```
 
-- [ ] **Step 2: Move input hook handlers**
+- [x] **Step 2: Move input hook handlers**
 
 Move `message_received`, `before_dispatch`, `before_agent_start`, and `before_prompt_build` registration into `src/hooks/input-hooks.ts`.
 
-- [ ] **Step 3: Move tool hook handlers**
+- [x] **Step 3: Move tool hook handlers**
 
 Move `before_tool_call`, `after_tool_call`, and approval-resolution command handling into `src/hooks/tool-hooks.ts`.
 
-- [ ] **Step 4: Move output hook handlers**
+- [x] **Step 4: Move output hook handlers**
 
 Move `llm_output`, `before_message_write`, `tool_result_persist`, and `message_sending` registration into `src/hooks/output-hooks.ts`.
 
-- [ ] **Step 5: Move lifecycle hooks**
+- [x] **Step 5: Move lifecycle hooks**
 
 Move startup, shutdown, scheduled check reconciliation, install hooks, subagent hooks, and local console startup wiring into `src/hooks/lifecycle-hooks.ts`.
 
-- [ ] **Step 6: Reduce `index.ts`**
+- [x] **Step 6: Reduce `index.ts`**
 
 Make `index.ts` contain imports, `setup(api)`, runtime construction, and `registerLynxHooks(api, runtime)`. Keep line count below 2200 in this task.
 
-- [ ] **Step 7: Verify hook refactor**
+- [x] **Step 7: Verify hook refactor**
 
 Run:
 
@@ -833,7 +833,7 @@ npx tsc --noEmit
 
 Expected: focused tests and compile pass. If historical `test/plugin.test.ts` still has known unrelated failures, capture the failing test names and run the new hook-specific tests plus compile before moving on.
 
-- [ ] **Step 8: Commit Task 8**
+- [x] **Step 8: Commit Task 8**
 
 ```powershell
 git add src/hooks index.ts
@@ -847,7 +847,7 @@ git commit -m "refactor: thin plugin hook orchestration"
 - Create: `test/runtime-slimming-audit.test.ts`
 - Modify: imports or files needed to satisfy audit
 
-- [ ] **Step 1: Add final audit test**
+- [x] **Step 1: Add final audit test**
 
 Create `test/runtime-slimming-audit.test.ts`:
 
@@ -903,7 +903,7 @@ describe("plugin runtime slimming target", () => {
 });
 ```
 
-- [ ] **Step 2: Run the audit**
+- [x] **Step 2: Run the audit**
 
 Run:
 
@@ -913,11 +913,11 @@ npx vitest run test/runtime-slimming-audit.test.ts test/api-boundary.test.ts
 
 Expected: PASS only after the second-stage target is reached.
 
-- [ ] **Step 3: Fix remaining imports or remove unused files**
+- [x] **Step 3: Fix remaining imports or remove unused files**
 
 Use TypeScript compile and the audit output to remove remaining unused compatibility files. Do not delete files that still protect local L4, sync-only output, or delivery bridge behavior.
 
-- [ ] **Step 4: Commit Task 9**
+- [x] **Step 4: Commit Task 9**
 
 ```powershell
 git add test/runtime-slimming-audit.test.ts src index.ts

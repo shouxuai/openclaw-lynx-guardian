@@ -23,7 +23,7 @@ import {
   resetRecentActiveDeliveryTargets,
 } from "../src/delivery/recent-delivery.js";
 import { clearRequesterProvenanceStore } from "../src/runtime/requester-provenance-store.js";
-import { clearRunApprovalContexts } from "../src/approval/approval-context.js";
+import { clearRunApprovalContexts } from "../src/approval/approval-bridge.js";
 
 vi.mock("../src/utils.js");
 vi.mock("../src/api.js");

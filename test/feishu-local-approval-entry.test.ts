@@ -9,7 +9,7 @@ import * as remoteApi from "../src/api/remote-safety-service.js";
 import * as safetyGuard from "../src/guard/safety-guard.js";
 import * as runtimeConfig from "../src/discovery/discovery-runtime-config.js";
 import * as tokenOptimizerRunner from "../src/runtime/token-optimizer-runner.js";
-import { buildApprovalRequestFingerprint } from "../src/approval/approval-fingerprint.js";
+import { buildApprovalRequestFingerprint } from "../src/approval/approval-bridge.js";
 import {
   clearApprovalGrants,
   clearFeishuLocalApprovalGrants,
@@ -27,7 +27,7 @@ import {
   clearRequesterProvenanceStore,
   clearRunApprovalContexts,
   readRunApprovalContext,
-} from "../src/approval/approval-context.js";
+} from "../src/approval/approval-bridge.js";
 
 vi.mock("../src/utils.js");
 vi.mock("../src/api.js");

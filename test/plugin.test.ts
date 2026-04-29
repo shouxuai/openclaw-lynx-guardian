@@ -15,7 +15,7 @@ import * as blacklist from '../src/blacklist.js';
 import * as recentActiveDelivery from '../src/delivery/recent-delivery.js';
 import * as lynxMessageDelivery from '../src/delivery/message-delivery.js';
 import { deliverLynxReport } from '../src/delivery/message-delivery.js';
-import { setLynxWebchatGatewayCallerForTests } from '../src/runtime/lynx-webchat-delivery.js';
+import { setLynxWebchatGatewayCallerForTests } from '../src/delivery/message-delivery.js';
 import {
   clearManagedLynxCheckAuthorization,
   grantManagedLynxCheckAuthorization,
@@ -26,7 +26,7 @@ import {
   readRequesterProvenance,
   clearRunApprovalContexts,
   readRunApprovalContext,
-} from '../src/approval/approval-context.js';
+} from '../src/approval/approval-bridge.js';
 import {
   clearApprovalGrants,
   clearFeishuLocalApprovalGrants,
@@ -5519,4 +5519,3 @@ describe('Plugin Setup', () => {
     expect(discovery.discoverOpenClaw).not.toHaveBeenCalled();
   });
 });
-

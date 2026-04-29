@@ -15,7 +15,7 @@ import {
   type ConcealedIntentDetection,
 } from "./concealed-intent.js";
 import { matchGlobalInputAllowlistRule } from "./global-allowlist.js";
-import { normalizePluginProtectionText } from "../local-guard/plugin-protection-normalization.js";
+import { normalizePluginProtectionText } from "../local-guard/local-l4-fast-path.js";
 import { SensitiveDataBlocker } from "../local-guard/sensitive-patterns.js";
 import {
   findObfuscatedLynxPluginPath,

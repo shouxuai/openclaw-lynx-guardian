@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { guardPromptBuildInput } from "../src/runtime/prompt-build-input-guard.js";
+import { guardPromptBuildInput } from "../src/hooks/setup.js";
 
 describe("guardPromptBuildInput", () => {
   it("injects forced denial context for mojibake-damaged system prompt requests", () => {
