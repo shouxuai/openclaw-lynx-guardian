@@ -3,7 +3,7 @@ import {
   clearApprovalGrants,
   matchApprovalGrant,
   saveApprovalGrant,
-} from "../src/runtime/approval-grant-store.js";
+} from "../src/approval/approval-bridge.js";
 
 describe("approval grant store", () => {
   it("matches same-source same-requester same-module lower-risk retries across runs", () => {

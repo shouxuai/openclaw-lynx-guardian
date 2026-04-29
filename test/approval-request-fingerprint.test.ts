@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildApprovalRequestFingerprint } from "../src/runtime/approval-request-fingerprint.js";
+import { buildApprovalRequestFingerprint } from "../src/approval/approval-fingerprint.js";
 
 describe("approval request fingerprint", () => {
   it("is deterministic for equivalent feishu request content", () => {

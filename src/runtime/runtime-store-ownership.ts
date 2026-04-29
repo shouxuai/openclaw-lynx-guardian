@@ -1,10 +1,8 @@
 export type RuntimeStoreOwner =
-  | "go-grant-plane"
   | "go-task-plane"
   | "approval-bridge"
   | "delivery-bridge"
-  | "managed-boundary"
-  | "frozen-compatibility";
+  | "managed-boundary";
 
 export interface RuntimeStoreOwnershipEntry {
   file: string;
@@ -17,68 +15,20 @@ export interface RuntimeStoreOwnershipEntry {
 
 export const RUNTIME_STORE_OWNERSHIP_INVENTORY: RuntimeStoreOwnershipEntry[] = [
   {
-    file: "approval-grant-store.ts",
-    owner: "go-grant-plane",
+    file: "approval/approval-bridge.ts",
+    owner: "approval-bridge",
     activeLocalWrites: true,
     goWriteThrough: true,
-    preserveForDeliveryBridge: false,
-    notes: "Compatibility cache for in-flight approval reuse; allow-current-chain grant writes are also sent to Go.",
+    preserveForDeliveryBridge: true,
+    notes: "Consolidated approval bridge for local approval promises, Feishu replay windows, compatibility grants, and Go grant write-through.",
   },
   {
-    file: "local-tool-approval-store.ts",
+    file: "approval/approval-context.ts",
     owner: "approval-bridge",
     activeLocalWrites: true,
     goWriteThrough: false,
     preserveForDeliveryBridge: true,
-    notes: "Ephemeral local approval prompt/resolution bridge for native and channel approval flows.",
-  },
-  {
-    file: "pending-tool-approval-store.ts",
-    owner: "approval-bridge",
-    activeLocalWrites: true,
-    goWriteThrough: false,
-    preserveForDeliveryBridge: true,
-    notes: "Ephemeral pending promise bridge while OpenClaw waits for an approval resolution.",
-  },
-  {
-    file: "workflow-authorization-store.ts",
-    owner: "frozen-compatibility",
-    activeLocalWrites: false,
-    goWriteThrough: false,
-    preserveForDeliveryBridge: false,
-    notes: "Legacy free-text workflow authorization is no longer created from index.ts.",
-  },
-  {
-    file: "run-approval-context-store.ts",
-    owner: "approval-bridge",
-    activeLocalWrites: true,
-    goWriteThrough: false,
-    preserveForDeliveryBridge: true,
-    notes: "Short-lived context bridge from before_agent_start to before_tool_call.",
-  },
-  {
-    file: "feishu-local-approval-grant-store.ts",
-    owner: "approval-bridge",
-    activeLocalWrites: true,
-    goWriteThrough: false,
-    preserveForDeliveryBridge: true,
-    notes: "Feishu local-chat approval bridge retained until channel delivery parity is proven.",
-  },
-  {
-    file: "feishu-local-approval-replay-store.ts",
-    owner: "approval-bridge",
-    activeLocalWrites: true,
-    goWriteThrough: false,
-    preserveForDeliveryBridge: true,
-    notes: "One-shot replay bridge for Feishu approval replies.",
-  },
-  {
-    file: "feishu-run-continuation-store.ts",
-    owner: "approval-bridge",
-    activeLocalWrites: true,
-    goWriteThrough: false,
-    preserveForDeliveryBridge: true,
-    notes: "Short Feishu continuation window after a local approval grant.",
+    notes: "Short-lived context bridge from before_agent_start to before_tool_call plus requester provenance exports.",
   },
   {
     file: "lynx-check-run-store.ts",

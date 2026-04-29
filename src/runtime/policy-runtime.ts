@@ -6,7 +6,7 @@ import { resolveRiskLevel } from "../guard/policy/policy-engine.js";
 import type { PolicyDecisionKind, ResolvedRiskLevel, RiskLevelLabel } from "../guard/policy/policy-types.js";
 import type { RiskAssessment } from "../guard/safety-guard.js";
 import { toLegacyRiskLevel } from "./api-risk-adapter.js";
-import type { WorkflowAuthorization } from "./workflow-authorization-store.js";
+import type { WorkflowAuthorization } from "../approval/approval-bridge.js";
 
 const DEFAULT_CONFIRMATION_PHRASE = "确认放行本次操作";
 const DEFAULT_APPROVABLE_LEVELS = ["L2", "L3"] as const;

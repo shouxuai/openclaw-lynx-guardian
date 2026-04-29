@@ -3,7 +3,7 @@ import {
   clearFeishuRunContinuations,
   matchFeishuRunContinuation,
   saveFeishuRunContinuation,
-} from "../src/runtime/feishu-run-continuation-store.js";
+} from "../src/approval/approval-bridge.js";
 
 describe("feishu run continuation store", () => {
   it("matches same run same module same requester same-or-lower risk", () => {

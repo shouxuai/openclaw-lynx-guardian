@@ -37,38 +37,28 @@ import {
   claimRequesterProvenance,
   readRequesterProvenance,
   rememberRequesterProvenance,
-} from "./src/runtime/requester-provenance-store.js";
-import {
   readRunApprovalContext,
   saveRunApprovalContext,
-} from "./src/runtime/run-approval-context-store.js";
-import { matchApprovalGrant } from "./src/runtime/approval-grant-store.js";
-import { buildApprovalRequestFingerprint } from "./src/runtime/approval-request-fingerprint.js";
+} from "./src/approval/approval-context.js";
 import {
   consumeFeishuLocalApprovalGrant,
-  saveFeishuLocalApprovalGrant,
-} from "./src/runtime/feishu-local-approval-grant-store.js";
-import {
   consumeFeishuLocalApprovalReplay,
-  saveFeishuLocalApprovalReplay,
-} from "./src/runtime/feishu-local-approval-replay-store.js";
-import {
-  buildToolApprovalRequest,
-  persistGrantFromApproval,
-  toApprovalRiskLevel,
-} from "./src/runtime/tool-approval-runtime.js";
-import { resolvePluginApprovalCompat } from "./src/runtime/plugin-approval-compat.js";
-import { getOrCreatePendingToolApproval } from "./src/runtime/pending-tool-approval-store.js";
-import {
   discardLocalToolApproval,
+  getOrCreatePendingToolApproval,
   listLocalToolApprovalsForSession,
+  matchApprovalGrant,
+  matchFeishuRunContinuation,
+  persistGrantFromApproval,
   readLocalToolApprovalByToken,
   registerLocalToolApproval,
-} from "./src/runtime/local-tool-approval-store.js";
-import {
-  matchFeishuRunContinuation,
+  resolvePluginApprovalCompat,
+  saveFeishuLocalApprovalGrant,
+  saveFeishuLocalApprovalReplay,
   saveFeishuRunContinuation,
-} from "./src/runtime/feishu-run-continuation-store.js";
+  buildToolApprovalRequest,
+  toApprovalRiskLevel,
+} from "./src/approval/approval-bridge.js";
+import { buildApprovalRequestFingerprint } from "./src/approval/approval-fingerprint.js";
 import { deliverLynxFeishuApprovalPromptDirectly } from "./src/runtime/lynx-feishu-direct-delivery.js";
 import {
   assessSkillRisk,

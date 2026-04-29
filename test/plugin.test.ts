@@ -5,6 +5,7 @@ import { dirname, join } from 'path';
 import setup from '../index.ts';
 import * as utils from '../src/utils.js';
 import * as api from '../src/api.js';
+import * as remoteApi from '../src/api/remote-safety-service.js';
 import * as discovery from '../src/discovery/openclaw-discovery.js';
 import * as runtimeConfig from '../src/discovery/discovery-runtime-config.js';
 import * as securityAuditRunner from '../src/runtime/security-audit-runner.js';
@@ -23,17 +24,17 @@ import {
 import {
   clearRequesterProvenanceStore,
   readRequesterProvenance,
-} from '../src/runtime/requester-provenance-store.js';
-import { clearLocalToolApprovals } from '../src/runtime/local-tool-approval-store.js';
-import {
   clearRunApprovalContexts,
   readRunApprovalContext,
-} from '../src/runtime/run-approval-context-store.js';
-import { clearApprovalGrants } from '../src/runtime/approval-grant-store.js';
-import { clearPendingToolApprovals } from '../src/runtime/pending-tool-approval-store.js';
-import { clearFeishuLocalApprovalGrants } from '../src/runtime/feishu-local-approval-grant-store.js';
-import { clearFeishuLocalApprovalReplays } from '../src/runtime/feishu-local-approval-replay-store.js';
-import { clearFeishuRunContinuations } from '../src/runtime/feishu-run-continuation-store.js';
+} from '../src/approval/approval-context.js';
+import {
+  clearApprovalGrants,
+  clearFeishuLocalApprovalGrants,
+  clearFeishuLocalApprovalReplays,
+  clearFeishuRunContinuations,
+  clearLocalToolApprovals,
+  clearPendingToolApprovals,
+} from '../src/approval/approval-bridge.js';
 import {
   createLynxCheckRunIntent,
   getLynxCheckRunResultPath,
@@ -53,6 +54,7 @@ import { resetDirectFeishuApprovalDeliveryForTests } from '../src/runtime/lynx-f
 
 vi.mock('../src/utils.js');
 vi.mock('../src/api.js');
+vi.mock('../src/api/remote-safety-service.js');
 vi.mock('../src/discovery/openclaw-discovery.js', () => ({
   discoverOpenClaw: vi.fn(),
   formatDiscoverySummary: vi.fn((report: any) => [
@@ -205,6 +207,36 @@ describe('Plugin Setup', () => {
     vi.mocked(api.checkContent).mockResolvedValue({
       code: 200,
       result: { risk_level: 0, level_one: '其他', level_two: '其他', level_three: '其他' },
+      message: 'ok',
+    } as any);
+    vi.mocked(remoteApi.checkTool).mockResolvedValue({
+      code: 200,
+      result: { is_safe: true, risk_level: 0, content: '' },
+      message: 'ok',
+    } as any);
+    vi.mocked(remoteApi.registerUser).mockImplementation(async (...args) =>
+      (await (api.registerUser as any)(...args)) ?? { code: 200, id: 'TEST_ID', message: 'OK' }
+    );
+    vi.mocked(remoteApi.pushRecord).mockImplementation(async (...args) =>
+      (await (api.pushRecord as any)(...args)) ?? { code: 200, message: 'OK' }
+    );
+    vi.mocked(remoteApi.checkPublicAccess).mockImplementation(async (...args) =>
+      (await (api.checkPublicAccess as any)(...args)) ?? {
+        code: 200,
+        result: { is_public: false },
+        message: 'ok',
+      }
+    );
+    vi.mocked(remoteApi.checkContent).mockImplementation(async (...args) =>
+      (await (api.checkContent as any)(...args)) ?? {
+        code: 200,
+        result: { is_safe: true, risk_level: 0, level_one: '其他', level_two: '其他', level_three: '其他' },
+        message: 'ok',
+      }
+    );
+    vi.mocked(remoteApi.checkTool).mockResolvedValue({
+      code: 200,
+      result: { is_safe: true, risk_level: 0, content: '' },
       message: 'ok',
     } as any);
     vi.mocked(runtimeConfig.loadDiscoveryRuntimeConfig).mockReturnValue({
@@ -1217,7 +1249,7 @@ describe('Plugin Setup', () => {
     const handler = handlers['before_tool_call'];
     
     vi.mocked(utils.readRecentContext).mockReturnValue('User context');
-    vi.mocked(api.checkTool).mockResolvedValue({
+    vi.mocked(remoteApi.checkTool).mockResolvedValue({
         code: 200,
         result: { is_safe: false, risk_level: 3, content: 'high risk' },
         message: 'blocked'
@@ -1235,7 +1267,7 @@ describe('Plugin Setup', () => {
         block: true,
         blockReason: expect.stringContaining('Risk Level 3')
     });
-    expect(api.checkTool).toHaveBeenCalled();
+    expect(remoteApi.checkTool).toHaveBeenCalled();
   });
 
   it('should allow safe tool call (no blacklist hit)', async () => {
@@ -1244,7 +1276,7 @@ describe('Plugin Setup', () => {
     
     const result = await handler({ toolName: 'exec', params: { command: 'ls -la' } }, {});
     expect(result).toBeUndefined();
-    expect(api.checkTool).not.toHaveBeenCalled();
+    expect(remoteApi.checkTool).not.toHaveBeenCalled();
   });
 
   it('should allow creating non-Lynx skills without treating SKILL.md as a protected core file', async () => {
@@ -1710,7 +1742,7 @@ describe('Plugin Setup', () => {
       },
     });
 
-    expect(api.checkTool).not.toHaveBeenCalled();
+    expect(remoteApi.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
 
@@ -1850,7 +1882,7 @@ describe('Plugin Setup', () => {
       }),
     );
 
-    expect(api.checkTool).not.toHaveBeenCalled();
+    expect(remoteApi.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
 
@@ -1973,7 +2005,7 @@ describe('Plugin Setup', () => {
       text: expect.stringContaining('已批准'),
     });
 
-    expect(api.checkTool).not.toHaveBeenCalled();
+    expect(remoteApi.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
 
@@ -2141,7 +2173,7 @@ describe('Plugin Setup', () => {
       handled: false,
       text: expect.stringContaining('已批准'),
     });
-    expect(api.checkTool).not.toHaveBeenCalled();
+    expect(remoteApi.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
 
@@ -2290,7 +2322,7 @@ describe('Plugin Setup', () => {
       blockReason: expect.stringContaining('No usable Feishu approval route'),
     });
     expect(sessionSendMessage).not.toHaveBeenCalled();
-    expect(api.checkTool).not.toHaveBeenCalled();
+    expect(remoteApi.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
 
@@ -2598,7 +2630,7 @@ describe('Plugin Setup', () => {
     expect((first as any).blockReason).toContain('本地日志页面 Webview');
     expect((first as any).blockReason).not.toContain('确认放行本次操作');
 
-    expect(api.checkTool).not.toHaveBeenCalled();
+    expect(remoteApi.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();
   });
 
@@ -2848,7 +2880,7 @@ describe('Plugin Setup', () => {
       } as any);
 
     vi.mocked(utils.readRecentContext).mockReturnValue('User context');
-    vi.mocked(api.checkTool)
+    vi.mocked(remoteApi.checkTool)
       .mockResolvedValueOnce({
         code: 200,
         result: { is_safe: true, risk_level: 0, content: 'user requested deletion' },
@@ -2919,7 +2951,7 @@ describe('Plugin Setup', () => {
       blockReason: expect.stringContaining('SSH remote login control'),
     });
 
-    expect(api.checkTool).toHaveBeenCalledTimes(3);
+    expect(remoteApi.checkTool).toHaveBeenCalledTimes(3);
     guardSpy.mockRestore();
     blacklistSpy.mockRestore();
   });

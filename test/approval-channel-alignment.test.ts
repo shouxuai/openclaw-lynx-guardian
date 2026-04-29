@@ -5,24 +5,29 @@ import { rmSync } from "fs";
 import setup from "../index.ts";
 import * as utils from "../src/utils.js";
 import * as api from "../src/api.js";
+import * as remoteApi from "../src/api/remote-safety-service.js";
 import * as safetyGuard from "../src/guard/safety-guard.js";
 import * as runtimeConfig from "../src/discovery/discovery-runtime-config.js";
 import * as tokenOptimizerRunner from "../src/runtime/token-optimizer-runner.js";
-import { clearApprovalGrants } from "../src/runtime/approval-grant-store.js";
-import { clearFeishuLocalApprovalGrants } from "../src/runtime/feishu-local-approval-grant-store.js";
-import { clearFeishuLocalApprovalReplays } from "../src/runtime/feishu-local-approval-replay-store.js";
-import { clearFeishuRunContinuations } from "../src/runtime/feishu-run-continuation-store.js";
-import { clearLocalToolApprovals, listLocalToolApprovalsForSession } from "../src/runtime/local-tool-approval-store.js";
-import { clearPendingToolApprovals } from "../src/runtime/pending-tool-approval-store.js";
+import {
+  clearApprovalGrants,
+  clearFeishuLocalApprovalGrants,
+  clearFeishuLocalApprovalReplays,
+  clearFeishuRunContinuations,
+  clearLocalToolApprovals,
+  clearPendingToolApprovals,
+  listLocalToolApprovalsForSession,
+} from "../src/approval/approval-bridge.js";
 import {
   rememberRecentActiveDeliveryTarget,
   resetRecentActiveDeliveryTargets,
 } from "../src/runtime/recent-active-delivery.js";
 import { clearRequesterProvenanceStore } from "../src/runtime/requester-provenance-store.js";
-import { clearRunApprovalContexts } from "../src/runtime/run-approval-context-store.js";
+import { clearRunApprovalContexts } from "../src/approval/approval-context.js";
 
 vi.mock("../src/utils.js");
 vi.mock("../src/api.js");
+vi.mock("../src/api/remote-safety-service.js");
 vi.mock("../src/discovery/discovery-runtime-config.js", () => ({
   DISCOVERY_CONFIG_SOURCE_PATH: "openclaw.plugin.json",
   loadDiscoveryRuntimeConfig: vi.fn(),
@@ -97,6 +102,28 @@ describe("approval channel alignment", () => {
     vi.mocked(api.checkContent).mockResolvedValue({
       code: 200,
       result: { risk_level: 0, level_one: "other", level_two: "other", level_three: "other" },
+      message: "ok",
+    } as any);
+    vi.mocked(api.checkTool).mockResolvedValue({
+      code: 200,
+      result: { is_safe: true, risk_level: 0, content: "" },
+      message: "ok",
+    } as any);
+    vi.mocked(remoteApi.registerUser).mockResolvedValue({ code: 200, id: "TEST_ID", message: "OK" } as any);
+    vi.mocked(remoteApi.pushRecord).mockResolvedValue({ code: 200, message: "OK" } as any);
+    vi.mocked(remoteApi.checkPublicAccess).mockResolvedValue({
+      code: 200,
+      result: { is_public: false },
+      message: "ok",
+    } as any);
+    vi.mocked(remoteApi.checkContent).mockResolvedValue({
+      code: 200,
+      result: { is_safe: true, risk_level: 0, level_one: "other", level_two: "other", level_three: "other" },
+      message: "ok",
+    } as any);
+    vi.mocked(remoteApi.checkTool).mockResolvedValue({
+      code: 200,
+      result: { is_safe: true, risk_level: 0, content: "" },
       message: "ok",
     } as any);
     vi.mocked(runtimeConfig.loadDiscoveryRuntimeConfig).mockReturnValue({

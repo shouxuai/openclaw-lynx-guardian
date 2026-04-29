@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clearLocalToolApprovals,
   registerLocalToolApproval,
-} from "../src/runtime/local-tool-approval-store.js";
+} from "../src/approval/approval-bridge.js";
 
 describe("local tool approval store", () => {
   it("reuses an open approval token for repeated same-source same-module requests", () => {

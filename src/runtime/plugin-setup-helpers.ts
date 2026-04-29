@@ -17,19 +17,19 @@ import {
   listLocalToolApprovalsForSession,
   readLocalToolApprovalByToken,
   registerLocalToolApproval,
-} from "./local-tool-approval-store.js";
+} from "../approval/approval-bridge.js";
 import {
   consumeFeishuLocalApprovalGrant,
   saveFeishuLocalApprovalGrant,
-} from "./feishu-local-approval-grant-store.js";
+} from "../approval/approval-bridge.js";
 import {
   consumeFeishuLocalApprovalReplay,
   saveFeishuLocalApprovalReplay,
-} from "./feishu-local-approval-replay-store.js";
+} from "../approval/approval-bridge.js";
 import {
   matchFeishuRunContinuation,
   saveFeishuRunContinuation,
-} from "./feishu-run-continuation-store.js";
+} from "../approval/approval-bridge.js";
 import {
   clearRecentActiveDeliveryTargetForContext,
   getRecentActiveDeliveryTargets,
@@ -45,11 +45,11 @@ import {
   readLatestPendingLynxCheckRunIntent,
 } from "./lynx-check-run-store.js";
 import { deliverLynxFeishuApprovalPromptDirectly } from "./lynx-feishu-direct-delivery.js";
-import { buildApprovalRequestFingerprint } from "./approval-request-fingerprint.js";
+import { buildApprovalRequestFingerprint } from "../approval/approval-fingerprint.js";
 import {
   persistGrantFromApproval,
   type GrantControlPlaneSync,
-} from "./tool-approval-runtime.js";
+} from "../approval/approval-bridge.js";
 import { buildParamSummary } from "./policy-runtime.js";
 import { hasManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
 import { appendLocalConsoleWebviewFootnote } from "./local-console-webview-note.js";

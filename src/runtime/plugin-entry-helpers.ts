@@ -4,7 +4,7 @@ import { classifyLynxCheckTrigger } from "../discovery/lynx-check-trigger.js";
 import {
   resolvePluginApprovalCompat,
   type PluginApprovalCompatTier,
-} from "./plugin-approval-compat.js";
+} from "../approval/approval-bridge.js";
 import {
   extractMessageText,
   normalizeString,
@@ -17,7 +17,7 @@ import {
 import {
   readRequesterProvenance,
   rememberRequesterProvenance,
-} from "./requester-provenance-store.js";
+} from "../approval/approval-context.js";
 
 export const LOCAL_TOOL_APPROVAL_COMMAND = "/lynx-approve";
 const RECENT_FEISHU_DM_APPROVAL_CONTEXT_TTL_MS = 5 * 60 * 1000;

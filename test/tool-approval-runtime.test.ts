@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildToolApprovalRequest,
   persistGrantFromApproval,
-} from "../src/runtime/tool-approval-runtime.js";
+} from "../src/approval/approval-bridge.js";
 
 describe("tool approval runtime", () => {
   it("appends a separated local log webview note to L3 approval descriptions", () => {

@@ -3,7 +3,7 @@ import {
   clearFeishuLocalApprovalGrants,
   consumeFeishuLocalApprovalGrant,
   saveFeishuLocalApprovalGrant,
-} from "../src/runtime/feishu-local-approval-grant-store.js";
+} from "../src/approval/approval-bridge.js";
 
 describe("feishu local approval grant store", () => {
   it("matches exact scope and consumes a one-time grant", () => {

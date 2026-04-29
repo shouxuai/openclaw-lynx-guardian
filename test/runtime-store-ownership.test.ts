@@ -9,17 +9,11 @@ describe("runtime store ownership inventory", () => {
     );
 
     expect([...byFile.keys()].sort()).toEqual([
-      "approval-grant-store.ts",
-      "feishu-local-approval-grant-store.ts",
-      "feishu-local-approval-replay-store.ts",
-      "feishu-run-continuation-store.ts",
-      "local-tool-approval-store.ts",
+      "approval/approval-bridge.ts",
+      "approval/approval-context.ts",
       "lynx-check-run-store.ts",
       "managed-lynx-check-authorization-store.ts",
-      "pending-tool-approval-store.ts",
       "recent-active-delivery.ts",
-      "run-approval-context-store.ts",
-      "workflow-authorization-store.ts",
     ].sort());
 
     expect(byFile.get("lynx-check-run-store.ts")).toMatchObject({
@@ -28,15 +22,17 @@ describe("runtime store ownership inventory", () => {
       goWriteThrough: true,
       preserveForDeliveryBridge: true,
     });
-    expect(byFile.get("approval-grant-store.ts")).toMatchObject({
-      owner: "go-grant-plane",
+    expect(byFile.get("approval/approval-bridge.ts")).toMatchObject({
+      owner: "approval-bridge",
       activeLocalWrites: true,
       goWriteThrough: true,
+      preserveForDeliveryBridge: true,
     });
-    expect(byFile.get("workflow-authorization-store.ts")).toMatchObject({
-      owner: "frozen-compatibility",
-      activeLocalWrites: false,
+    expect(byFile.get("approval/approval-context.ts")).toMatchObject({
+      owner: "approval-bridge",
+      activeLocalWrites: true,
       goWriteThrough: false,
+      preserveForDeliveryBridge: true,
     });
     expect(byFile.get("recent-active-delivery.ts")).toMatchObject({
       owner: "delivery-bridge",

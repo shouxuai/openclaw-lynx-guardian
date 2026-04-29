@@ -4,7 +4,7 @@ import {
   PLUGIN_APPROVAL_INTRO_VERSION,
   classifyPluginApprovalRuntime,
   resolvePluginApprovalCompat,
-} from "../src/runtime/plugin-approval-compat.js";
+} from "../src/approval/approval-bridge.js";
 
 describe("plugin approval compatibility", () => {
   it("exposes the plugin approval compatibility boundary constant", () => {

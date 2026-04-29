@@ -1,11 +1,14 @@
-/**
- * Task 11 ownership: short-lived approval context bridge.
- * Go owns durable grants; this store only connects run context across hooks.
- */
 import type {
   ApprovalTransportProfile,
   ChannelProfile,
-} from "./requester-provenance-store.js";
+} from "../runtime/requester-provenance-store.js";
+
+export {
+  claimRequesterProvenance,
+  clearRequesterProvenanceStore,
+  readRequesterProvenance,
+  rememberRequesterProvenance,
+} from "../runtime/requester-provenance-store.js";
 
 export type RunApprovalContext = {
   runId: string;
@@ -25,7 +28,7 @@ export type RunApprovalContext = {
 
 const runApprovalContexts = new Map<string, RunApprovalContext>();
 
-function prune(now: number = Date.now()): void {
+function pruneRunApprovalContexts(now: number = Date.now()): void {
   for (const [runId, context] of runApprovalContexts) {
     if (context.expiresAt <= now) {
       runApprovalContexts.delete(runId);
@@ -34,7 +37,7 @@ function prune(now: number = Date.now()): void {
 }
 
 export function saveRunApprovalContext(context: RunApprovalContext): void {
-  prune();
+  pruneRunApprovalContexts();
   runApprovalContexts.set(context.runId, { ...context });
 }
 
@@ -43,7 +46,7 @@ export function readRunApprovalContext(runId?: string): RunApprovalContext | und
     return undefined;
   }
 
-  prune();
+  pruneRunApprovalContexts();
   const context = runApprovalContexts.get(runId);
   return context ? { ...context } : undefined;
 }
