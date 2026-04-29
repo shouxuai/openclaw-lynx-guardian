@@ -1406,7 +1406,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 14: Commit Task 5**
+- [x] **Step 14: Commit Task 5**
 
 ```powershell
 git add backend/internal/decision/tool_request.go backend/internal/decision/tool_request_test.go backend/internal/decision/tool_semantics.go backend/internal/decision/tool_semantics_test.go backend/internal/decision/tool_evidence.go backend/internal/decision/tool_evidence_test.go backend/internal/decision/semantic_arbiter.go backend/internal/decision/evidence_scorer.go backend/internal/decision/rules_tool.go backend/internal/decision/rules_output.go backend/internal/decision/rules_install.go backend/internal/decision/rules_test.go

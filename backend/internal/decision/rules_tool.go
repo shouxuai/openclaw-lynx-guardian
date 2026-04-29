@@ -57,10 +57,11 @@ var toolEvidenceRules = []evidenceRule{
 		Reason:        "tool command reads sensitive content and sends it to an external target",
 		HardRiskLevel: "L4",
 		HardAction:    "deny",
-		Matcher: func(req api.DecisionRequest, _ string) bool {
-			return toolRuleMatches(req, ChainSummary{}, func(view toolRequestView) bool {
+		Matcher: func(req api.DecisionRequest, text string) bool {
+			structured := toolRuleMatches(req, ChainSummary{}, func(view toolRequestView) bool {
 				return hasAnyString(view.SourceKinds, "secret") && hasAnyString(view.SinkKinds, "external_network")
 			})
+			return structured || legacySecretExternalSendMatches(req, text)
 		},
 	},
 	{
@@ -216,4 +217,10 @@ var toolEvidenceRules = []evidenceRule{
 				containsAny(text, "http://", "https://", "外发", "发送", "upload", "post")
 		},
 	},
+}
+
+func legacySecretExternalSendMatches(req api.DecisionRequest, text string) bool {
+	flatText := normalizeDecisionText(text + " " + toolArgsFlatText(req.ToolArgs))
+	return containsAny(flatText, ".env", "id_rsa", "private key", "api key", "api_key", "token", "客户名单", "退款名单") &&
+		containsAny(flatText, "http://", "https://", "curl", "wget", "post", "upload", "发送", "外发")
 }

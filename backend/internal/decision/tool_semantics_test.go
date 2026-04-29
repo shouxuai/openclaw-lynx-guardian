@@ -20,6 +20,7 @@ func TestSemanticToolIntentFetchExecuteDeny(t *testing.T) {
 		t.Fatalf("risk/action = %s/%s, want L4/deny", result.RiskLevel, result.Action)
 	}
 	assertHas(t, result.MatchedModules, "fetch_execute")
+	assertScoreRule(t, result, "tool.semantic.fetch_execute")
 }
 
 func TestSemanticToolIntentEncodedExecutionRequiresApproval(t *testing.T) {
@@ -35,6 +36,7 @@ func TestSemanticToolIntentEncodedExecutionRequiresApproval(t *testing.T) {
 		t.Fatalf("risk/action = %s/%s, want L3/require_approval", result.RiskLevel, result.Action)
 	}
 	assertHas(t, result.MatchedModules, "encoded_execution")
+	assertScoreRule(t, result, "tool.semantic.encoded_execution")
 }
 
 func TestSemanticToolIntentSafeBuildAllow(t *testing.T) {
@@ -49,4 +51,14 @@ func TestSemanticToolIntentSafeBuildAllow(t *testing.T) {
 	if result.RiskLevel != "L0" || result.Action != "allow" {
 		t.Fatalf("risk/action = %s/%s, want L0/allow", result.RiskLevel, result.Action)
 	}
+}
+
+func assertScoreRule(t *testing.T, result api.ArbiterResult, ruleID string) {
+	t.Helper()
+	for _, item := range result.ScoreBreakdown {
+		if item.RuleID == ruleID {
+			return
+		}
+	}
+	t.Fatalf("missing score rule %s in %#v", ruleID, result.ScoreBreakdown)
 }
