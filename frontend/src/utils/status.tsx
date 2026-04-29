@@ -1,5 +1,3 @@
-import type { EnforcementAction } from "@lynx/local-console-shared";
-
 import { StatusBadge, type StatusBadgeProps } from "../components/feedback/StatusBadge";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -162,7 +160,7 @@ export function getDecisionTone(input: {
 
 function resolvePolicyTone(
   policyDecision: string | undefined,
-  fallbackAction: EnforcementAction | undefined,
+  fallbackAction: string | undefined,
 ): StatusBadgeProps["tone"] {
   const value = `${policyDecision ?? ""} ${fallbackAction ?? ""}`.toLowerCase();
 
@@ -198,7 +196,7 @@ export function formatActionText(value: string | undefined) {
   return ACTION_TEXT_LABELS[value] ?? humanizeIdentifier(value);
 }
 
-export function formatPolicyDecisionLabel(value: string | undefined, fallbackAction?: EnforcementAction) {
+export function formatPolicyDecisionLabel(value: string | undefined, fallbackAction?: string) {
   if (value) {
     return POLICY_DECISION_LABELS[value] ?? humanizeIdentifier(value);
   }
@@ -275,7 +273,7 @@ export function renderActionBadge(value: string | undefined) {
 
 export function renderPolicyDecisionBadge(
   policyDecision: string | undefined,
-  fallbackAction?: EnforcementAction,
+  fallbackAction?: string,
 ) {
   return (
     <StatusBadge

@@ -41,6 +41,9 @@ describe("App", () => {
       if (requestUrl.startsWith("/lynx/events")) {
         return createJsonResponse({ items: [] });
       }
+      if (requestUrl.startsWith("/lynx/sessions")) {
+        return createJsonResponse({ items: [] });
+      }
 
       return createJsonResponse(dashboardOverview);
     });
@@ -63,7 +66,7 @@ describe("App", () => {
     expect(screen.getByText("L0 指标")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "过去 24 小时" })).not.toBeInTheDocument();
     expect(container.querySelector("a.topbar__githubButton")).toBeNull();
-    expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(10);
+    expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(11);
     expect(screen.queryByText("系统管理员")).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -112,6 +115,10 @@ describe("App", () => {
       "href",
       "/webview/lynx-checks",
     );
+    expect(screen.getByRole("link", { name: "会话" })).toHaveAttribute(
+      "href",
+      "/webview/sessions",
+    );
     expect(screen.getByRole("link", { name: "Skill 供应链" })).toHaveAttribute(
       "href",
       "/webview/skills",
@@ -131,6 +138,85 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/lynx/events?limit=10");
+    });
+  });
+
+  it("lets sidebar function groups collapse without breaking route links", async () => {
+    render(<App />);
+
+    const auditGroup = screen.getByRole("button", { name: "审计" });
+    expect(auditGroup).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "审计日志" })).toHaveAttribute(
+      "href",
+      "/webview/events",
+    );
+
+    fireEvent.click(auditGroup);
+
+    expect(auditGroup).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "审计日志" })).not.toBeInTheDocument();
+
+    fireEvent.click(auditGroup);
+
+    const eventsLink = screen.getByRole("link", { name: "审计日志" });
+    expect(auditGroup).toHaveAttribute("aria-expanded", "true");
+    expect(eventsLink).toHaveAttribute("href", "/webview/events");
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/dashboard/overview");
+    });
+  });
+
+  it("selects light, mixed, and dark console themes from the top bar dropdown", async () => {
+    const { container } = render(<App />);
+    const shell = container.querySelector(".console-shell");
+    const mixedThemeButton = screen.getByRole("button", { name: "主题模式：混合" });
+
+    expect(shell).toHaveAttribute("data-theme", "mixed");
+    expect(mixedThemeButton).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(mixedThemeButton);
+    fireEvent.click(screen.getByRole("option", { name: "浅色" }));
+
+    expect(shell).toHaveAttribute("data-theme", "light");
+    expect(screen.getByRole("button", { name: "主题模式：浅色" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "主题模式：浅色" }));
+    fireEvent.click(screen.getByRole("option", { name: "深色" }));
+
+    expect(shell).toHaveAttribute("data-theme", "dark");
+    expect(screen.getByRole("button", { name: "主题模式：深色" })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/dashboard/overview");
+    });
+  });
+
+  it("collapses and expands the sidebar from the sidebar footer", async () => {
+    const { container } = render(<App />);
+    const shell = container.querySelector(".console-shell");
+
+    expect(shell).toHaveAttribute("data-sidebar", "expanded");
+
+    fireEvent.click(screen.getByRole("button", { name: "收起侧边栏" }));
+
+    expect(shell).toHaveAttribute("data-sidebar", "collapsed");
+    expect(screen.getByRole("button", { name: "展开侧边栏" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "审计日志" })).toHaveAttribute(
+      "href",
+      "/webview/events",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开侧边栏" }));
+
+    expect(shell).toHaveAttribute("data-sidebar", "expanded");
+    expect(screen.getByRole("button", { name: "收起侧边栏" })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/dashboard/overview");
     });
   });
 });

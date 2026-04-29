@@ -1,11 +1,14 @@
-import type { ApprovalListItemDto } from "@lynx/local-console-shared";
+import { useState } from "react";
+import type { ApprovalDetailDto, ApprovalListItemDto } from "@lynx/local-console-shared";
 
-import { listApprovals, type ApprovalListQuery } from "../api/approvals";
+import { getApprovalDetail, listApprovals, type ApprovalListQuery } from "../api/approvals";
 import { mockApprovals } from "../data/mock-console";
+import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
 import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
+import { formatTimestamp } from "../utils/format";
 import { renderRiskBadge, renderStateBadge } from "../utils/status";
 
 function formatApprovalScope(approval: ApprovalListItemDto): string {
@@ -26,7 +29,18 @@ function formatRevokedReason(approval: ApprovalListItemDto): string {
   return typeof reason === "string" && reason.trim().length > 0 ? reason : "暂无";
 }
 
+function formatJson(value: Record<string, unknown> | undefined): string {
+  return value ? JSON.stringify(value, null, 2) : "暂无";
+}
+
+function formatList(values: string[] | undefined): string {
+  return values && values.length > 0 ? values.join("；") : "暂无";
+}
+
 export function ApprovalsPage() {
+  const [selectedDetail, setSelectedDetail] = useState<ApprovalDetailDto | null>(null);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const { items, loading, error, paginationProps } = useCursorListResource<ApprovalListItemDto, ApprovalListQuery>({
     fallbackPage: import.meta.env.DEV
       ? (_query, pageIndex, pageSize) => paginateMockItems(mockApprovals, pageIndex, pageSize)
@@ -39,6 +53,27 @@ export function ApprovalsPage() {
   const approvedCount = items.filter((item) => item.resolution === "approved" || item.resolution === "completed").length;
   const blockedCount = items.filter((item) => item.resolution === "blocked" || item.resolution === "failed").length;
   const statusDescription = error ? `审批数据加载失败：${error}` : loading ? "正在加载审批队列" : "治理控制台聚合所有待复核与已决策请求。";
+  const isDetailDialogOpen = Boolean(selectedDetail || detailError);
+
+  function handleCloseDetail(): void {
+    setSelectedDetail(null);
+    setDetailError(null);
+    setDetailLoadingId(null);
+  }
+
+  async function handleOpenDetail(approvalId: string): Promise<void> {
+    setDetailLoadingId(approvalId);
+    setDetailError(null);
+    try {
+      const detail = await getApprovalDetail(approvalId);
+      setSelectedDetail(detail);
+    } catch (loadError) {
+      setSelectedDetail(null);
+      setDetailError(loadError instanceof Error ? loadError.message : "详情加载失败");
+    } finally {
+      setDetailLoadingId(null);
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -100,7 +135,17 @@ export function ApprovalsPage() {
             revokedReason: formatRevokedReason(approval),
             summary: approval.promptExcerpt ?? "暂无审批摘要",
             status: renderStateBadge(approval.resolution ?? "pending"),
-            action: <a className="inline-link" href={`/approvals#${approval.approvalId}`}>查看详情</a>,
+            action: (
+              <button
+                aria-label={`查看 ${approval.approvalId} 审批详情`}
+                className="btn btn--compact"
+                disabled={detailLoadingId === approval.approvalId}
+                type="button"
+                onClick={() => void handleOpenDetail(approval.approvalId)}
+              >
+                {detailLoadingId === approval.approvalId ? "加载中" : "查看详情"}
+              </button>
+            ),
           }))}
         />
         <TablePagination {...paginationProps} />
@@ -124,6 +169,52 @@ export function ApprovalsPage() {
           ))}
         </div>
       </section>
+
+      <ModalDialog
+        closeLabel="关闭详情"
+        open={isDetailDialogOpen}
+        title="审批详情"
+        subtitle={
+          detailError
+            ? `详情加载失败：${detailError}`
+            : selectedDetail?.approvalId ?? "查看审批上下文、申请人与授权证据。"
+        }
+        onClose={handleCloseDetail}
+      >
+        <dl className="detail-panel__grid">
+          {[
+            { label: "审批 ID", value: selectedDetail?.approvalId ?? "暂无" },
+            { label: "Pending ID", value: selectedDetail?.pendingId ?? "暂无" },
+            { label: "申请人", value: selectedDetail?.requesterOuId ?? "暂无" },
+            { label: "审批人候选", value: formatList(selectedDetail?.approverOuIds) },
+            { label: "实际审批人", value: selectedDetail?.resolvedApproverOuId ?? "暂无" },
+            { label: "模块", value: selectedDetail?.module ?? "暂无" },
+            { label: "工具", value: selectedDetail?.toolName ?? "暂无" },
+            { label: "范围类型", value: selectedDetail?.scopeType ?? "暂无" },
+            { label: "渠道", value: selectedDetail?.channelProfile ?? selectedDetail?.transport ?? "暂无" },
+            { label: "会话", value: selectedDetail?.sessionKey ?? "暂无" },
+            { label: "Run ID", value: selectedDetail?.runId ?? "暂无" },
+            { label: "Conversation", value: selectedDetail?.conversationId ?? "暂无" },
+            { label: "请求指纹", value: selectedDetail?.requestFingerprintHash ?? "暂无" },
+            { label: "申请时间", value: selectedDetail ? formatTimestamp(selectedDetail.requestedAtMs) : "暂无" },
+            { label: "过期时间", value: selectedDetail ? formatTimestamp(selectedDetail.expiresAtMs) : "暂无" },
+            { label: "处理时间", value: selectedDetail?.resolvedAtMs ? formatTimestamp(selectedDetail.resolvedAtMs) : "暂无" },
+            {
+              label: "Audit Summary",
+              value: <pre className="code-panel">{formatJson(selectedDetail?.auditSummaryJson)}</pre>,
+            },
+            {
+              label: "Metadata",
+              value: <pre className="code-panel">{formatJson(selectedDetail?.metadataJson)}</pre>,
+            },
+          ].map((field) => (
+            <div key={field.label} className="detail-panel__field">
+              <dt>{field.label}</dt>
+              <dd>{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </ModalDialog>
     </div>
   );
 }

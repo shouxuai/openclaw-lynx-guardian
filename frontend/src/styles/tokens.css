@@ -21,10 +21,16 @@
   --risk-l2: #f5b800;
   --risk-l3: #f97316;
   --risk-l4: #f45f62;
-  --radius-xl: 22px;
-  --radius-lg: 18px;
-  --radius-md: 12px;
-  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-display: "Newsreader", "Noto Serif SC", "Source Han Serif SC", serif;
-  --font-mono: "Space Grotesk", "SFMono-Regular", Consolas, monospace;
+  --radius-xl: 8px;
+  --radius-lg: 6px;
+  --radius-md: 4px;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-display: 24px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }

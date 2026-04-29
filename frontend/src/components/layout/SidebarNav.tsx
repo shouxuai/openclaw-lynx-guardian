@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
-import { PRIMARY_NAV_ITEMS } from "../../app/nav-config";
+import { PRIMARY_NAV_GROUPS } from "../../app/nav-config";
 
 function NavIcon({ id }: { id: string }) {
   const commonProps = {
@@ -70,6 +71,16 @@ function NavIcon({ id }: { id: string }) {
           <path d="M9 3h6v4H9z" />
         </svg>
       );
+    case "sessions":
+      return (
+        <svg {...commonProps}>
+          <path d="M8 5.5a4 4 0 0 1 8 0" />
+          <path d="M5 21a7 7 0 0 1 14 0" />
+          <path d="M12 9.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />
+          <path d="M4 10h3" />
+          <path d="M17 10h3" />
+        </svg>
+      );
     case "tokens":
       return (
         <svg {...commonProps}>
@@ -83,30 +94,117 @@ function NavIcon({ id }: { id: string }) {
   }
 }
 
-export function SidebarNav() {
+function SidebarChevron() {
   return (
-    <aside className="sidebar">
+    <svg
+      aria-hidden="true"
+      className="sidebar__groupToggleIcon"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+interface SidebarNavProps {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+}
+
+function SidebarCollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar__collapseIcon"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+    >
+      <path d="M4 5h16" />
+      <path d="M4 12h16" />
+      <path d="M4 19h16" />
+      <path d={collapsed ? "m10 9 3 3-3 3" : "m14 9-3 3 3 3"} />
+    </svg>
+  );
+}
+
+export function SidebarNav({ collapsed, onToggleCollapsed }: SidebarNavProps) {
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(PRIMARY_NAV_GROUPS.map((group) => [group.id, true])),
+  );
+  const collapseLabel = collapsed ? "展开侧边栏" : "收起侧边栏";
+
+  return (
+    <aside className="sidebar" data-collapsed={collapsed ? "true" : "false"}>
       <div className="sidebar__brand">
-        <h1 className="sidebar__title">OpenClaw</h1>
-        <p className="sidebar__eyebrow">GUARDIAN CONSOLE</p>
+        <h1 className="sidebar__title">{collapsed ? "OC" : "OpenClaw"}</h1>
+        {!collapsed ? <p className="sidebar__eyebrow">GUARDIAN CONSOLE</p> : null}
       </div>
 
       <nav aria-label="主导航" className="sidebar__nav">
-        {PRIMARY_NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.id}
-            className={({ isActive }) =>
-              isActive ? "sidebar__link sidebar__link--active" : "sidebar__link"
-            }
-            end={item.path === "/"}
-            to={item.path}
-          >
-            <NavIcon id={item.id} />
-            <span className="sidebar__linkLabel">{item.label}</span>
-          </NavLink>
+        {PRIMARY_NAV_GROUPS.map((group) => (
+          <section className="sidebar__group" key={group.id}>
+            {!collapsed ? (
+              <button
+                aria-controls={`sidebar-group-${group.id}`}
+                aria-expanded={openGroups[group.id] ? "true" : "false"}
+                className="sidebar__groupToggle"
+                onClick={() => {
+                  setOpenGroups((current) => ({
+                    ...current,
+                    [group.id]: !current[group.id],
+                  }));
+                }}
+                type="button"
+              >
+                <span>{group.label}</span>
+                <SidebarChevron />
+              </button>
+            ) : null}
+            <div
+              className="sidebar__groupItems"
+              hidden={!collapsed && !openGroups[group.id]}
+              id={`sidebar-group-${group.id}`}
+            >
+              {group.items.map((item) => (
+                <NavLink
+                  aria-label={collapsed ? item.label : undefined}
+                  key={item.id}
+                  className={({ isActive }) =>
+                    isActive ? "sidebar__link sidebar__link--active" : "sidebar__link"
+                  }
+                  end={item.path === "/"}
+                  to={item.path}
+                >
+                  <NavIcon id={item.id} />
+                  <span className="sidebar__linkLabel">{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          </section>
         ))}
       </nav>
 
+      <div className="sidebar__footer">
+        <button
+          aria-label={collapseLabel}
+          className="sidebar__collapseItem"
+          onClick={onToggleCollapsed}
+          title={collapsed ? collapseLabel : undefined}
+          type="button"
+        >
+          <SidebarCollapseIcon collapsed={collapsed} />
+          <span className="sidebar__linkLabel">{collapseLabel}</span>
+        </button>
+      </div>
     </aside>
   );
 }

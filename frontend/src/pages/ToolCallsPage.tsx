@@ -1,8 +1,9 @@
-import { useMemo } from "react";
-import type { ToolCallListItemDto } from "@lynx/local-console-shared";
+import { useMemo, useState } from "react";
+import type { ToolCallDetailDto, ToolCallListItemDto } from "@lynx/local-console-shared";
 
-import { listToolCalls, type ToolCallListQuery } from "../api/tool-calls";
+import { getToolCallDetail, listToolCalls, type ToolCallListQuery } from "../api/tool-calls";
 import { mockToolCalls } from "../data/mock-console";
+import { ModalDialog } from "../components/feedback/ModalDialog";
 import { DataTable } from "../components/tables/DataTable";
 import { TablePagination } from "../components/tables/TablePagination";
 import { paginateMockItems, useCursorListResource } from "../hooks/useCursorListResource";
@@ -37,7 +38,18 @@ function formatToolSignals(call: ToolCallListItemDto): string {
   ].filter(Boolean).join("；") || "暂无";
 }
 
+function formatDetailJson(value: Record<string, unknown> | undefined): string {
+  return value ? JSON.stringify(value, null, 2) : "暂无";
+}
+
+function formatList(values: string[] | undefined): string {
+  return values && values.length > 0 ? values.join("；") : "暂无";
+}
+
 export function ToolCallsPage() {
+  const [selectedDetail, setSelectedDetail] = useState<ToolCallDetailDto | null>(null);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const { items, loading, error, paginationProps } = useCursorListResource<ToolCallListItemDto, ToolCallListQuery>({
     fallbackPage: import.meta.env.DEV
       ? (_query, pageIndex, pageSize) => paginateMockItems(mockToolCalls, pageIndex, pageSize)
@@ -61,6 +73,27 @@ export function ToolCallsPage() {
       .slice(0, 3);
   }, [items]);
   const statusText = error ? `工具调用数据加载失败：${error}` : loading ? "正在加载调用流水" : "详细审计记录基于 tool_calls 协议层追踪";
+  const isDetailDialogOpen = Boolean(selectedDetail || detailError);
+
+  function handleCloseDetail(): void {
+    setSelectedDetail(null);
+    setDetailError(null);
+    setDetailLoadingId(null);
+  }
+
+  async function handleOpenDetail(toolCallId: string): Promise<void> {
+    setDetailLoadingId(toolCallId);
+    setDetailError(null);
+    try {
+      const detail = await getToolCallDetail(toolCallId);
+      setSelectedDetail(detail);
+    } catch (loadError) {
+      setSelectedDetail(null);
+      setDetailError(loadError instanceof Error ? loadError.message : "详情加载失败");
+    } finally {
+      setDetailLoadingId(null);
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -122,7 +155,17 @@ export function ToolCallsPage() {
             decision: formatToolDecision(call),
             signals: formatToolSignals(call),
             summary: call.resultExcerpt ?? "暂无结果摘要",
-            detail: <a className="inline-link" href={`/tool-calls#${call.toolCallId}`}>查看 JSON</a>,
+            detail: (
+              <button
+                aria-label={`查看 ${call.toolCallId} JSON 详情`}
+                className="btn btn--compact"
+                disabled={detailLoadingId === call.toolCallId}
+                type="button"
+                onClick={() => void handleOpenDetail(call.toolCallId)}
+              >
+                {detailLoadingId === call.toolCallId ? "加载中" : "查看 JSON"}
+              </button>
+            ),
           }))}
         />
         <TablePagination {...paginationProps} />
@@ -168,6 +211,45 @@ export function ToolCallsPage() {
           <button className="btn" type="button">执行全量审计</button>
         </article>
       </section>
+
+      <ModalDialog
+        closeLabel="关闭详情"
+        open={isDetailDialogOpen}
+        title="工具调用详情"
+        subtitle={
+          detailError
+            ? `详情加载失败：${detailError}`
+            : selectedDetail?.toolCallId ?? "查看工具调用参数、结果和控制面元数据。"
+        }
+        onClose={handleCloseDetail}
+      >
+        <dl className="detail-panel__grid">
+          {[
+            { label: "工具", value: selectedDetail ? formatToolLabel(selectedDetail.toolName) : "暂无" },
+            { label: "状态", value: selectedDetail?.resultStatus ?? "暂无" },
+            { label: "会话", value: selectedDetail?.sessionKey ?? "暂无" },
+            { label: "Run ID", value: selectedDetail?.runId ?? "暂无" },
+            { label: "审批 ID", value: selectedDetail?.approvalId ?? "暂无" },
+            { label: "开始时间", value: selectedDetail ? formatTimestamp(selectedDetail.startedAtMs) : "暂无" },
+            { label: "结束时间", value: selectedDetail?.finishedAtMs ? formatTimestamp(selectedDetail.finishedAtMs) : "暂无" },
+            { label: "耗时", value: formatDuration(selectedDetail?.durationMs) },
+            { label: "参数摘要", value: selectedDetail?.paramSummary ?? "暂无" },
+            { label: "参数哈希", value: selectedDetail?.paramHash ?? "暂无" },
+            { label: "触发模块", value: formatList(selectedDetail?.triggeredModules) },
+            { label: "错误信息", value: selectedDetail?.errorText ?? "暂无" },
+            { label: "结果摘要", value: selectedDetail?.resultExcerpt ?? "暂无" },
+            {
+              label: "Metadata",
+              value: <pre className="code-panel">{formatDetailJson(selectedDetail?.metadataJson)}</pre>,
+            },
+          ].map((field) => (
+            <div key={field.label} className="detail-panel__field">
+              <dt>{field.label}</dt>
+              <dd>{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </ModalDialog>
     </div>
   );
 }
