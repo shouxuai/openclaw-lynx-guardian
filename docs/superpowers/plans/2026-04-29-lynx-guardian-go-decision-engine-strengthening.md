@@ -274,7 +274,7 @@ git commit -m "test: capture legacy evasive intent decision cases"
 - Create: `backend/internal/decision/text_normalizer_test.go`
 - Create: `backend/internal/decision/risk_signals.go`
 
-- [ ] **Step 1: Write normalizer tests**
+- [x] **Step 1: Write normalizer tests**
 
 Create `backend/internal/decision/text_normalizer_test.go`:
 
@@ -306,7 +306,7 @@ func assertContains(t *testing.T, value string, want string) {
 }
 ```
 
-- [ ] **Step 2: Run normalizer tests and confirm failure**
+- [x] **Step 2: Run normalizer tests and confirm failure**
 
 Run:
 
@@ -318,7 +318,7 @@ Pop-Location
 
 Expected: FAIL because `normalizeDecisionText` does not exist.
 
-- [ ] **Step 3: Implement the normalizer**
+- [x] **Step 3: Implement the normalizer**
 
 Create `backend/internal/decision/text_normalizer.go`:
 
@@ -371,7 +371,7 @@ func normalizeDecisionText(text string) string {
 }
 ```
 
-- [ ] **Step 4: Add risk signal types**
+- [x] **Step 4: Add risk signal types**
 
 Create `backend/internal/decision/risk_signals.go`:
 
@@ -413,7 +413,7 @@ func uniqueStrings(values []string) []string {
 }
 ```
 
-- [ ] **Step 5: Verify Task 2**
+- [x] **Step 5: Verify Task 2**
 
 Run:
 
@@ -425,7 +425,7 @@ Pop-Location
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```powershell
 git add backend/internal/decision/text_normalizer.go backend/internal/decision/text_normalizer_test.go backend/internal/decision/risk_signals.go

@@ -6,10 +6,6 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 )
 
-func normalizeDecisionText(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
-}
-
 func requestText(req api.DecisionRequest) string {
 	return normalizeDecisionText(req.Content + " " + req.ToolName + " " + req.TargetURI)
 }
