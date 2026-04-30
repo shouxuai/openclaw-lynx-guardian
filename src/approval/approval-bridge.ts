@@ -897,6 +897,8 @@ export function toApprovalRiskLevel(value?: string): ApprovalRiskLevel | undefin
   return value === "L2" || value === "L3" ? value : undefined;
 }
 
+const NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH = 256;
+
 export function buildToolApprovalRequest(params: {
   toolName: string;
   module: string;
@@ -905,12 +907,21 @@ export function buildToolApprovalRequest(params: {
   timeoutMs: number;
   onResolution: (decision: ToolApprovalResolution) => Promise<void> | void;
 }): ToolApprovalRequest {
-  const description = compactApprovalText([
-    `[module] ${params.module}`,
-    `[risk] ${params.riskLevel}`,
-    params.description,
-    "Approval resumes the current tool call.",
-  ].join(" | "), 256);
+  const separator = " | ";
+  const riskSegment = `[risk] ${params.riskLevel}`;
+  const suffixSegment = "Approval resumes the current tool call.";
+  const moduleBudget = NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH
+    - (separator.length * 2)
+    - riskSegment.length
+    - suffixSegment.length;
+  const moduleSegment = compactApprovalText(`[module] ${params.module}`, moduleBudget);
+  const requiredDescription = [moduleSegment, riskSegment, suffixSegment].join(separator);
+  const remainingDescriptionBudget =
+    NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH - requiredDescription.length - separator.length;
+  const detailSegment = compactApprovalText(params.description, remainingDescriptionBudget);
+  const description = detailSegment
+    ? [moduleSegment, riskSegment, detailSegment, suffixSegment].join(separator)
+    : requiredDescription;
 
   return {
     title:

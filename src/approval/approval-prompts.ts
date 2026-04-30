@@ -2,11 +2,29 @@ import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
 import { normalizeString } from "../runtime/plugin-runtime-helpers.js";
 
 export function compactApprovalText(value: string, maxLength: number): string {
+  if (maxLength <= 0) {
+    return "";
+  }
+
   const normalized = normalizeString(value).replace(/\s+/g, " ");
   if (normalized.length <= maxLength) {
     return normalized;
   }
-  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+
+  if (maxLength === 1) {
+    return "…";
+  }
+
+  const contentBudget = maxLength - 1;
+  let result = "";
+  for (const char of normalized) {
+    if (result.length + char.length > contentBudget) {
+      break;
+    }
+    result += char;
+  }
+
+  return `${result.trimEnd()}…`;
 }
 
 export function resolveToolApprovalProtectedTargetSummary(

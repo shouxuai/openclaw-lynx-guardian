@@ -6,7 +6,7 @@ import {
 } from "../src/approval/approval-bridge.js";
 
 describe("tool approval runtime", () => {
-  it("appends a separated local log webview note to L3 approval descriptions", () => {
+  it("keeps native approval descriptions focused on schema-safe decision context", () => {
     const approval = buildToolApprovalRequest({
       toolName: "exec",
       module: "M3:over_agency",
@@ -16,11 +16,14 @@ describe("tool approval runtime", () => {
       onResolution: vi.fn(),
     });
 
-    expect(approval.description).toContain("\n---\n");
-    expect(approval.description).toContain("[^lynx-log]");
-    expect(approval.description).toContain("http://127.0.0.1:18789/webview");
-    expect(approval.description).toContain("本地日志页面");
-    expect(approval.description).toContain("审批");
+    expect(approval.description.length).toBeLessThanOrEqual(256);
+    expect(approval.description).toContain("[module] M3:over_agency");
+    expect(approval.description).toContain("[risk] L3");
+    expect(approval.description).toContain("high-risk tool call");
+    expect(approval.description).not.toContain("\n---\n");
+    expect(approval.description).not.toContain("[^lynx-log]");
+    expect(approval.description).not.toContain("http://127.0.0.1:18789/webview");
+    expect(approval.description).not.toMatch(/webview|local[- ]console|本地日志页面|控制台/i);
   });
 
   it("syncs allow-current-chain grants to the Go control plane", async () => {
