@@ -954,7 +954,7 @@ function checkFatalTriangle(
   let outputToExternal = false;
 
   const command = (params?.command ?? "") as string;
-  const filePath = (params?.file_path ?? params?.path ?? "") as string;
+  const filePath = (params?.file_path ?? params?.path ?? params?.file ?? "") as string;
   const combined = `${toolName} ${command} ${filePath}`;
 
   if (/\.env|credentials|secret|\.ssh|\.aws|\.gnupg|password|token|api[_-]?key|\/etc\/passwd|\/etc\/shadow|\/etc\/sudoers/i.test(combined)) {
@@ -1671,7 +1671,7 @@ export function guardToolCall(
   const note = (params?.note ?? "") as string;
   const raw = (params?.raw ?? "") as string;
   const command = (params?.command ?? "") as string;
-  const filePath = (params?.file_path ?? params?.path ?? "") as string;
+  const filePath = (params?.file_path ?? params?.path ?? params?.file ?? "") as string;
   const normalizedToolName = toolName.trim().toLowerCase();
   const normalizedToolAction = toolAction.trim().toLowerCase();
   const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;

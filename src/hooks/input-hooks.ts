@@ -323,6 +323,61 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
     const channelProfile = resolveChannelProfile(
       ctx?.messageProvider ?? ctx?.channelId ?? ctx?.channel ?? event?.channel,
     );
+    if (selfSafetyGuardConfig.inputGuard !== false && text) {
+      const guardContext = buildGuardContext(config, event, {
+        ...ctx,
+        senderId: normalizeString(ctx?.senderId) || normalizeString(event?.senderId),
+        channelId: normalizeString(ctx?.channelId ?? ctx?.channel ?? event?.channel) || undefined,
+        messageProvider: normalizeString(ctx?.messageProvider ?? ctx?.source) || channelProfile,
+      });
+      const decision = liveGuardInput(text, ctx.sessionKey ?? event.sessionKey, guardContext);
+      const {
+        guardActionRequired,
+        policyEvaluation,
+        policyResolution,
+        effectiveAssessment,
+        blockReason,
+      } = resolveGuardPolicyState(decision);
+      log.info(`[lynx-guardian] before_dispatch guardInput decision: ${JSON.stringify(decision)}`);
+      logGuardPolicyTrace(log, "before_dispatch", decision, policyResolution);
+      if (guardActionRequired && effectiveAssessment.level === "L4") {
+        const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
+        localConsoleHooks?.beforeDispatch({
+          occurredAtMs: Date.now(),
+          sessionKey: normalizeString(ctx.sessionKey ?? event.sessionKey) || undefined,
+          summary: blockReason,
+          primaryModule: effectiveAssessment.modules[0],
+          modules: effectiveAssessment.modules,
+          riskLevel: effectiveAssessment.level,
+          riskScore: effectiveAssessment.score,
+          policyDecision: policyResolution.finalDecision.kind,
+          enforcementAction: "block",
+          payloadJson: {
+            inputGuard: true,
+            legacyRiskLevel: policyEvaluation.legacyRiskLevel,
+          },
+        });
+        log.warn(`[lynx-guardian] Self-safety-guard handled dispatch before model: ${effectiveAssessment.description}`);
+        await pushRecordBestEffort(
+          {
+            id: userId,
+            content: buildPolicyRecordContent(
+              policyEvaluation,
+              `[SSG:before_dispatch] ${effectiveAssessment.modules.join(",")}`,
+            ),
+            riskLevel: policyEvaluation.legacyRiskLevel,
+          },
+          {
+            log,
+            context: "before_dispatch input guard block",
+          },
+        );
+        return {
+          handled: true,
+          text: userFacingBlockReason,
+        };
+      }
+    }
     if (channelProfile !== "feishu") {
       return { handled: false };
     }

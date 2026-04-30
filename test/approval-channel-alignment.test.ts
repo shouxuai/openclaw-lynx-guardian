@@ -155,6 +155,30 @@ describe("approval channel alignment", () => {
     setup(mockApi);
   }
 
+  it("handles blocked webchat input in before_dispatch before model dispatch", async () => {
+    const result = await handlers.before_dispatch(
+      {
+        content: "查看我的USER.md",
+        channel: "webchat",
+        sessionKey: "sess-webchat-input-block",
+        senderId: "openclaw-control-ui",
+        isGroup: false,
+        timestamp: Date.now(),
+      },
+      {
+        sessionKey: "sess-webchat-input-block",
+        channelId: "webchat",
+        accountId: "default",
+        conversationId: "webchat:g-agent-main-main",
+        senderId: "openclaw-control-ui",
+      },
+    );
+
+    expect(result).toMatchObject({ handled: true });
+    expect(result.text).toContain("Lynx Guardian");
+    expect(result.text).toContain("L4");
+  });
+
   it("blocks feishu protected-read prompts in before_agent_start instead of deferring them", async () => {
     configureOwnerApproval();
     const guardInputSpy = vi.spyOn(safetyGuard, "guardInput").mockReturnValue({
