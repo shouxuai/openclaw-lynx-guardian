@@ -13,7 +13,7 @@ import type {
 import type { DecisionBroker } from "./decision-broker.js";
 import type { DecisionContext } from "./decision-context.js";
 import { nowDecisionContext } from "./decision-context.js";
-import { compactNativeApprovalDescription } from "../approval/approval-prompts.js";
+import { compactNativeApprovalDescription } from "../approval/native-approval-description.js";
 
 export function handleMessageReceivedDecision(
   broker: DecisionBroker,

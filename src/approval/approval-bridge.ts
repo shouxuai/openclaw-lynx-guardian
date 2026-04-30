@@ -9,7 +9,7 @@ import {
   compactApprovalText,
   compactNativeApprovalDescription,
   NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH,
-} from "./approval-prompts.js";
+} from "./native-approval-description.js";
 import type { ApprovalTransportProfile, ChannelProfile } from "./requester-provenance-store.js";
 
 export {

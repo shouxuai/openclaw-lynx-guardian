@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildToolApprovalRequest } from "../src/approval/approval-bridge.js";
-import { compactApprovalText } from "../src/approval/approval-prompts.js";
+import { compactApprovalText } from "../src/approval/native-approval-description.js";
 
 describe("buildToolApprovalRequest description length", () => {
   it("caps approval descriptions while preserving risk identifiers", () => {
