@@ -1,7 +1,10 @@
-import { checkPublicAccess } from "../api.js";
 import { runDiscoveryAndNotify } from "./discovery-hook-utils.js";
 import { renderDetailedLynxAuditReport } from "./lynx-check-report-template.js";
 import { runMaliciousScriptScan, runSecurityAudit } from "../runtime/security-audit-runner.js";
+import {
+  checkPublicAccessWeighted,
+  isRemoteAvailable,
+} from "../runtime/remote-weighting-service.js";
 import { verifyAllInstalledSkills } from "../skills/skill-guard.js";
 
 type Rating = "高危" | "中高危" | "中危" | "低危";
@@ -220,10 +223,11 @@ export async function buildManualLynxCheckReport(options: {
 
   let nextPublicAccessResult = publicAccessResult;
   if (!nextPublicAccessResult && ipInfo?.type === "next_check") {
-    try {
-      nextPublicAccessResult = await checkPublicAccess(userId, ipInfo.ip, ipInfo.port);
-    } catch (err: any) {
-      log.error(`[lynx-guardian] Manual public access check failed: ${err.message}`);
+    const publicAccessCheck = await checkPublicAccessWeighted(userId, ipInfo.ip, ipInfo.port);
+    if (isRemoteAvailable(publicAccessCheck)) {
+      nextPublicAccessResult = publicAccessCheck.value;
+    } else {
+      log.warn(`[lynx-guardian] Manual public access weighting unavailable: ${publicAccessCheck.errorMessage}`);
     }
   }
 
