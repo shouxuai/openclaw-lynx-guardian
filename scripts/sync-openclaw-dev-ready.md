@@ -50,3 +50,13 @@ When both checks are satisfied, it prints a line like:
 ```
 
 All normal sync arguments such as `--container`, `--openclaw-home`, `--repo-root`, `--logs`, and `--dry-run` are forwarded to the existing sync script.
+
+## Risk Boundary Matrix
+
+After input/output/tool boundary changes, run the runtime matrix against the real Docker gateway:
+
+```powershell
+.\scripts\verify-risk-boundary-matrix.ps1 -TimeoutSeconds 90
+```
+
+The matrix checks CLI/direct-agent, OpenAI-compatible HTTP when an API token is available, Docker cron-store presence, and recent gateway log evidence. It treats direct-agent L4 as a warning when the runtime only exposes prompt-level `before_agent_start` fallback, instead of reporting that path as a proven physical hard stop.
