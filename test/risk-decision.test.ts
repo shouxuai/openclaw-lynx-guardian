@@ -34,11 +34,22 @@ describe("unified risk decision layer", () => {
       source: "remote",
       surface: "input",
       level: "L3",
-      score: 3,
+      score: 8,
       categories: ["其他", "None", "None"],
       modules: ["remote:content_check"],
       description: "远端内容检测命中",
     });
+  });
+
+  it("rounds remote risk levels before mapping to L-levels", () => {
+    const remote = remoteContentSignal({
+      surface: "input",
+      riskLevel: 2.9,
+      description: "远端内容检测命中",
+    });
+
+    expect(remote.level).toBe("L3");
+    expect(remote.score).toBe(8);
   });
 
   it("copies local RiskAssessment into a local unified signal", () => {
@@ -96,6 +107,26 @@ describe("unified risk decision layer", () => {
       level: "L3",
       action: "require_approval",
       primaryModule: "M2:protected_file_access",
+    });
+  });
+
+  it("ignores tool signals when deciding input risk action", () => {
+    const decision = decideRiskAction("input", [
+      signal({
+        surface: "tool",
+        level: "L3",
+        score: 7,
+        modules: ["M2:protected_file_access"],
+        description: "工具调用需要审批",
+      }),
+    ]);
+
+    expect(decision).toMatchObject({
+      surface: "input",
+      level: "L0",
+      action: "allow",
+      signals: [],
+      reason: "no risk signals",
     });
   });
 

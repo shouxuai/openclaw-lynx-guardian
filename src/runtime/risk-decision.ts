@@ -61,7 +61,7 @@ export function remoteContentSignal(input: RemoteContentSignalInput): UnifiedRis
     source: "remote",
     surface: input.surface,
     level: RISK_LEVELS[levelValue],
-    score: levelValue,
+    score: normalizeRemoteScore(levelValue),
     modules: [input.surface === "tool" ? "remote:tool_check" : "remote:content_check"],
     categories: input.categories === undefined ? undefined : [...input.categories],
     description: input.description,
@@ -72,14 +72,15 @@ export function decideRiskAction(
   surface: RiskSurface,
   signals: UnifiedRiskSignal[],
 ): RiskDecision {
-  const primarySignal = selectPrimarySignal(signals);
+  const surfaceSignals = signals.filter((signal) => signal.surface === surface);
+  const primarySignal = selectPrimarySignal(surfaceSignals);
 
   if (primarySignal === undefined) {
     return {
       surface,
       level: "L0",
       action: "allow",
-      signals,
+      signals: surfaceSignals,
       reason: "no risk signals",
     };
   }
@@ -88,7 +89,7 @@ export function decideRiskAction(
     surface,
     level: primarySignal.level,
     action: actionForLevel(surface, primarySignal.level),
-    signals,
+    signals: surfaceSignals,
     primaryModule: primarySignal.modules[0],
     reason: primarySignal.description,
   };
@@ -96,10 +97,11 @@ export function decideRiskAction(
 
 function normalizeRemoteRiskLevel(riskLevel: number): 0 | 1 | 2 | 3 | 4 {
   if (!Number.isFinite(riskLevel)) return 0;
-  const level = Math.trunc(riskLevel);
-  if (level <= 0) return 0;
-  if (level >= 4) return 4;
-  return level as 1 | 2 | 3;
+  return Math.max(0, Math.min(4, Math.round(riskLevel))) as 0 | 1 | 2 | 3 | 4;
+}
+
+function normalizeRemoteScore(levelValue: 0 | 1 | 2 | 3 | 4): number {
+  return Math.max(0, Math.min(10, Math.round(levelValue * 2.5)));
 }
 
 function selectPrimarySignal(signals: UnifiedRiskSignal[]): UnifiedRiskSignal | undefined {
