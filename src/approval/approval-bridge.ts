@@ -5,7 +5,11 @@ import {
   getOpenClawRuntimeVersion,
   isVersionAtLeast,
 } from "../runtime/hook-capabilities.js";
-import { compactApprovalText } from "./approval-prompts.js";
+import {
+  compactApprovalText,
+  compactNativeApprovalDescription,
+  NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH,
+} from "./approval-prompts.js";
 import type { ApprovalTransportProfile, ChannelProfile } from "./requester-provenance-store.js";
 
 export {
@@ -897,8 +901,6 @@ export function toApprovalRiskLevel(value?: string): ApprovalRiskLevel | undefin
   return value === "L2" || value === "L3" ? value : undefined;
 }
 
-const NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH = 256;
-
 export function buildToolApprovalRequest(params: {
   toolName: string;
   module: string;
@@ -918,7 +920,7 @@ export function buildToolApprovalRequest(params: {
   const requiredDescription = [moduleSegment, riskSegment, suffixSegment].join(separator);
   const remainingDescriptionBudget =
     NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH - requiredDescription.length - separator.length;
-  const detailSegment = compactApprovalText(params.description, remainingDescriptionBudget);
+  const detailSegment = compactNativeApprovalDescription(params.description, remainingDescriptionBudget);
   const description = detailSegment
     ? [moduleSegment, riskSegment, detailSegment, suffixSegment].join(separator)
     : requiredDescription;

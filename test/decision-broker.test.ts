@@ -4,6 +4,7 @@ import { DecisionBroker } from "../src/runtime/decision-broker.js";
 import type { DecisionClientLike } from "../src/runtime/decision-broker.js";
 import type { DecisionContext } from "../src/runtime/decision-context.js";
 import {
+  handleBeforeInstallEventDecision,
   handleBeforeToolCallDecision,
   handleBeforeMessageWriteDecision,
   handleToolResultPersistDecision,
@@ -166,6 +167,80 @@ describe("DecisionBroker", () => {
     expect(result?.requireApproval?.title).toBe("Sensitive tool approval");
     expect(result?.requireApproval?.description).toContain("Approve shell access");
     expect(result?.requireApproval?.severity).toBe("warning");
+  });
+
+  it("keeps broker tool approval descriptions native-schema safe", async () => {
+    const goClient = client({
+      decideTool: vi.fn(async () => response({
+        stage: "tool_call",
+        action: "require_approval",
+        riskLevel: "L3",
+        requiresApproval: true,
+        approvalRequest: {
+          riskFamily: "tool_execution",
+          title: "Sensitive tool approval",
+          summary: [
+            "Approve shell access for this chain. ".repeat(20),
+            "---",
+            "[^lynx-log]: 本地日志页面 Webview：<http://127.0.0.1:18789/webview>。控制台审批详情。",
+          ].join("\n"),
+          scope: { toolName: "shell" },
+        },
+        audit: {
+          eventSeverity: "warn",
+          policyDecision: "require_approval",
+          enforcementAction: "require_approval",
+          color: "orange",
+        },
+      })),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeToolCallDecision(broker, {
+      toolName: "shell",
+      params: { command: "ls" },
+    }, { sessionKey: "session-1" });
+
+    expect(result?.requireApproval?.description.length).toBeLessThanOrEqual(256);
+    expect(result?.requireApproval?.description).toContain("Approve shell access");
+    expect(result?.requireApproval?.description).not.toMatch(/webview|local[- ]console|控制台|\[\^lynx-log\]/i);
+  });
+
+  it("keeps install approval event descriptions native-schema safe", async () => {
+    const goClient = client({
+      decideInstall: vi.fn(async () => response({
+        stage: "install",
+        action: "require_approval",
+        riskLevel: "L3",
+        requiresApproval: true,
+        approvalRequest: {
+          riskFamily: "skill_install",
+          title: "Install approval",
+          summary: [
+            "Approve installing this skill after checking source and owner. ".repeat(20),
+            "---",
+            "[^lynx-log]: 本地日志页面 Webview：<http://127.0.0.1:18789/webview>。控制台审批详情。",
+          ].join("\n"),
+          scope: { toolName: "skill_install" },
+        },
+        audit: {
+          eventSeverity: "warn",
+          policyDecision: "require_approval",
+          enforcementAction: "require_approval",
+          color: "orange",
+        },
+      })),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeInstallEventDecision(broker, {
+      name: "demo-skill",
+      source: "https://example.invalid/demo-skill",
+    }, { sessionKey: "session-1" });
+
+    expect(result?.requireApproval?.description.length).toBeLessThanOrEqual(256);
+    expect(result?.requireApproval?.description).toContain("Approve installing");
+    expect(result?.requireApproval?.description).not.toMatch(/webview|local[- ]console|控制台|\[\^lynx-log\]/i);
   });
 
   it("blocks L4 tool decisions even if Go response asks for approval", async () => {

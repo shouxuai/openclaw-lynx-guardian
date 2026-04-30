@@ -13,6 +13,7 @@ import type {
 import type { DecisionBroker } from "./decision-broker.js";
 import type { DecisionContext } from "./decision-context.js";
 import { nowDecisionContext } from "./decision-context.js";
+import { compactNativeApprovalDescription } from "../approval/approval-prompts.js";
 
 export function handleMessageReceivedDecision(
   broker: DecisionBroker,
@@ -104,7 +105,7 @@ function decisionToBeforeToolCallResult(
     return {
       requireApproval: {
         title: decision.approvalRequest?.title ?? approvalFallbackTitle,
-        description: decision.approvalRequest?.summary ?? decision.userMessage ?? "This tool call requires approval.",
+        description: buildNativeApprovalDescription(decision, "This tool call requires approval."),
         severity: decision.audit.eventSeverity === "critical" || decision.riskLevel === "L4" ? "critical" : "warning",
         timeoutBehavior: "deny",
       },
@@ -243,13 +244,22 @@ export async function handleBeforeInstallEventDecision(
     return {
       requireApproval: {
         title: decision.approvalRequest?.title ?? "Lynx Guardian install approval required",
-        description: decision.approvalRequest?.summary ?? decision.userMessage ?? "This install requires approval.",
+        description: buildNativeApprovalDescription(decision, "This install requires approval."),
         severity: decision.audit.eventSeverity === "critical" || decision.riskLevel === "L4" ? "critical" : "warning",
         timeoutBehavior: "deny",
       },
     };
   }
   return undefined;
+}
+
+function buildNativeApprovalDescription(
+  decision: { approvalRequest?: { summary?: string }; userMessage?: string },
+  fallback: string,
+): string {
+  return compactNativeApprovalDescription(
+    decision.approvalRequest?.summary ?? decision.userMessage ?? fallback,
+  ) || fallback;
 }
 
 function inputContext(hook: string, content: string, ctx: EventContext): DecisionContext {
