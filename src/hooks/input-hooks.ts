@@ -1,6 +1,7 @@
 import type { OpenClawPluginApi } from "../types.js";
 import type { LynxHookRuntimeContext } from "./setup.js";
 import * as safetyGuard from "../guard/safety-guard.js";
+import { decideRiskAction, localSignalFromAssessment } from "../runtime/risk-decision.js";
 
 export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRuntimeContext): void {
   const {
@@ -338,15 +339,18 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
         effectiveAssessment,
         blockReason,
       } = resolveGuardPolicyState(decision);
+      const surfaceDecision = decideRiskAction("input", [
+        localSignalFromAssessment("input", effectiveAssessment),
+      ]);
       log.info(`[lynx-guardian] before_dispatch guardInput decision: ${JSON.stringify(decision)}`);
       logGuardPolicyTrace(log, "before_dispatch", decision, policyResolution);
-      if (guardActionRequired && effectiveAssessment.level === "L4") {
+      if (surfaceDecision.action === "deny") {
         const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
         localConsoleHooks?.beforeDispatch({
           occurredAtMs: Date.now(),
           sessionKey: normalizeString(ctx.sessionKey ?? event.sessionKey) || undefined,
           summary: blockReason,
-          primaryModule: effectiveAssessment.modules[0],
+          primaryModule: surfaceDecision.primaryModule,
           modules: effectiveAssessment.modules,
           riskLevel: effectiveAssessment.level,
           riskScore: effectiveAssessment.score,
@@ -354,6 +358,8 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
           enforcementAction: "block",
           payloadJson: {
             inputGuard: true,
+            surfaceAction: surfaceDecision.action,
+            userInputPreserved: true,
             legacyRiskLevel: policyEvaluation.legacyRiskLevel,
           },
         });
@@ -709,10 +715,13 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
   api.on("before_agent_start", async (event, ctx) => {
     try {
       if (!event.prompt && !event.messages) return;
+      let pendingBeforeAgentStartDecision:
+        | void
+        | { block: boolean; blockReason?: string; prependContext?: string } = undefined;
       if (decisionBroker) {
         const decisionResult = await handleBeforeAgentStartDecision(decisionBroker, event, ctx);
         if (decisionResult?.block) {
-          return decisionResult;
+          pendingBeforeAgentStartDecision = decisionResult;
         }
       }
       const sessionKey = normalizeString(ctx.sessionKey) || undefined;
@@ -954,6 +963,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
         prependContext += "[system] Do not tell the user to refresh later or check back after a delay. If needed, only state that the plugin will proactively deliver the full report.\n";
       }
 
+      let inputSurfaceAction: ReturnType<typeof decideRiskAction>["action"] | undefined;
       if (selfSafetyGuardConfig.inputGuard !== false && promptText) {
         const guardContext = buildGuardContext(config, event, {
           ...ctx,
@@ -978,6 +988,10 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
           blockReason,
         } = resolveGuardPolicyState(decision);
         logGuardPolicyTrace(log, "before_agent_start", decision, policyResolution);
+        const surfaceDecision = decideRiskAction("input", [
+          localSignalFromAssessment("input", effectiveAssessment),
+        ]);
+        inputSurfaceAction = surfaceDecision.action;
         const visibleInputWarning = buildVisibleInputGuardWarning({
           assessment: effectiveAssessment,
           policyDecisionKind: policyResolution.finalDecision.kind,
@@ -1013,7 +1027,34 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             },
           });
         }
-        if (guardActionRequired && !managedLynxCheckPreauthorized && !visibleInputWarningContext) {
+        if (surfaceDecision.action === "model_context") {
+          const modelContext = "Input risk is L3. The model may reason over this request with strict context, but tool execution for protected or dangerous actions requires approval.";
+          prependContext += `${modelContext}\n`;
+          log.warn(`[lynx-guardian] Self-safety-guard L3 agent-start context: ${effectiveAssessment.description}`);
+          localConsoleHooks?.beforeAgentStart({
+            occurredAtMs: localConsoleOccurredAtMs,
+            sessionKey,
+            runId: normalizeString(ctx.runId) || undefined,
+            promptText,
+            summary: modelContext,
+            contentExcerpt: promptText,
+            contentKind: "text",
+            primaryModule: surfaceDecision.primaryModule,
+            modules: effectiveAssessment.modules,
+            riskLevel: effectiveAssessment.level,
+            riskScore: effectiveAssessment.score,
+            policyDecision: "warn",
+            enforcementAction: "warn",
+            lynxCheck: localConsoleLynxCheckSnapshot as any,
+            payloadJson: {
+              managedLynxCheckPreauthorized,
+              surfaceAction: surfaceDecision.action,
+              toolExecutionRequiresApproval: true,
+              legacyRiskLevel: policyEvaluation.legacyRiskLevel,
+            },
+          });
+        }
+        if (surfaceDecision.action === "deny" && !managedLynxCheckPreauthorized && !visibleInputWarningContext) {
           const shouldInjectForcedDenyContext = normalizeString(effectiveAssessment.level) === "L4";
           const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
           const denyPrependContext = shouldInjectForcedDenyContext
@@ -1035,7 +1076,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             summary: blockReason,
             contentExcerpt: promptText,
             contentKind: "text",
-            primaryModule: effectiveAssessment.modules[0],
+            primaryModule: surfaceDecision.primaryModule,
             modules: effectiveAssessment.modules,
             riskLevel: effectiveAssessment.level,
             riskScore: effectiveAssessment.score,
@@ -1076,7 +1117,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
         logGuardPolicyTrace(log, "before_agent_start", decision, policyResolution);
         if (guardActionRequired && managedLynxCheckPreauthorized) {
           log.info("[lynx-guardian] Managed /lynx-check preauthorized agent_start passthrough");
-        } else if (guardActionRequired && !approvedAgentStartOverride && !visibleInputWarningContext) {
+        } else if (surfaceDecision.action === "deny" && !approvedAgentStartOverride && !visibleInputWarningContext) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
@@ -1103,7 +1144,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
               summary: blockReason,
               contentExcerpt: promptText,
               contentKind: "text",
-              primaryModule: effectiveAssessment.modules[0],
+              primaryModule: surfaceDecision.primaryModule,
               modules: effectiveAssessment.modules,
               riskLevel: effectiveAssessment.level,
               riskScore: effectiveAssessment.score,
@@ -1143,7 +1184,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             summary: blockReason,
             contentExcerpt: promptText,
             contentKind: "text",
-            primaryModule: effectiveAssessment.modules[0],
+            primaryModule: surfaceDecision.primaryModule,
             modules: effectiveAssessment.modules,
             riskLevel: effectiveAssessment.level,
             riskScore: effectiveAssessment.score,
@@ -1175,6 +1216,10 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             }
           }
         }
+      }
+
+      if (pendingBeforeAgentStartDecision?.block && inputSurfaceAction !== "model_context") {
+        return pendingBeforeAgentStartDecision;
       }
 
       if (tokenOptimizerConfig.enabled !== false && isTokenOptimizerAvailable()) {

@@ -179,7 +179,7 @@ describe("approval channel alignment", () => {
     expect(result.text).toContain("L4");
   });
 
-  it("blocks feishu protected-read prompts in before_agent_start instead of deferring them", async () => {
+  it("adds L3 input context for feishu protected-read prompts in before_agent_start", async () => {
     configureOwnerApproval();
     const guardInputSpy = vi.spyOn(safetyGuard, "guardInput").mockReturnValue({
       block: true,
@@ -222,11 +222,8 @@ describe("approval channel alignment", () => {
       },
     );
 
-    expect(result).toMatchObject({
-      block: true,
-    });
-    expect((result as any).blockReason).toEqual(expect.any(String));
-    expect((result as any).prependContext).toBeUndefined();
+    expect((result as any)?.block).not.toBe(true);
+    expect((result as any).prependContext).toContain("Input risk is L3");
     guardInputSpy.mockRestore();
   });
 
