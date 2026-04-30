@@ -11,7 +11,6 @@ import { formatDateOnly, formatInteger, formatTimestamp } from "../utils/format"
 const EMPTY_DASHBOARD: DashboardOverviewDto = {
   totals: {
     eventCount: 0,
-    highRiskEventCount: 0,
     toolCallCount: 0,
     approvalCount: 0,
     lynxCheckCount: 0,
@@ -21,7 +20,7 @@ const EMPTY_DASHBOARD: DashboardOverviewDto = {
   enforcementDistribution: [],
   eventTrend: [],
   tokenTrend: [],
-  recentHighRiskEvents: [],
+  recentSecurityEvents: [],
   recentToolCalls: [],
   recentApprovals: [],
 };
@@ -53,7 +52,7 @@ const RISK_META = {
   },
   L4: {
     label: "L4 指标",
-    note: "严重系统漏洞",
+    note: "严重风险",
     cssClass: "overview-card--l4",
     color: "var(--risk-l4)",
   },
@@ -461,7 +460,7 @@ export function DashboardPage() {
           error={error}
           loading={loading}
           onRetry={retryDashboard}
-          rows={dashboard.recentHighRiskEvents.map((event) => ({
+          rows={dashboard.recentSecurityEvents.map((event) => ({
             id: event.eventId,
             risk: renderRiskBadge(event.riskLevel),
             action: event.title,

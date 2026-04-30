@@ -3,6 +3,7 @@ import path from "path";
 export const DEFAULT_GATEWAY_CONTAINER = "openclaw-openclaw-gateway-1";
 export const DEFAULT_PLUGIN_NAME = "openclaw-lynx-guardian";
 export const DEFAULT_CONTAINER_EXTENSIONS_ROOT = "/app/extensions";
+export const DEFAULT_CONTAINER_BUNDLED_EXTENSIONS_ROOT = "/app/dist/extensions";
 export const PLUGIN_MANAGED_RESOURCE_PREFIX = "lynx-guardian-";
 
 const DEFAULT_TOP_LEVEL_STAGE_EXCLUDES = new Set([
@@ -106,6 +107,7 @@ export function buildDevSyncPlan({
   openclawHome,
   containerName = DEFAULT_GATEWAY_CONTAINER,
   containerExtensionsRoot = DEFAULT_CONTAINER_EXTENSIONS_ROOT,
+  containerBundledExtensionsRoot = DEFAULT_CONTAINER_BUNDLED_EXTENSIONS_ROOT,
 } = {}) {
   if (!repoRoot) {
     throw new Error("repoRoot is required.");
@@ -120,7 +122,9 @@ export function buildDevSyncPlan({
     openclawHome,
     containerName,
     containerExtensionsRoot,
+    containerBundledExtensionsRoot,
     containerPluginPath: `${containerExtensionsRoot}/${pluginName}`,
+    containerBundledPluginPath: `${containerBundledExtensionsRoot}/${pluginName}`,
     hostHooksPath: path.join(openclawHome, "hooks"),
     hostSkillsPath: path.join(openclawHome, "skills"),
   };

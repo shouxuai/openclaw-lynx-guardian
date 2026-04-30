@@ -30,7 +30,7 @@ The script does not stop after the first `docker restart`. It keeps going until:
 - the gateway container reports `healthy` (or `running` when no healthcheck exists)
 - logs since the latest container start include:
   - `[lynx-guardian] Plugin loading...`
-  - `listening on ws://...`
+  - either `listening on ws://...`, `Local console gateway routes registered at /webview and /lynx`, or `starting local console backend ...`
 - `/home/node/.openclaw/cron/jobs.json` contains `lynx-guardian-scheduled-lynx-check`
 - `/home/node/.openclaw/docker-state/cron/jobs.json` contains `lynx-guardian-scheduled-lynx-check` after the second restart
 

@@ -29,7 +29,6 @@ describe("App", () => {
   const dashboardOverview = {
     totals: {
       eventCount: 0,
-      highRiskEventCount: 0,
       toolCallCount: 0,
       approvalCount: 0,
       lynxCheckCount: 0,
@@ -39,7 +38,7 @@ describe("App", () => {
     enforcementDistribution: [],
     eventTrend: [],
     tokenTrend: [],
-    recentHighRiskEvents: [],
+    recentSecurityEvents: [],
     recentToolCalls: [],
     recentApprovals: [],
   };

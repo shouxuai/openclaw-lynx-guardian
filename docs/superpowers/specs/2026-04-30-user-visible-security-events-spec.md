@@ -293,15 +293,15 @@ Dashboard primary metrics and charts must use user-visible security events:
 - Total event count
 - Risk distribution by `L0` through `L4`
 - Event trend
-- High-risk count
 - Enforcement distribution
-- Recent high-risk events
+- Recent security events
 
-Dashboard may still show raw audit volume as a secondary metric:
+Dashboard overview responses must not send raw audit aggregate volume to the frontend:
 
-- `原始审计流水`
-- This value comes from `audit_events`.
-- It must not be mixed into risk distribution charts.
+- Do not include `rawAuditEventCount` in `/lynx/dashboard/overview`.
+- Do not include `highRiskEventCount` in `/lynx/dashboard/overview`; `L3` and `L4` must remain separate in `riskDistribution`.
+- Raw hook-level records remain available only through the secondary `原始审计流水` page/API.
+- The top overview cards stay as the existing `L0` through `L4` risk-level summary plus total, using security-event-derived values.
 
 Risk chart total must equal user-visible event total.
 
@@ -391,7 +391,7 @@ Backend cases:
 Dashboard tests:
 
 - risk bucket totals equal user-visible event total
-- raw audit total remains available separately
+- raw audit total is not exposed by the dashboard overview response
 - chart data uses user-visible events
 
 Frontend tests:

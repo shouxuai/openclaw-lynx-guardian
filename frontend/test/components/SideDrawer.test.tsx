@@ -30,6 +30,16 @@ describe("SideDrawer", () => {
     expect(document.body.style.overflow).toBe("auto");
   });
 
+  it("supports a wide drawer variant", () => {
+    render(
+      <SideDrawer open size="wide" title="问答详情" onClose={() => undefined}>
+        <p>抽屉内容</p>
+      </SideDrawer>,
+    );
+
+    expect(screen.getByRole("dialog", { name: "问答详情" })).toHaveClass("side-drawer--wide");
+  });
+
   it("does not close when the backdrop is clicked unless explicitly enabled", () => {
     const onClose = vi.fn();
     const { container } = render(

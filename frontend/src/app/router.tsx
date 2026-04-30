@@ -10,6 +10,7 @@ import { LynxChecksPage } from "../pages/LynxChecksPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { PoliciesPage } from "../pages/PoliciesPage";
 import { QaRecordsPage } from "../pages/QaRecordsPage";
+import { RawEventsPage } from "../pages/RawEventsPage";
 import { SessionsPage } from "../pages/SessionsPage";
 import { SkillsPage } from "../pages/SkillsPage";
 import { TokensPage } from "../pages/TokensPage";
@@ -22,6 +23,7 @@ export function AppRoutes() {
       <Route path={ROUTE_PATHS.dashboard} element={<DashboardPage />} />
       <Route path={ROUTE_PATHS.qaRecords} element={<QaRecordsPage />} />
       <Route path={ROUTE_PATHS.events} element={<EventsPage />} />
+      <Route path={ROUTE_PATHS.rawEvents} element={<RawEventsPage />} />
       <Route path={ROUTE_PATHS.decisions} element={<DecisionsPage />} />
       <Route path={ROUTE_PATHS.toolCalls} element={<ToolCallsPage />} />
       <Route path={ROUTE_PATHS.approvals} element={<ApprovalsPage />} />

@@ -40,7 +40,13 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
         id: "events",
         label: "审计日志",
         path: ROUTE_PATHS.events,
-        pageTitle: "审计控制台",
+        pageTitle: "审计日志",
+      },
+      {
+        id: "raw-events",
+        label: "原始审计流水",
+        path: ROUTE_PATHS.rawEvents,
+        pageTitle: "原始审计流水",
       },
       {
         id: "decisions",

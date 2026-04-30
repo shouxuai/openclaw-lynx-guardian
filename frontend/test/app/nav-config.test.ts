@@ -13,7 +13,7 @@ describe("PRIMARY_NAV_ITEMS", () => {
     ]);
     expect(PRIMARY_NAV_GROUPS.map((group) => group.items.map((item) => item.label))).toEqual([
       ["概览", "问答记录"],
-      ["审计日志", "决策观测", "工具调用"],
+      ["审计日志", "原始审计流水", "决策观测", "工具调用"],
       ["审批管理", "策略配置"],
       ["多轮链路", "链路授权"],
       ["检测报告", "会话", "Skill 供应链", "Token 统计"],
@@ -25,6 +25,7 @@ describe("PRIMARY_NAV_ITEMS", () => {
       "概览",
       "问答记录",
       "审计日志",
+      "原始审计流水",
       "决策观测",
       "工具调用",
       "审批管理",

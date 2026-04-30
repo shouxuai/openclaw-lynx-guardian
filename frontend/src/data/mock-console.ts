@@ -3,6 +3,7 @@ import type {
   AuditEventDetailDto,
   DashboardOverviewDto,
   LynxCheckDetailDto,
+  SecurityEventListItemDto,
   SessionDetailDto,
   TokenSummaryDto,
   TokenTrendDto,
@@ -477,10 +478,42 @@ export const mockTokenTrend: TokenTrendDto = {
   ],
 };
 
+function mockSecurityEventFromAudit(event: AuditEventDetailDto): SecurityEventListItemDto {
+  const eventKind = event.toolCallId
+    ? "tool"
+    : event.category === "lynx_check"
+      ? "process"
+      : event.direction === "input"
+        ? "input"
+        : "output";
+
+  return {
+    eventId: `security:${event.eventId}`,
+    eventKind,
+    processKind: event.category === "lynx_check" ? "lynx_check" : "conversation",
+    processId: event.qaRecordId ?? event.runId ?? event.requestId ?? event.eventId,
+    qaRecordId: event.qaRecordId,
+    runId: event.runId,
+    sessionKey: event.sessionKey,
+    toolCallId: event.toolCallId,
+    title: event.title,
+    summary: event.summary,
+    objectLabel: event.toolCallId ?? event.requestId ?? event.sessionKey,
+    contentExcerpt: event.contentExcerpt,
+    occurredAtMs: event.occurredAtMs,
+    riskLevel: event.riskLevel ?? "L0",
+    riskScore: event.riskScore,
+    policyDecision: event.policyDecision,
+    enforcementAction: event.enforcementAction,
+    rawAuditEventIds: [event.eventId],
+    rawAuditCount: 1,
+    detailJson: event.payloadJson,
+  };
+}
+
 export const mockDashboard: DashboardOverviewDto = {
   totals: {
     eventCount: 24,
-    highRiskEventCount: 4,
     toolCallCount: 8,
     approvalCount: 2,
     lynxCheckCount: 3,
@@ -514,7 +547,7 @@ export const mockDashboard: DashboardOverviewDto = {
     bucketStartMs: point.bucketStartMs,
     value: point.totalTokens,
   })),
-  recentHighRiskEvents: mockEvents.slice(0, 5),
+  recentSecurityEvents: mockEvents.map(mockSecurityEventFromAudit).slice(0, 5),
   recentToolCalls: mockToolCalls,
   recentApprovals: mockApprovals,
 };

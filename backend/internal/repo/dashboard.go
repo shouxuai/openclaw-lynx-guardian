@@ -1,25 +1,26 @@
 package repo
 
+import "sort"
+
 type DashboardOverviewQuery struct {
 	FromMs *int64
 	ToMs   *int64
 }
 
 func (r *DashboardRepository) GetOverview(query DashboardOverviewQuery) (map[string]any, error) {
-	eventsRange := buildTimeRangeFilter("occurred_at", query.FromMs, query.ToMs)
 	toolCallsRange := buildTimeRangeFilter("started_at", query.FromMs, query.ToMs)
 	approvalsRange := buildTimeRangeFilter("requested_at", query.FromMs, query.ToMs)
 	lynxChecksRange := buildTimeRangeFilter("created_at", query.FromMs, query.ToMs)
 	tokensRange := buildTimeRangeFilter("occurred_at", query.FromMs, query.ToMs)
 
-	eventCount, err := countQuery(r, "audit_events", eventsRange)
+	securityEvents, err := NewSecurityEventsRepository(r.db).buildEvents(SecurityEventListQuery{
+		FromMs: query.FromMs,
+		ToMs:   query.ToMs,
+	})
 	if err != nil {
 		return nil, err
 	}
-	highRiskCount, err := scalarCount(r, `SELECT COUNT(*) FROM audit_events `+andWhere(eventsRange, "risk_level IN ('L3', 'L4')"), eventsRange.Params()...)
-	if err != nil {
-		return nil, err
-	}
+	eventCount := int64(len(securityEvents))
 	toolCallCount, err := countQuery(r, "tool_calls", toolCallsRange)
 	if err != nil {
 		return nil, err
@@ -41,26 +42,14 @@ func (r *DashboardRepository) GetOverview(query DashboardOverviewQuery) (map[str
 		return nil, err
 	}
 
-	riskDistribution, err := r.riskDistribution(eventsRange)
-	if err != nil {
-		return nil, err
-	}
-	enforcementDistribution, err := r.enforcementDistribution(eventsRange)
-	if err != nil {
-		return nil, err
-	}
-	eventTrend, err := r.eventTrend(eventsRange)
-	if err != nil {
-		return nil, err
-	}
+	riskDistribution := riskDistributionFromSecurityEvents(securityEvents)
+	enforcementDistribution := enforcementDistributionFromSecurityEvents(securityEvents)
+	eventTrend := eventTrendFromSecurityEvents(securityEvents)
 	tokenTrend, err := r.tokenTrend(tokensRange)
 	if err != nil {
 		return nil, err
 	}
-	recentHighRiskEvents, err := r.recentHighRiskEvents(eventsRange)
-	if err != nil {
-		return nil, err
-	}
+	recentSecurityEvents := recentSecurityEventRows(securityEvents)
 	recentToolCalls, err := r.recentToolCalls(toolCallsRange)
 	if err != nil {
 		return nil, err
@@ -72,18 +61,17 @@ func (r *DashboardRepository) GetOverview(query DashboardOverviewQuery) (map[str
 
 	return map[string]any{
 		"totals": map[string]any{
-			"eventCount":         eventCount,
-			"highRiskEventCount": highRiskCount,
-			"toolCallCount":      toolCallCount,
-			"approvalCount":      approvalCount,
-			"lynxCheckCount":     lynxCheckCount,
-			"totalTokens":        totalTokens,
+			"eventCount":     eventCount,
+			"toolCallCount":  toolCallCount,
+			"approvalCount":  approvalCount,
+			"lynxCheckCount": lynxCheckCount,
+			"totalTokens":    totalTokens,
 		},
 		"riskDistribution":        riskDistribution,
 		"enforcementDistribution": enforcementDistribution,
 		"eventTrend":              eventTrend,
 		"tokenTrend":              tokenTrend,
-		"recentHighRiskEvents":    recentHighRiskEvents,
+		"recentSecurityEvents":    recentSecurityEvents,
 		"recentToolCalls":         recentToolCalls,
 		"recentApprovals":         recentApprovals,
 	}, nil
@@ -112,6 +100,77 @@ func andWhere(filter *Filter, clause string) string {
 		return "WHERE " + clause
 	}
 	return filter.Where() + " AND " + clause
+}
+
+func riskDistributionFromSecurityEvents(events []securityEventRow) []map[string]any {
+	counts := map[string]int64{}
+	for _, event := range events {
+		counts[normalizeRiskLevel(event.RiskLevel)]++
+	}
+	return bucketDistribution(counts, []string{"L0", "L1", "L2", "L3", "L4"}, "riskLevel")
+}
+
+func enforcementDistributionFromSecurityEvents(events []securityEventRow) []map[string]any {
+	counts := map[string]int64{}
+	for _, event := range events {
+		counts[firstNonEmpty(event.EnforcementAction, "allow")]++
+	}
+	return bucketDistribution(counts, []string{"allow", "logOnly", "warn", "redact", "requireApproval", "block"}, "enforcementAction")
+}
+
+func bucketDistribution(counts map[string]int64, order []string, key string) []map[string]any {
+	out := make([]map[string]any, 0, len(counts))
+	seen := map[string]bool{}
+	for _, value := range order {
+		count := counts[value]
+		if count == 0 {
+			continue
+		}
+		out = append(out, map[string]any{key: value, "count": count})
+		seen[value] = true
+	}
+	for value, count := range counts {
+		if seen[value] || count == 0 {
+			continue
+		}
+		out = append(out, map[string]any{key: value, "count": count})
+	}
+	return out
+}
+
+func eventTrendFromSecurityEvents(events []securityEventRow) []map[string]any {
+	counts := map[int64]int64{}
+	for _, event := range events {
+		bucket := (event.OccurredAtMs / 3600000) * 3600000
+		counts[bucket]++
+	}
+	buckets := make([]int64, 0, len(counts))
+	for bucket := range counts {
+		buckets = append(buckets, bucket)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	out := make([]map[string]any, 0, len(buckets))
+	for _, bucket := range buckets {
+		out = append(out, map[string]any{
+			"bucketStartMs": bucket,
+			"value":         counts[bucket],
+		})
+	}
+	return out
+}
+
+func recentSecurityEventRows(events []securityEventRow) []map[string]any {
+	candidates := append([]securityEventRow{}, events...)
+	sortSecurityEventsDesc(candidates)
+	if len(candidates) > 5 {
+		candidates = candidates[:5]
+	}
+	out := make([]map[string]any, 0, len(candidates))
+	for _, event := range candidates {
+		out = append(out, mapSecurityEventListRow(event))
+	}
+	return out
 }
 
 func (r *DashboardRepository) riskDistribution(filter *Filter) ([]map[string]any, error) {
@@ -228,42 +287,6 @@ type rowsScanner interface {
 	Next() bool
 	Scan(dest ...any) error
 	Err() error
-}
-
-func (r *DashboardRepository) recentHighRiskEvents(filter *Filter) ([]map[string]any, error) {
-	rows, err := r.db.Query(
-		`
-		SELECT
-			event_id, qa_record_id, session_key, run_id, tool_call_id, approval_id, request_id,
-			source_kind, hook_name, event_type, category, sub_category, direction,
-			primary_module, risk_level, risk_score, policy_decision, enforcement_action,
-			title, summary, recommendation, content_excerpt, occurred_at
-		FROM audit_events
-		`+andWhere(filter, "risk_level IN ('L3', 'L4')")+`
-		ORDER BY occurred_at DESC, event_id DESC
-		LIMIT 5`,
-		filter.Params()...,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]map[string]any, 0)
-	for rows.Next() {
-		var row auditEventListRow
-		if err := rows.Scan(
-			&row.EventID, &row.QARecordID, &row.SessionKey, &row.RunID, &row.ToolCallID, &row.ApprovalID,
-			&row.RequestID, &row.SourceKind, &row.HookName, &row.EventType, &row.Category,
-			&row.SubCategory, &row.Direction, &row.PrimaryModule, &row.RiskLevel,
-			&row.RiskScore, &row.PolicyDecision, &row.EnforcementAction, &row.Title,
-			&row.Summary, &row.Recommendation, &row.ContentExcerpt, &row.OccurredAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, mapAuditEventListRow(row))
-	}
-	return out, rows.Err()
 }
 
 func (r *DashboardRepository) recentToolCalls(filter *Filter) ([]map[string]any, error) {

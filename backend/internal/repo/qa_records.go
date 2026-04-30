@@ -137,6 +137,10 @@ func (r *QARecordsRepository) GetDetail(qaRecordID string) (map[string]any, erro
 	if err != nil {
 		return nil, err
 	}
+	displayChainNodes, err := NewSecurityEventsRepository(r.db).ListForQARecord(qaRecordID)
+	if err != nil {
+		return nil, err
+	}
 
 	nodes := make([]qaChainNode, 0, 2+len(events)+len(toolCalls)+len(approvals)+len(detections)+len(tokenUsages))
 	nodes = append(nodes, qaChainNode{
@@ -177,6 +181,7 @@ func (r *QARecordsRepository) GetDetail(qaRecordID string) (map[string]any, erro
 		return nodes[i].OccurredAtMs < nodes[j].OccurredAtMs
 	})
 
+	out["displayChainNodes"] = displayChainNodes
 	out["chainNodes"] = mapChainNodes(nodes)
 	out["chainEdges"] = mapChainEdges(nodes)
 	out["relatedEvents"] = events

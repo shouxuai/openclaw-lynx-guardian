@@ -101,6 +101,47 @@ export interface AuditEventDetailDto extends AuditEventListItemDto {
   payloadJson?: Record<string, unknown>;
 }
 
+export type SecurityEventKind = "input" | "tool" | "output" | "install" | "process";
+
+export type SecurityProcessKind =
+  | "conversation"
+  | "skill_install"
+  | "plugin_install"
+  | "lynx_check"
+  | "approval"
+  | "batch_operation"
+  | "other";
+
+export interface SecurityEventListItemDto {
+  eventId: string;
+  eventKind: SecurityEventKind;
+  processKind: SecurityProcessKind;
+  processId?: string;
+  qaRecordId?: string;
+  runId?: string;
+  sessionKey?: string;
+  toolCallId?: string;
+  title: string;
+  summary?: string;
+  objectLabel?: string;
+  contentExcerpt?: string;
+  occurredAtMs: number;
+  completedAtMs?: number;
+  riskLevel: RiskLevel;
+  riskScore?: number;
+  policyDecision?: string;
+  enforcementAction: EnforcementAction;
+  rawAuditEventIds: string[];
+  rawAuditCount: number;
+  detailJson?: Record<string, unknown>;
+}
+
+export interface SecurityEventDetailDto extends SecurityEventListItemDto {
+  rawAuditEvents: AuditEventListItemDto[];
+}
+
+export type SecurityEventListResponse = PageResponse<SecurityEventListItemDto>;
+
 export interface ToolCallListItemDto {
   toolCallId: string;
   qaRecordId?: string;
@@ -347,6 +388,7 @@ export interface QaChainEdgeDto {
 }
 
 export interface QaRecordDetailDto extends QaRecordListItemDto {
+  displayChainNodes: SecurityEventListItemDto[];
   chainNodes: QaChainNodeDto[];
   chainEdges: QaChainEdgeDto[];
   relatedToolCalls: ToolCallListItemDto[];
@@ -358,7 +400,6 @@ export interface QaRecordDetailDto extends QaRecordListItemDto {
 export interface DashboardOverviewDto {
   totals: {
     eventCount: number;
-    highRiskEventCount: number;
     toolCallCount: number;
     approvalCount: number;
     lynxCheckCount: number;
@@ -368,7 +409,7 @@ export interface DashboardOverviewDto {
   enforcementDistribution: EnforcementBucketDto[];
   eventTrend: TimeSeriesPointDto[];
   tokenTrend: TimeSeriesPointDto[];
-  recentHighRiskEvents: AuditEventListItemDto[];
+  recentSecurityEvents: SecurityEventListItemDto[];
   recentToolCalls: ToolCallListItemDto[];
   recentApprovals: ApprovalListItemDto[];
 }

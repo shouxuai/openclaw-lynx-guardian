@@ -257,6 +257,70 @@ function copyPluginIntoContainer(plan, stagePluginPath) {
   ]);
 }
 
+function containerDirectoryExists(containerName, dirPath) {
+  const result = runCommand("docker", [
+    "exec",
+    "-u",
+    "0:0",
+    containerName,
+    "sh",
+    "-lc",
+    `test -d ${shellQuote(dirPath)}`,
+  ], {
+    capture: true,
+    allowFailure: true,
+  });
+
+  return result.status === 0;
+}
+
+function mirrorPluginIntoBundledPath(plan, stagePluginPath, { dryRun = false } = {}) {
+  const bundledPath = plan.containerBundledPluginPath;
+  const bundledRoot = plan.containerBundledExtensionsRoot;
+  if (!bundledPath || !bundledRoot) {
+    return;
+  }
+
+  if (dryRun) {
+    console.log(`[lynx-dev-sync] dry-run bundled mirror path ${bundledPath}`);
+    return;
+  }
+
+  if (!containerDirectoryExists(plan.containerName, bundledPath)) {
+    console.log(`[lynx-dev-sync] bundled plugin path not present; skip mirror ${bundledPath}`);
+    return;
+  }
+
+  runCommand("docker", [
+    "exec",
+    "-u",
+    "0:0",
+    plan.containerName,
+    "sh",
+    "-lc",
+    [
+      "set -eu",
+      `mkdir -p ${shellQuote(bundledRoot)}`,
+      `rm -rf ${shellQuote(bundledPath)}`,
+    ].join(" && "),
+  ]);
+  runCommand("docker", ["cp", stagePluginPath, `${plan.containerName}:${bundledRoot}/`]);
+  runCommand("docker", [
+    "exec",
+    "-u",
+    "0:0",
+    plan.containerName,
+    "sh",
+    "-lc",
+    [
+      "set -eu",
+      `chown -R node:node ${shellQuote(bundledPath)}`,
+      `chmod -R u=rwX,go=rX ${shellQuote(bundledPath)}`,
+    ].join(" && "),
+  ]);
+  console.log(`[lynx-dev-sync] mirrored plugin into bundled path ${bundledPath}`);
+}
+
 function installLocalConsoleRuntimeDeps(plan, { dryRun = false } = {}) {
   const backendContainerPath = buildContainerSubprojectPath(plan.containerPluginPath, "server/backend");
   const shellCommand = buildInstallLocalConsoleRuntimeDepsShellCommand({
@@ -339,6 +403,7 @@ function logPlan(plan, options) {
   console.log(`  hostHooksPath: ${plan.hostHooksPath}`);
   console.log(`  hostSkillsPath: ${plan.hostSkillsPath}`);
   console.log(`  containerPluginPath: ${plan.containerPluginPath}`);
+  console.log(`  containerBundledPluginPath: ${plan.containerBundledPluginPath}`);
   console.log(`  localConsoleBackendPath: ${buildContainerSubprojectPath(plan.containerPluginPath, "server/backend")}`);
   console.log(`  dryRun: ${options.dryRun}`);
   console.log(`  skipRestart: ${options.skipRestart}`);
@@ -367,12 +432,14 @@ async function main() {
   try {
     if (options.dryRun) {
       installLocalConsoleRuntimeDeps(plan, { dryRun: true });
+      mirrorPluginIntoBundledPath(plan, stagePluginPath, { dryRun: true });
       console.log("[lynx-dev-sync] dry-run finished");
       return;
     }
 
     prepareContainerPluginPath(plan);
     copyPluginIntoContainer(plan, stagePluginPath);
+    mirrorPluginIntoBundledPath(plan, stagePluginPath);
     installLocalConsoleRuntimeDeps(plan);
 
     if (options.skipRestart) {

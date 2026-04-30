@@ -4,6 +4,7 @@ export const ROUTE_PATHS = {
   dashboard: "/",
   qaRecords: "/qa-records",
   events: "/events",
+  rawEvents: "/raw-events",
   decisions: "/decisions",
   toolCalls: "/tool-calls",
   approvals: "/approvals",

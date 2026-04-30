@@ -57,6 +57,42 @@ func RegisterEvents(router gin.IRoutes, repository *repo.EventsRepository) {
 	})
 }
 
+func RegisterSecurityEvents(router gin.IRoutes, repository *repo.SecurityEventsRepository) {
+	router.GET("/security-events", func(c *gin.Context) {
+		values := c.Request.URL.Query()
+		page, err := repository.List(repo.SecurityEventListQuery{
+			Q:          httpserver.ReadString(values, "q"),
+			FromMs:     httpserver.ReadInt64(values, "fromMs"),
+			ToMs:       httpserver.ReadInt64(values, "toMs"),
+			SessionKey: httpserver.ReadString(values, "sessionKey"),
+			RunID:      httpserver.ReadString(values, "runId"),
+			RiskLevel:  httpserver.ReadStringSlice(values, "riskLevel"),
+			EventKind:  httpserver.ReadString(values, "eventKind"),
+			PageNum:    httpserver.ReadInt(values, "pageNum"),
+			PageSize:   httpserver.ReadInt(values, "pageSize"),
+			Limit:      httpserver.ReadInt(values, "limit"),
+		})
+		if err != nil {
+			c.JSON(500, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		c.JSON(200, page)
+	})
+
+	router.GET("/security-events/:eventId", func(c *gin.Context) {
+		item, err := repository.GetByID(c.Param("eventId"))
+		if err != nil {
+			c.JSON(500, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		if item == nil {
+			c.JSON(404, gin.H{"ok": false, "message": "Security event not found."})
+			return
+		}
+		c.JSON(200, item)
+	})
+}
+
 // RegisterToolCalls mirrors registerToolCallRoutes.
 func RegisterToolCalls(router gin.IRoutes, repository *repo.ToolCallsRepository) {
 	router.GET("/tool-calls", func(c *gin.Context) {

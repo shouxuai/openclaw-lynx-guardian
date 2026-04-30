@@ -71,6 +71,7 @@ const plan = buildDevSyncPlan({
 });
 
 assert.equal(plan.containerPluginPath, "/app/extensions/openclaw-lynx-guardian");
+assert.equal(plan.containerBundledPluginPath, "/app/dist/extensions/openclaw-lynx-guardian");
 assert.equal(plan.hostHooksPath, "C:\\Users\\24716\\.openclaw\\hooks");
 assert.equal(plan.hostSkillsPath, "C:\\Users\\24716\\.openclaw\\skills");
 assert.match(
@@ -106,6 +107,11 @@ assert.equal(extractContainerHealthStatus(""), "unknown");
 assert.equal(hasGatewayReadyMarkers([
   "[lynx-guardian] Plugin loading...",
   "listening on ws://0.0.0.0:18789 (PID 7)",
+].join("\n")), true);
+assert.equal(hasGatewayReadyMarkers([
+  "[lynx-guardian] Plugin loading...",
+  "[lynx-guardian] Local console gateway routes registered at /webview and /lynx",
+  "[lynx-guardian] starting local console backend (plugin-startup) entry=/app/dist/extensions/openclaw-lynx-guardian/server/backend/lynx-server-linux-x64 port=31789",
 ].join("\n")), true);
 assert.equal(hasGatewayReadyMarkers("[lynx-guardian] Plugin loading..."), false);
 assert.equal(hasGatewayReadyMarkers("listening on ws://0.0.0.0:18789 (PID 7)"), false);

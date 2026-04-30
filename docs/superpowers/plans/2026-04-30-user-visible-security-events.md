@@ -461,8 +461,6 @@ Dashboard totals should expose:
 ```json
 {
   "eventCount": 3,
-  "highRiskEventCount": 1,
-  "rawAuditEventCount": 12,
   "toolCallCount": 1,
   "approvalCount": 0,
   "lynxCheckCount": 0
@@ -472,10 +470,12 @@ Dashboard totals should expose:
 Rules:
 
 - `eventCount` uses security events.
-- `rawAuditEventCount` uses `audit_events`.
+- Risk level counts stay in independent `riskDistribution` buckets for `L0`, `L1`, `L2`, `L3`, and `L4`.
+- `/lynx/dashboard/overview` does not expose `rawAuditEventCount`; raw audit volume stays on the secondary raw page/API only.
+- `/lynx/dashboard/overview` does not expose `highRiskEventCount`; do not combine `L3` and `L4`.
 - `riskDistribution` uses security events.
 - `eventTrend` uses security events.
-- `recentHighRiskEvents` uses security events or maps security events to the existing frontend shape.
+- `recentSecurityEvents` uses recent security events, not only L3/L4.
 
 - [ ] **Step 2: Run dashboard tests**
 
@@ -649,7 +649,7 @@ Expected:
 
 ---
 
-## Phase 6: Dashboard Frontend Uses New Counts
+## Phase 6: Dashboard Frontend Uses Security Event Counts
 
 ### Task 6.1: Update Overview Labels And Charts
 
@@ -658,20 +658,23 @@ Expected:
 - Modify: `frontend/src/pages/DashboardPage.tsx`
 - Test: `frontend/test/pages/DashboardPage.test.tsx`
 
-- [ ] **Step 1: Rename metric labels**
+- [ ] **Step 1: Keep the risk-level overview cards**
 
 Use:
 
-- `安全事件`
-- `高危事件`
-- `工具调用`
-- `原始审计流水`
+- `L0 指标`
+- `L1 指标`
+- `L2 指标`
+- `L3 指标`
+- `L4 指标`
+- `总计`
 
-Avoid labeling raw `audit_events` as the main `总事件`.
+Keep `L3` and `L4` as separate cards. Do not add raw audit aggregate cards to the overview.
 
-- [ ] **Step 2: Confirm charts use existing `riskDistribution` from new backend source**
+- [ ] **Step 2: Confirm charts use existing `riskDistribution` from backend source**
 
 No chart component should sum raw audit records.
+No chart component should combine `L3` and `L4`.
 
 - [ ] **Step 3: Add test**
 
@@ -684,7 +687,8 @@ it("renders risk distribution from user-visible security event counts", async ()
 Expected:
 
 - Chart total equals the mocked security-event total.
-- Raw audit count appears as a separate metric.
+- Raw audit count is absent from the dashboard overview.
+- `L0` through `L4` are rendered separately.
 
 ---
 
@@ -929,7 +933,7 @@ Expected:
 - [ ] `GET /lynx/security-events` works.
 - [ ] Every user-visible event has `riskLevel`.
 - [ ] Dashboard charts and risk buckets use user-visible events.
-- [ ] Dashboard shows raw audit volume separately.
+- [ ] Dashboard does not expose raw audit volume; raw audit remains on the secondary page.
 - [ ] Default `审计日志` page uses user-visible events.
 - [ ] Raw audit page remains available.
 - [ ] QA drawer is wide and shows display chain by default.

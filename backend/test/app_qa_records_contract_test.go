@@ -47,6 +47,7 @@ func TestQaRecordRoutesReturnListAndToolChainDetail(t *testing.T) {
 	expectString(t, detail, "qaRecordId", "qa-alpha")
 	expectString(t, detail, "finalAnswerExcerpt", "已完成检查")
 	assertChainContainsNodeTypes(t, detail, []string{"userPrompt", "toolCall", "approval", "auditEvent", "tokenUsage", "finalAnswer"})
+	assertDisplayChainKinds(t, detail, []string{"input", "tool", "output"})
 	if edges, ok := detail["chainEdges"].([]any); !ok || len(edges) == 0 {
 		t.Fatalf("expected non-empty chainEdges, got %#v", detail["chainEdges"])
 	}
@@ -134,6 +135,7 @@ func TestQaRecordDetailUsesTerminalNodeWhenToolCallHasCommandDetail(t *testing.T
 	detail := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, "/lynx/qa-records/qa-terminal", nil, false), http.StatusOK)
 	node := findChainNodeByType(t, detail, "terminal")
 	expectString(t, node, "title", "终端命令")
+	displayTool := findDisplayChainEventByKind(t, detail, "tool")
 
 	detailJSON, ok := node["detailJson"].(map[string]any)
 	if !ok {
@@ -145,6 +147,13 @@ func TestQaRecordDetailUsesTerminalNodeWhenToolCallHasCommandDetail(t *testing.T
 	expectString(t, detailJSON, "stderr", "")
 	expectNumber(t, detailJSON, "exitCode", 0)
 	expectNumber(t, detailJSON, "durationMs", 1234)
+
+	displayDetailJSON, ok := displayTool["detailJson"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected display tool detailJson object, got %#v", displayTool["detailJson"])
+	}
+	expectString(t, displayDetailJSON, "command", "npm test")
+	expectString(t, displayDetailJSON, "cwd", "C:\\work\\repo")
 }
 
 func qaRecordFixture(qaRecordID string) map[string]any {
@@ -270,6 +279,49 @@ func findChainNodeByType(t *testing.T, detail map[string]any, nodeType string) m
 		}
 	}
 	t.Fatalf("missing chain node type %s in %#v", nodeType, rawNodes)
+	return nil
+}
+
+func assertDisplayChainKinds(t *testing.T, detail map[string]any, want []string) {
+	t.Helper()
+	rawNodes, ok := detail["displayChainNodes"].([]any)
+	if !ok {
+		t.Fatalf("expected displayChainNodes array, got %#v", detail["displayChainNodes"])
+	}
+	if len(rawNodes) != len(want) {
+		t.Fatalf("expected displayChainNodes length %d, got %d in %#v", len(want), len(rawNodes), rawNodes)
+	}
+	for index, raw := range rawNodes {
+		node, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected display chain node object, got %T", raw)
+		}
+		expectString(t, node, "eventKind", want[index])
+		if _, ok := node["occurredAtMs"].(float64); !ok {
+			t.Fatalf("expected display chain node occurredAtMs, got %#v", node)
+		}
+		if got, _ := node["riskLevel"].(string); got == "" {
+			t.Fatalf("expected display chain node riskLevel, got %#v", node)
+		}
+	}
+}
+
+func findDisplayChainEventByKind(t *testing.T, detail map[string]any, eventKind string) map[string]any {
+	t.Helper()
+	rawNodes, ok := detail["displayChainNodes"].([]any)
+	if !ok {
+		t.Fatalf("expected displayChainNodes array, got %#v", detail["displayChainNodes"])
+	}
+	for _, raw := range rawNodes {
+		node, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected display chain node object, got %T", raw)
+		}
+		if got, _ := node["eventKind"].(string); got == eventKind {
+			return node
+		}
+	}
+	t.Fatalf("missing display chain event kind %s in %#v", eventKind, rawNodes)
 	return nil
 }
 

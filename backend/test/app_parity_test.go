@@ -354,19 +354,30 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 		t.Fatalf("expected dashboard totals object")
 	}
 	expectNumber(t, totals, "eventCount", 3)
-	expectNumber(t, totals, "highRiskEventCount", 1)
+	if _, ok := totals["highRiskEventCount"]; ok {
+		t.Fatalf("dashboard overview should expose independent L0-L4 buckets instead of a combined highRiskEventCount")
+	}
 	expectNumber(t, totals, "toolCallCount", 2)
 	expectNumber(t, totals, "approvalCount", 1)
 	expectNumber(t, totals, "lynxCheckCount", 1)
 	expectNumber(t, totals, "totalTokens", 315)
+	if _, ok := totals["rawAuditEventCount"]; ok {
+		t.Fatalf("dashboard overview should not expose rawAuditEventCount to the frontend")
+	}
 	riskDistribution, ok := dashboardBody["riskDistribution"].([]any)
 	if !ok {
 		t.Fatalf("expected dashboard riskDistribution array")
 	}
-	expectRiskBucketCount(t, riskDistribution, "L0", 1)
+	expectRiskBucketCount(t, riskDistribution, "L1", 1)
 	expectRiskBucketCount(t, riskDistribution, "L2", 1)
 	expectRiskBucketCount(t, riskDistribution, "L3", 1)
 	expectRiskBucketTotal(t, riskDistribution, 3)
+	if _, ok := dashboardBody["recentSecurityEvents"].([]any); !ok {
+		t.Fatalf("expected dashboard recentSecurityEvents array")
+	}
+	if _, ok := dashboardBody["recentHighRiskEvents"]; ok {
+		t.Fatalf("dashboard overview should expose recentSecurityEvents instead of recentHighRiskEvents")
+	}
 
 	tokenUsage := doJSON(t, handler, http.MethodGet, "/lynx/tokens/usage?limit=5&provider=openai&isEstimated=true", nil, false)
 	tokenItems := expectItems(t, tokenUsage, http.StatusOK)

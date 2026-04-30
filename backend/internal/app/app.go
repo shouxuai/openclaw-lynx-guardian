@@ -41,6 +41,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 
 	approvals := repo.NewApprovalsRepository(database)
 	events := repo.NewEventsRepository(database)
+	securityEvents := repo.NewSecurityEventsRepository(database)
 	toolCalls := repo.NewToolCallsRepository(database)
 	sessions := repo.NewSessionsRepository(database)
 	lynxCheckTasks := repo.NewLynxCheckTaskRepository(database)
@@ -78,6 +79,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 		GatewayAuthLogsEnabled: false,
 	})
 	routes.RegisterEvents(query, events)
+	routes.RegisterSecurityEvents(query, securityEvents)
 	routes.RegisterToolCalls(query, toolCalls)
 	routes.RegisterApprovals(query, approvals)
 	routes.RegisterLynxCheckTasks(query, ingestGroup, lynxCheckService, lynxCheckTasks)

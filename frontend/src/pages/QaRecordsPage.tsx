@@ -4,6 +4,8 @@ import type {
   QaChainNodeDto,
   QaRecordDetailDto,
   QaRecordListItemDto,
+  SecurityEventKind,
+  SecurityEventListItemDto,
 } from "@lynx/local-console-shared";
 import { Button, Input, Select } from "antd";
 
@@ -28,6 +30,14 @@ const NODE_TYPE_LABELS: Record<QaChainNodeDto["type"], string> = {
   auditEvent: "审计事件",
   tokenUsage: "Token",
   finalAnswer: "答复",
+};
+
+const SECURITY_EVENT_KIND_LABELS: Record<SecurityEventKind, string> = {
+  input: "输入",
+  tool: "工具",
+  output: "输出",
+  install: "安装",
+  process: "过程",
 };
 
 interface QaRecordFilters {
@@ -240,6 +250,39 @@ function buildNodeFields(node: QaChainNodeDto | null) {
   ];
 }
 
+function getSecurityEventDetailText(node: SecurityEventListItemDto, key: string): string | undefined {
+  return valueAsText(node.detailJson?.[key]);
+}
+
+function formatSecurityEventKind(kind: SecurityEventKind): string {
+  return SECURITY_EVENT_KIND_LABELS[kind] ?? kind;
+}
+
+function renderSecurityEventDetails(node: SecurityEventListItemDto) {
+  const commonFields = [
+    { label: "时间", value: formatTimestamp(node.occurredAtMs) },
+    { label: "类型", value: formatSecurityEventKind(node.eventKind) },
+    { label: "处置", value: renderActionBadge(node.enforcementAction) },
+    { label: "原始证据", value: `${formatInteger(node.rawAuditCount)} 条` },
+  ];
+
+  const detailFields = node.eventKind === "tool"
+    ? [
+        { label: "命令", value: getSecurityEventDetailText(node, "command") ?? node.objectLabel ?? "暂无" },
+        { label: "工作目录", value: getSecurityEventDetailText(node, "cwd") ?? "暂无" },
+        { label: "退出码", value: getSecurityEventDetailText(node, "exitCode") ?? "暂无" },
+        { label: "耗时", value: getSecurityEventDetailText(node, "durationMs") ?? formatDuration(node.completedAtMs ? node.completedAtMs - node.occurredAtMs : undefined) },
+        { label: "标准输出", value: renderCodeBlock(getSecurityEventDetailText(node, "stdout") ?? getSecurityEventDetailText(node, "result")) },
+        { label: "标准错误", value: renderCodeBlock(getSecurityEventDetailText(node, "stderr")) },
+      ]
+    : [
+        { label: "对象", value: node.objectLabel ?? "暂无" },
+        { label: "摘要", value: node.summary ?? node.contentExcerpt ?? "暂无" },
+      ];
+
+  return [...commonFields, ...detailFields];
+}
+
 export function QaRecordsPage() {
   const [draftFilters, setDraftFilters] = useState<QaRecordFilters>(EMPTY_FILTERS);
   const [appliedQuery, setAppliedQuery] = useState<Omit<QaRecordListQuery, "pageNum" | "pageSize">>({});
@@ -253,14 +296,13 @@ export function QaRecordsPage() {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [detail, setDetail] = useState<QaRecordDetailDto | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [chainExpanded, setChainExpanded] = useState(false);
+  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [auditEventsOpen, setAuditEventsOpen] = useState(false);
 
   useEffect(() => {
     if (!selectedRecordId) {
       setDetail(null);
-      setSelectedNodeId(null);
+      setExpandedNodeId(null);
       setDetailError(null);
       return;
     }
@@ -278,7 +320,7 @@ export function QaRecordsPage() {
         startTransition(() => {
           setDetail(nextDetail);
           setDetailError(null);
-          setSelectedNodeId(null);
+          setExpandedNodeId(null);
         });
       } catch (loadError) {
         if (!active) {
@@ -287,7 +329,7 @@ export function QaRecordsPage() {
 
         startTransition(() => {
           setDetail(null);
-          setSelectedNodeId(null);
+          setExpandedNodeId(null);
           setDetailError(loadError instanceof Error ? loadError.message : "详情加载失败");
         });
       }
@@ -304,10 +346,7 @@ export function QaRecordsPage() {
     () => items.find((item) => item.qaRecordId === selectedRecordId) ?? null,
     [items, selectedRecordId],
   );
-  const selectedNode = useMemo(
-    () => detail?.chainNodes.find((node) => node.nodeId === selectedNodeId) ?? null,
-    [detail, selectedNodeId],
-  );
+  const displayNodes = detail?.displayChainNodes ?? [];
   const totalToolCalls = detail?.relatedToolCalls.length ?? selectedRecord?.toolCallCount ?? 0;
   const totalApprovals = detail?.relatedApprovals.length ?? selectedRecord?.approvalCount ?? 0;
   const totalSignals = (detail?.relatedEvents.length ?? 0) + (detail?.relatedDetections.length ?? selectedRecord?.detectionCount ?? 0);
@@ -320,7 +359,7 @@ export function QaRecordsPage() {
     event.preventDefault();
     resetPaging();
     setSelectedRecordId(null);
-    setSelectedNodeId(null);
+    setExpandedNodeId(null);
     setDetail(null);
     setAuditEventsOpen(false);
     setAppliedQuery(buildQaRecordQuery(draftFilters));
@@ -330,7 +369,7 @@ export function QaRecordsPage() {
     setDraftFilters(EMPTY_FILTERS);
     resetPaging();
     setSelectedRecordId(null);
-    setSelectedNodeId(null);
+    setExpandedNodeId(null);
     setDetail(null);
     setAuditEventsOpen(false);
     setAppliedQuery({});
@@ -338,8 +377,9 @@ export function QaRecordsPage() {
 
   function handleSelectRecord(recordId: string): void {
     setSelectedRecordId(recordId);
-    setChainExpanded(false);
-    setSelectedNodeId(null);
+    setDetail(null);
+    setDetailError(null);
+    setExpandedNodeId(null);
     setAuditEventsOpen(false);
   }
 
@@ -347,8 +387,7 @@ export function QaRecordsPage() {
     setSelectedRecordId(null);
     setDetail(null);
     setDetailError(null);
-    setSelectedNodeId(null);
-    setChainExpanded(false);
+    setExpandedNodeId(null);
     setAuditEventsOpen(false);
   }
 
@@ -434,6 +473,7 @@ export function QaRecordsPage() {
         </div>
         <DataTable
           columns={[
+            { key: "time", label: "时间", maxWidth: 180, minWidth: 140, width: 156 },
             { key: "qaId", label: "问答 ID", maxWidth: 220, minWidth: 170, width: 188 },
             { key: "prompt", label: "用户输入", maxWidth: 420, minWidth: 280, width: 340 },
             { key: "status", label: "状态", maxWidth: 112, minWidth: 92, width: 100 },
@@ -448,12 +488,8 @@ export function QaRecordsPage() {
           onRowClick={(row) => handleSelectRecord(row.id)}
           rows={items.map((record) => ({
             id: record.qaRecordId,
-            qaId: (
-              <div className="row-stack">
-                <strong>{record.qaRecordId}</strong>
-                <span>{formatTimestamp(record.startedAtMs)}</span>
-              </div>
-            ),
+            time: formatTimestamp(record.startedAtMs),
+            qaId: <strong>{record.qaRecordId}</strong>,
             prompt: record.userPromptExcerpt || "暂无输入",
             status: renderStateBadge(record.status),
             risk: renderRiskBadge(record.riskLevel),
@@ -466,7 +502,8 @@ export function QaRecordsPage() {
 
       <SideDrawer
         closeLabel="关闭详情"
-        open={Boolean(selectedRecordId)}
+        open={Boolean(selectedRecordId && (detail || detailError))}
+        size="wide"
         title="问答详情"
         subtitle={selectedRecord ? `${selectedRecord.sessionKey ?? "暂无会话"} · ${formatTimestamp(selectedRecord.startedAtMs)}` : selectedRecordId ?? "等待选择问答记录"}
         onClose={handleCloseDetail}
@@ -504,52 +541,52 @@ export function QaRecordsPage() {
           </article>
         </div>
 
-        <button
-          className="btn"
-          disabled={!detail}
-          type="button"
-          onClick={() => setChainExpanded((value) => !value)}
-        >
-          {chainExpanded ? "收起执行链路" : "展开执行链路"}
-        </button>
-
-        {chainExpanded ? (
-          <div className="qa-detail-flow" data-testid="qa-detail-flow">
-            {detail?.chainNodes.map((node) => (
-              <button
-                className="qa-flow-node"
-                key={node.nodeId}
-                type="button"
-                aria-label={`${node.title} ${node.summary ?? ""}`}
-                onClick={() => setSelectedNodeId(node.nodeId)}
-              >
-                <span className="qa-flow-node__type">{NODE_TYPE_LABELS[node.type]}</span>
-                <strong>{node.title}</strong>
-                <span>{node.type === "terminal" ? (node.status ?? "命令执行记录") : (node.summary ?? "暂无摘要")}</span>
-                <small>{formatTimestamp(node.occurredAtMs)}</small>
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        {selectedNode ? (
-          <section className="detail-panel qa-node-detail" data-testid="qa-node-detail">
-            <div className="panel__header">
-              <div>
-                <h2 className="panel__title">{selectedNode.title}</h2>
-                <p className="panel__subtitle">{`${NODE_TYPE_LABELS[selectedNode.type]} · ${formatTimestamp(selectedNode.occurredAtMs)}`}</p>
-              </div>
+        <section className="qa-display-chain" data-testid="qa-display-chain">
+          <div className="panel__header">
+            <div>
+              <h2 className="panel__title">执行链路</h2>
+              <p className="panel__subtitle">按用户可感知的输入检查、工具调用和输出检查展示。</p>
             </div>
-            <dl className="detail-panel__grid">
-              {buildNodeFields(selectedNode).map((field) => (
-                <div key={field.label} className="detail-panel__field">
-                  <dt>{field.label}</dt>
-                  <dd>{field.value}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        ) : null}
+          </div>
+          <div className="qa-detail-flow">
+            {displayNodes.length > 0 ? displayNodes.map((node) => {
+              const expanded = expandedNodeId === node.eventId;
+
+              return (
+                <article
+                  className={`qa-display-node${expanded ? " qa-display-node--expanded" : ""}`}
+                  data-testid={`qa-display-node-${node.eventId}`}
+                  key={node.eventId}
+                >
+                  <button
+                    aria-expanded={expanded}
+                    className="qa-flow-node qa-display-node__button"
+                    type="button"
+                    onClick={() => setExpandedNodeId((current) => current === node.eventId ? null : node.eventId)}
+                  >
+                    <span className="qa-flow-node__type">{formatSecurityEventKind(node.eventKind)}</span>
+                    <strong>{node.title}</strong>
+                    <span>{node.objectLabel ?? node.contentExcerpt ?? node.summary ?? "暂无摘要"}</span>
+                    <small>{formatTimestamp(node.occurredAtMs)}</small>
+                    {renderRiskBadge(node.riskLevel)}
+                  </button>
+                  {expanded ? (
+                    <dl className="qa-display-node__details">
+                      {renderSecurityEventDetails(node).map((field) => (
+                        <div className="qa-display-node__field" key={field.label}>
+                          <dt>{field.label}</dt>
+                          <dd>{field.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                </article>
+              );
+            }) : (
+              <p className="small-note">暂无可展示的执行链路</p>
+            )}
+          </div>
+        </section>
       </SideDrawer>
 
       <ModalDialog

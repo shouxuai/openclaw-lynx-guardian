@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import dayjs from "dayjs";
@@ -16,35 +16,51 @@ function createJsonResponse(data: unknown): Response {
   } as unknown as Response;
 }
 
-function createEvent(eventId: string, title: string, overrides: Record<string, unknown> = {}) {
+function createSecurityEvent(overrides: Record<string, unknown> = {}) {
   return {
-    eventId,
-    sourceKind: "plugin_hook",
-    hookName: "before_tool_call",
-    eventType: "tool_call_evaluated",
-    category: "execution_control",
-    riskLevel: "L3",
-    policyDecision: "confirm",
-    enforcementAction: "requireApproval",
-    title,
-    summary: "需要审批后继续执行。",
-    recommendation: "建议先核对申请人身份。",
-    contentExcerpt: "用户请求读取配置，密钥 sk-*** 已脱敏。",
+    eventId: "security:tool:tool-1",
+    eventKind: "tool",
+    processKind: "conversation",
+    processId: "qa-1",
+    qaRecordId: "qa-1",
+    runId: "run-1",
+    sessionKey: "session-1",
+    toolCallId: "tool-1",
+    title: "工具调用检查",
+    summary: "执行命令前触发 L4 阻断",
+    objectLabel: "exec",
+    contentExcerpt: "Remove-Item -Recurse C:\\important",
     occurredAtMs: 1_776_945_600_000,
+    riskLevel: "L4",
+    riskScore: 10,
+    policyDecision: "deny",
+    enforcementAction: "block",
+    rawAuditEventIds: ["event-1", "event-2"],
+    rawAuditCount: 2,
+    detailJson: {
+      command: "Remove-Item -Recurse C:\\important",
+      cwd: "C:\\repo",
+    },
     ...overrides,
   };
 }
 
-function createEventDetail(eventId: string, title: string) {
+function createSecurityEventDetail() {
   return {
-    ...createEvent(eventId, title),
-    contentKind: "text",
-    modules: ["M2:protected_file_access"],
-    contentHash: "hash-detail",
-    ingestedAtMs: 1_776_945_600_500,
-    payloadJson: {
-      toolName: "exec",
-    },
+    ...createSecurityEvent(),
+    rawAuditEvents: [
+      {
+        eventId: "event-1",
+        sourceKind: "plugin_hook",
+        hookName: "before_tool_call",
+        eventType: "tool_call_evaluated",
+        category: "tool",
+        riskLevel: "L4",
+        enforcementAction: "block",
+        title: "原始工具审计",
+        occurredAtMs: 1_776_945_600_000,
+      },
+    ],
   };
 }
 
@@ -85,174 +101,89 @@ describe("EventsPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows bounded audit columns and opens event details in a dialog", async () => {
+  it("renders user-visible security events by default with a standalone time column", async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(createPage([
-        createEvent("EVT-001", "初始审计事件", { qaRecordId: "qa-1" }),
-        createEvent("EVT-LEGACY", "历史审计事件", {
-          contentExcerpt: "历史事件未关联问答记录。",
-          recommendation: "等待人工补充上下文。",
+        createSecurityEvent(),
+        createSecurityEvent({
+          eventId: "security:output:qa-2",
+          eventKind: "output",
+          title: "输出检查",
+          objectLabel: "回答内容",
+          contentExcerpt: "回答内容",
+          riskLevel: "L3",
+          enforcementAction: "warn",
+          rawAuditEventIds: ["event-3"],
+          rawAuditCount: 1,
+        }),
+        createSecurityEvent({
+          eventId: "security:input:qa-1",
+          eventKind: "input",
+          title: "输入检查",
+          objectLabel: "请检查当前项目",
+          contentExcerpt: "请检查当前项目",
+          riskLevel: "L0",
+          enforcementAction: "allow",
+          rawAuditEventIds: [],
+          rawAuditCount: 0,
         }),
       ])))
-      .mockResolvedValueOnce(createJsonResponse({
-        ...createEventDetail("EVT-001", "初始审计事件"),
-        qaRecordId: "qa-1",
-      }));
+      .mockResolvedValueOnce(createJsonResponse(createSecurityEventDetail()));
 
-    const { container } = renderEventsPage();
+    renderEventsPage();
 
-    await screen.findByText("EVT-001");
-    expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
-    expect(screen.getByText("未关联问答记录")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /导出/ })).not.toBeInTheDocument();
-    expect(container.querySelectorAll(".audit-filter-form .ant-select")).toHaveLength(3);
-    expect(container.querySelector(".audit-filter-form .ant-picker")).not.toBeNull();
-    expect(screen.getByTestId("audit-events-table-panel")).toHaveClass("audit-events-table-panel");
-    expect(screen.getByText("脱敏摘要")).toBeInTheDocument();
-    expect(screen.getAllByText("处置建议").length).toBeGreaterThan(0);
-    expect(screen.getByText("用户请求读取配置，密钥 sk-*** 已脱敏。")).toBeInTheDocument();
-    expect(screen.getByText("建议先核对申请人身份。")).toBeInTheDocument();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
+    await screen.findByText("security:tool:tool-1");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/security-events?pageNum=1&pageSize=10");
+    const summary = screen.getByLabelText("当前页安全事件概览");
+    expect(within(summary).getByText("L0")).toBeInTheDocument();
+    expect(within(summary).getByText("L1")).toBeInTheDocument();
+    expect(within(summary).getByText("L2")).toBeInTheDocument();
+    expect(within(summary).getByText("L3")).toBeInTheDocument();
+    expect(within(summary).getByText("L4")).toBeInTheDocument();
+    expect(within(summary).queryByText("L3 / L4")).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "时间" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "事件类型" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "过程" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "对象/内容" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "风险等级" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "处置动作" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "关联问答" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "原始证据" })).toBeInTheDocument();
+    expect(screen.getByText("工具调用检查")).toBeInTheDocument();
+    expect(screen.getByText("工具")).toBeInTheDocument();
+    expect(screen.getByText("会话")).toBeInTheDocument();
+    expect(screen.getByText("2 条")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "查看 EVT-001 详情" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "初始审计事件" });
-    expect(dialog).toBeInTheDocument();
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/events/EVT-001");
-    expect(screen.getByText("关联问答记录")).toBeInTheDocument();
-    expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
-    expect(screen.getByText("M2:protected_file_access")).toBeInTheDocument();
-    expect(screen.getByText(/"toolName": "exec"/)).toBeInTheDocument();
-    expect(screen.queryByText("block:false 说明")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "关闭详情" }));
-    expect(screen.queryByRole("dialog", { name: "初始审计事件" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看 security:tool:tool-1 详情" }));
+    const dialog = await screen.findByRole("dialog", { name: "工具调用检查" });
+    expect(within(dialog).getByText("原始证据")).toBeInTheDocument();
+    expect(within(dialog).getByText("event-1")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/security-events/security%3Atool%3Atool-1");
   });
 
-  it("shows the complete redacted security audit report in event details", async () => {
-    const fullReport = [
-      "# 安全审计报告",
-      "第一段完整内容。",
-      "中间内容不应被截断。",
-      "END-OF-SECURITY-AUDIT-REPORT",
-    ].join("\n");
+  it("links to raw audit evidence count and supports security-event filters", async () => {
     fetchMock
+      .mockResolvedValueOnce(createJsonResponse(createPage([createSecurityEvent()], 1, 10, 1)))
       .mockResolvedValueOnce(createJsonResponse(createPage([
-        createEvent("EVT-REPORT", "安全审计报告事件", {
-          contentExcerpt: fullReport,
-        }),
-      ])))
-      .mockResolvedValueOnce(createJsonResponse({
-        ...createEventDetail("EVT-REPORT", "安全审计报告事件"),
-        contentExcerpt: fullReport,
-        contentKind: "report",
-      }));
+        createSecurityEvent({ eventId: "security:output:qa-2", eventKind: "output", title: "输出检查" }),
+      ], 1, 10, 1)));
 
     renderEventsPage();
 
-    await screen.findByText("EVT-REPORT");
-    fireEvent.click(screen.getByRole("button", { name: "查看 EVT-REPORT 详情" }));
-
-    expect(await screen.findByText("完整脱敏摘要 / 安全审计报告")).toBeInTheDocument();
-    expect(screen.getByText("# 安全审计报告")).toBeInTheDocument();
-    expect(screen.getByText("END-OF-SECURITY-AUDIT-REPORT")).toBeInTheDocument();
-  });
-
-  it("summarizes control-plane evidence from real list fields and optional top-level evidence", async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(createPage([
-        {
-          ...createEvent("EVT-FIELDS", "列表字段证据"),
-          primaryModule: "M2:protected_file_access",
-          riskScore: 88,
-          requestId: "REQ-001",
-          approvalId: "APR-001",
-        },
-        {
-          ...createEvent("EVT-TOPLEVEL", "列表顶层证据"),
-          winningArbiter: "evidence_score",
-          matchedRules: ["critical_exec"],
-          scoreBreakdown: [{ ruleId: "chain.recent_denial", delta: 30 }],
-          evidence: [{ id: "taint.recent_sensitive_read", module: "taint_context" }],
-        },
-      ])));
-
-    renderEventsPage();
-
-    await screen.findByText("EVT-FIELDS");
-    expect(screen.getByText(/module:M2:protected_file_access/)).toBeInTheDocument();
-    expect(screen.getByText(/score:88/)).toBeInTheDocument();
-    expect(screen.getByText(/request:REQ-001/)).toBeInTheDocument();
-    expect(screen.getByText(/approval:APR-001/)).toBeInTheDocument();
-    expect(screen.getByText(/arbiter:evidence_score/)).toBeInTheDocument();
-    expect(screen.getByText(/rules:critical_exec/)).toBeInTheDocument();
-    expect(screen.getByText(/trace:chain\.recent_denial \+30/)).toBeInTheDocument();
-    expect(screen.getByText(/evidence:taint\.recent_sensitive_read/)).toBeInTheDocument();
-    expect(screen.queryByText("暂无控制面证据")).not.toBeInTheDocument();
-  });
-
-  it("does not say control-plane evidence is absent when list rows omit detail payloadJson", async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(createPage([
-        {
-          ...createEvent("EVT-DETAIL-ONLY", "详情包含控制面证据"),
-          policyDecision: undefined,
-          primaryModule: undefined,
-          requestId: undefined,
-          approvalId: undefined,
-          toolCallId: undefined,
-          riskScore: undefined,
-        },
-      ])));
-
-    renderEventsPage();
-
-    await screen.findByText("EVT-DETAIL-ONLY");
-    expect(screen.getByText(/列表未包含控制面证据/)).toBeInTheDocument();
-    expect(screen.queryByText("暂无控制面证据")).not.toBeInTheDocument();
-  });
-
-  it("supports backend total-pages pagination, page selection, page size, and filters", async () => {
-    fetchMock
-      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-001", "初始审计事件")], 1, 10, 41)))
-      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-LAST", "最后一页审计事件")], 5, 10, 41)))
-      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-001", "初始审计事件")], 1, 10, 41)))
-      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-PAGE-SIZE", "每页行数更新后的审计事件")], 1, 25, 41)))
-      .mockResolvedValueOnce(createJsonResponse(createPage([createEvent("EVT-SEARCH", "搜索命中的审计事件")], 1, 25, 1)));
-
-    renderEventsPage();
-
-    await screen.findByText("EVT-001");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
-    expect(screen.getByTitle("5")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTitle("5"));
-
-    await screen.findByText("EVT-LAST");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/events?pageNum=5&pageSize=10");
-
-    fireEvent.click(screen.getByTitle("1"));
-
-    await screen.findByText("EVT-001");
-    expect(fetchMock.mock.calls[2]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=10");
-
-    fireEvent.mouseDown(screen.getAllByRole("combobox").at(-1)!);
-    fireEvent.click(await screen.findByText(/25/));
-
-    await screen.findByText("EVT-PAGE-SIZE");
-    expect(fetchMock.mock.calls[3]?.[0]).toBe("/lynx/events?pageNum=1&pageSize=25");
-
+    await screen.findByText("security:tool:tool-1");
     fireEvent.change(screen.getByLabelText("关键词"), {
       target: { value: "exec" },
     });
-    await chooseSelectOption("风险等级", "L3 高危");
-    await chooseSelectOption("策略判定", "需审批");
+    await chooseSelectOption("风险等级", "L4 严重");
+    await chooseSelectOption("事件类型", "输出");
     fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
 
-    await screen.findByText("EVT-SEARCH");
+    await screen.findByText("security:output:qa-2");
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
-    expect(fetchMock.mock.calls[4]?.[0]).toBe(
-      "/lynx/events?q=exec&riskLevel=L3&enforcementAction=requireApproval&pageNum=1&pageSize=25",
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "/lynx/security-events?q=exec&riskLevel=L4&eventKind=output&pageNum=1&pageSize=10",
     );
   });
 
