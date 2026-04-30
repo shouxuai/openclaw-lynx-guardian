@@ -250,6 +250,36 @@ describe("approval channel alignment", () => {
     guardInputSpy.mockRestore();
   });
 
+  it("adds L3 input context in before_prompt_build without forced denial", async () => {
+    const guardInputSpy = vi.spyOn(safetyGuard, "guardInput").mockReturnValue({
+      block: true,
+      blockReason: "[Lynx Guardian] protected file prompt blocked",
+      riskAssessment: {
+        level: "L3",
+        score: 8,
+        modules: ["M2:protected_file_access"],
+        description: "protected read request",
+        action: "block",
+      },
+    } as any);
+
+    const result = handlers.before_prompt_build(
+      { prompt: PROTECTED_READ_PROMPT },
+      {
+        sessionKey: "sess-feishu-prompt-build-l3",
+        channelId: "feishu",
+        accountId: "default",
+        conversationId: "user:ou_owner",
+        runId: "run-feishu-prompt-build-l3",
+      },
+    );
+
+    expect((result as any)?.prependContext).toContain("Input risk is L3");
+    expect((result as any)?.systemPrompt).toBeUndefined();
+    expect(String((result as any)?.prependContext)).not.toContain("Lynx Guardian L4 Denial");
+    guardInputSpy.mockRestore();
+  });
+
   it("preserves broker blocks over local L3 input context in before_agent_start", async () => {
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body ?? "{}"));

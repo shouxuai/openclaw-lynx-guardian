@@ -677,7 +677,38 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
         sessionKey: normalizeString(ctx.sessionKey) || undefined,
         guardContext: buildGuardContext(config, event, ctx) as any,
       });
-      if (!promptBuildGuard.blocked) return;
+      if (!promptBuildGuard.blocked) {
+        if (promptBuildGuard.prependContext) {
+          const assessment = promptBuildGuard.decision?.riskAssessment;
+          log.warn(
+            `[lynx-guardian] before_prompt_build injected safety context: ${assessment?.description ?? promptBuildGuard.reason ?? "L3 input context"}`,
+          );
+          localConsoleHooks?.beforeAgentStart({
+            occurredAtMs: Date.now(),
+            sessionKey: normalizeString(ctx.sessionKey) || undefined,
+            runId: normalizeString(ctx.runId) || undefined,
+            summary: promptBuildGuard.reason ?? "Prompt build input guard injected safety context.",
+            promptText: promptBuildGuard.promptText,
+            contentExcerpt: promptBuildGuard.promptText,
+            contentKind: "text",
+            primaryModule: assessment?.modules[0],
+            modules: assessment?.modules,
+            riskLevel: assessment?.level as any,
+            riskScore: assessment?.score,
+            policyDecision: "warn",
+            enforcementAction: "warn",
+            payloadJson: {
+              promptBuildInputGuard: true,
+              hookName: "before_prompt_build",
+              surfaceAction: "model_context",
+            },
+          });
+          return {
+            prependContext: promptBuildGuard.prependContext,
+          };
+        }
+        return;
+      }
 
       const assessment = promptBuildGuard.decision?.riskAssessment;
       log.warn(
