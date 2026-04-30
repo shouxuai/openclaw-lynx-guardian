@@ -1,7 +1,7 @@
 import type { OpenClawPluginApi } from "../types.js";
 import type { ContentCheckResultPayload, ToolCheckResultPayload } from "../api/remote-safety-service.js";
 import { guardInput, type GuardDecision } from "../guard/safety-guard.js";
-import { createReplacementMessage, extractMessageText } from "../runtime/plugin-runtime-helpers.js";
+import { extractMessageText } from "../runtime/plugin-runtime-helpers.js";
 
 export type LynxHookRuntimeContext = Record<string, any>;
 
@@ -78,7 +78,6 @@ export function adaptToolCheckResult(
 
 export interface MessageWriteInputGuardResult {
   blocked: boolean;
-  message?: any;
   decision?: GuardDecision;
   reason?: string;
 }
@@ -88,7 +87,7 @@ export interface MessageWriteInputGuardOptions {
   guardContext?: Record<string, unknown>;
 }
 
-export function guardInboundMessageBeforeWrite(
+export function evaluateInboundMessageBeforeWrite(
   message: any,
   options: MessageWriteInputGuardOptions = {},
 ): MessageWriteInputGuardResult {
@@ -106,23 +105,15 @@ export function guardInboundMessageBeforeWrite(
     return { blocked: false, decision };
   }
 
-  const reason = decision.blockReason ?? decision.riskAssessment.description;
   return {
     blocked: true,
     decision,
-    reason,
-    message: createReplacementMessage(message, buildBlockedInputReplacement(decision, reason)),
+    reason: decision.blockReason ?? decision.riskAssessment.description,
   };
 }
 
-function buildBlockedInputReplacement(decision: GuardDecision, reason: string): string {
-  return [
-    `[Lynx Guardian] Inbound message blocked before transcript persistence.`,
-    `Risk: ${decision.riskAssessment.level}, score=${decision.riskAssessment.score}.`,
-    `Reason: ${reason}`,
-    `The original protected request has been removed. Reply with a brief refusal only.`,
-  ].join("\n");
-}
+export const guardInboundMessageBeforeWrite = evaluateInboundMessageBeforeWrite;
+
 export interface PromptBuildInputGuardOptions {
   sessionKey?: string;
   guardContext?: Record<string, unknown>;

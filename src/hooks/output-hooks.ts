@@ -637,26 +637,25 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
           sessionKey: normalizeString(ctx.sessionKey) || undefined,
           guardContext: buildGuardContext(config, event, ctx) as any,
         });
-        if (inputWriteGuard.blocked && inputWriteGuard.message) {
+        if (inputWriteGuard.blocked) {
           localConsoleHooks?.beforeMessageWrite({
             occurredAtMs: localConsoleOccurredAtMs,
             sessionKey: normalizeString(ctx.sessionKey) || undefined,
             runId: localConsoleRunId,
-            summary: inputWriteGuard.reason ?? "Inbound message was blocked before persistence.",
-            contentExcerpt: extractMessageText(inputWriteGuard.message),
+            summary: inputWriteGuard.reason ?? "Inbound message risk detected before persistence.",
+            contentExcerpt: extractMessageText(originalMessage),
             contentKind: "user_message",
             messageRole: originalMessage.role,
             blocked: true,
             enforcementAction: "block",
             payloadJson: {
               fallbackInputGuard: true,
+              inputPreserved: true,
               modules: inputWriteGuard.decision?.riskAssessment.modules,
             },
           });
-          return {
-            message: inputWriteGuard.message,
-          };
         }
+        return;
       }
 
       let nextMessage = decorateAssistantMessage(originalMessage);
