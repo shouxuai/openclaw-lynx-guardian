@@ -1218,7 +1218,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
         }
       }
 
-      if (pendingBeforeAgentStartDecision?.block && inputSurfaceAction !== "model_context") {
+      if (pendingBeforeAgentStartDecision?.block) {
         return pendingBeforeAgentStartDecision;
       }
 

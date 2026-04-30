@@ -124,6 +124,7 @@ describe("approval channel alignment", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     rmSync(runtimeHome, { recursive: true, force: true });
     clearApprovalGrants();
     clearFeishuLocalApprovalGrants();
@@ -180,6 +181,28 @@ describe("approval channel alignment", () => {
   });
 
   it("adds L3 input context for feishu protected-read prompts in before_agent_start", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        decisionId: "broker-allows-local-l3",
+        stage: "input",
+        block: false,
+        action: "allow",
+        riskLevel: "L0",
+        score: 0,
+        winningArbiter: "semantic_intent",
+        arbiters: [],
+        matchedModules: [],
+        requiresApproval: false,
+        audit: {
+          eventSeverity: "info",
+          policyDecision: "allow",
+          enforcementAction: "allow",
+          color: "neutral",
+        },
+      }),
+    } as Response)));
     configureOwnerApproval();
     const guardInputSpy = vi.spyOn(safetyGuard, "guardInput").mockReturnValue({
       block: true,
@@ -224,6 +247,65 @@ describe("approval channel alignment", () => {
 
     expect((result as any)?.block).not.toBe(true);
     expect((result as any).prependContext).toContain("Input risk is L3");
+    guardInputSpy.mockRestore();
+  });
+
+  it("preserves broker blocks over local L3 input context in before_agent_start", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      expect(request.hook).toBe("before_agent_start");
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          decisionId: "broker-blocks-local-l3",
+          stage: "input",
+          block: true,
+          action: "block",
+          riskLevel: "L4",
+          score: 95,
+          winningArbiter: "semantic_intent",
+          arbiters: [],
+          matchedModules: ["broker:control_plane"],
+          requiresApproval: false,
+          userMessage: "[Broker] independent control-plane block",
+          audit: {
+            eventSeverity: "critical",
+            policyDecision: "block",
+            enforcementAction: "block",
+            color: "red",
+          },
+        }),
+      } as Response;
+    }));
+    configureOwnerApproval();
+    const guardInputSpy = vi.spyOn(safetyGuard, "guardInput").mockReturnValue({
+      block: true,
+      blockReason: "[Lynx Guardian] protected file prompt blocked",
+      riskAssessment: {
+        level: "L3",
+        score: 8,
+        modules: ["M2:protected_file_access"],
+        description: "protected read request",
+        action: "block",
+      },
+    } as any);
+
+    const result = await handlers.before_agent_start(
+      { prompt: PROTECTED_READ_PROMPT },
+      {
+        sessionKey: "sess-broker-block-over-local-l3",
+        channelId: "feishu",
+        accountId: "default",
+        conversationId: "user:ou_owner",
+        runId: "run-broker-block-over-local-l3",
+      },
+    );
+
+    expect(result).toMatchObject({
+      block: true,
+      blockReason: "[Broker] independent control-plane block",
+    });
     guardInputSpy.mockRestore();
   });
 
