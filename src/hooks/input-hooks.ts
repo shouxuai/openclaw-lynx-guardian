@@ -1126,6 +1126,9 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             },
           );
           if (isDirectAgentPromptLevelFallback) {
+            if (pendingBeforeAgentStartDecision?.block) {
+              return pendingBeforeAgentStartDecision;
+            }
             return {
               blockReason: userFacingBlockReason,
               prependContext: denyPrependContext,
