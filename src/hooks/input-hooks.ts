@@ -1056,18 +1056,30 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
         }
         if (surfaceDecision.action === "deny" && !managedLynxCheckPreauthorized && !visibleInputWarningContext) {
           const shouldInjectForcedDenyContext = normalizeString(effectiveAssessment.level) === "L4";
+          const isDirectAgentPromptLevelFallback = channelProfile === "other" && shouldInjectForcedDenyContext;
           const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
           const denyPrependContext = shouldInjectForcedDenyContext
-            ? [
-              prependContext.trim(),
-              buildForcedAgentStartDenyContext({
-                riskLevel: effectiveAssessment.level,
-                reason: blockReason,
-              }),
-            ]
+            ? (isDirectAgentPromptLevelFallback
+              ? [
+                "[Lynx Guardian] Prompt-level fallback active because this OpenClaw runtime does not expose direct-agent physical block semantics.",
+                buildForcedAgentStartDenyContext({
+                  riskLevel: effectiveAssessment.level,
+                  reason: blockReason,
+                }),
+              ]
+              : [
+                prependContext.trim(),
+                buildForcedAgentStartDenyContext({
+                  riskLevel: effectiveAssessment.level,
+                  reason: blockReason,
+                }),
+              ])
               .filter(Boolean)
               .join("\n")
             : prependContext.trim() || undefined;
+          if (isDirectAgentPromptLevelFallback) {
+            log.warn("[lynx-guardian] before_agent_start L4 denial is prompt-level only in this OpenClaw runtime; physical hard-stop requires a claiming pre-model hook.");
+          }
           localConsoleHooks?.beforeAgentStart({
             occurredAtMs: localConsoleOccurredAtMs,
             sessionKey,
@@ -1087,6 +1099,12 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
               managedLynxCheckPreauthorized,
               legacyRiskLevel: policyEvaluation.legacyRiskLevel,
               forcedDenyContext: shouldInjectForcedDenyContext,
+              ...(isDirectAgentPromptLevelFallback
+                ? {
+                  physicalHardStopVerified: false,
+                  requiredCoreHook: "before_agent_dispatch",
+                }
+                : {}),
             },
           });
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
@@ -1107,6 +1125,12 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
               context: "agent_start forced deny",
             },
           );
+          if (isDirectAgentPromptLevelFallback) {
+            return {
+              blockReason: userFacingBlockReason,
+              prependContext: denyPrependContext,
+            } as any;
+          }
           return {
             block: true,
             blockReason: userFacingBlockReason,
