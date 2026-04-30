@@ -160,6 +160,15 @@ export function guardPromptBuildInput(
 }
 
 function extractPromptBuildUserText(event: any): string {
+  const prompt = typeof event?.prompt === "string" ? event.prompt : "";
+  const currentPrompt = extractLatestTimestampedPrompt(prompt);
+  if (currentPrompt.trim().length > 0) {
+    return currentPrompt;
+  }
+  if (prompt.trim().length > 0) {
+    return prompt;
+  }
+
   const messages = Array.isArray(event?.messages) ? event.messages : [];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -170,7 +179,15 @@ function extractPromptBuildUserText(event: any): string {
     }
   }
 
-  return typeof event?.prompt === "string" ? event.prompt : "";
+  return "";
+}
+
+function extractLatestTimestampedPrompt(prompt: string): string {
+  const matches = [
+    ...prompt.matchAll(/\[[^\]\r\n]*\bGMT[^\]\r\n]*\]\s*([\s\S]*?)(?=\n\[[^\]\r\n]*\bGMT[^\]\r\n]*\]|\s*$)/g),
+  ];
+  const last = matches[matches.length - 1];
+  return typeof last?.[1] === "string" ? last[1].trim() : "";
 }
 
 function isUserPromptMessage(message: any): boolean {
