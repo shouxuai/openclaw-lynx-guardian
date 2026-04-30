@@ -70,12 +70,6 @@ export class DecisionBroker {
     timeoutMs: number,
     wait: boolean,
   ): Promise<DecisionResponse> {
-    const local = evaluateLocalL4FastPath(context);
-    if (local.matched && local.decision) {
-      this.recordLocalL4Decision(context, local.decision);
-      return local.decision;
-    }
-
     const key = this.cacheKey(context);
     const cached = this.cache.get(key);
     if (cached) {
@@ -131,6 +125,12 @@ export class DecisionBroker {
   }
 
   private degradedDecision(context: DecisionContext, backendTimeout: boolean, reason?: string): DecisionResponse {
+    const local = evaluateLocalL4FastPath({ ...context, backendAvailable: false });
+    if (local.matched && local.decision) {
+      this.recordLocalL4Decision(context, local.decision);
+      return local.decision;
+    }
+
     const dangerousTool = context.stage === "tool_call" && containsAny(
       `${context.toolName ?? ""} ${context.targetUri ?? ""} ${context.content ?? ""}`.toLowerCase(),
       "shell",

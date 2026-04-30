@@ -622,6 +622,7 @@ const PASSTHROUGH_REQUEST_HEADERS = new Set([
   "accept-encoding",
   "accept-language",
   "cache-control",
+  "content-type",
   "if-match",
   "if-modified-since",
   "if-none-match",
@@ -797,6 +798,29 @@ function sendTextResponse(
   return true;
 }
 
+function isGatewayProxyMethodAllowed(routeKind: LocalConsoleGatewayRouteKind, method: string): boolean {
+  if (method === "GET" || method === "HEAD") {
+    return true;
+  }
+  return routeKind === "query-api" && method === "POST";
+}
+
+function shouldForwardRequestBody(method: string): boolean {
+  return method !== "GET" && method !== "HEAD";
+}
+
+async function readRequestBody(req: IncomingMessage): Promise<ArrayBuffer | undefined> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  if (chunks.length === 0) {
+    return undefined;
+  }
+  const body = Buffer.concat(chunks);
+  return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer;
+}
+
 export function createLocalConsoleGatewayProxyHandler(
   options: LocalConsoleGatewayProxyOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
@@ -819,9 +843,9 @@ export function createLocalConsoleGatewayProxyHandler(
     }
 
     const method = (req.method ?? "GET").toUpperCase();
-    if (method !== "GET" && method !== "HEAD") {
+    if (!isGatewayProxyMethodAllowed(routeKind, method)) {
       res.statusCode = 405;
-      res.setHeader("Allow", "GET, HEAD");
+      res.setHeader("Allow", routeKind === "query-api" ? "GET, HEAD, POST" : "GET, HEAD");
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       res.end("Method Not Allowed");
       return true;
@@ -837,6 +861,7 @@ export function createLocalConsoleGatewayProxyHandler(
     }
 
     const upstreamUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, options.config.baseUrl).toString();
+    const requestBody = shouldForwardRequestBody(method) ? await readRequestBody(req) : undefined;
     const controller = new AbortController();
     const timeoutHandle = setTimeout(
       () => controller.abort(),
@@ -847,6 +872,7 @@ export function createLocalConsoleGatewayProxyHandler(
       const upstreamResponse = await fetchImpl(upstreamUrl, {
         headers: buildForwardHeaders(req.headers),
         method,
+        ...(requestBody ? { body: requestBody } : {}),
         signal: controller.signal,
       });
 

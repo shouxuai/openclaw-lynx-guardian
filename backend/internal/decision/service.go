@@ -45,6 +45,7 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 		Arbiters:         []api.ArbiterResult{semantic, evidence},
 		MatchedModules:   mergeMatchedModules(semantic.MatchedModules, evidence.MatchedModules),
 		RequiresApproval: requiresApproval(winner.Action),
+		UserMessage:      deterministicUserMessage(req, winner.Action),
 		Audit: api.DecisionAudit{
 			EventSeverity:     eventSeverityFor(winner.RiskLevel, winner.Action),
 			PolicyDecision:    winner.Action,
@@ -62,6 +63,40 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 		}
 	}
 	return response, nil
+}
+
+func deterministicUserMessage(req api.DecisionRequest, action api.DecisionAction) string {
+	if !finalActionBlocks(action) {
+		return ""
+	}
+	if evidence, ok := firstDeniedResourceEvidence(req.ResourceEvidence); ok {
+		return protectedResourceUserMessage(evidence)
+	}
+	return ""
+}
+
+func firstDeniedResourceEvidence(items []api.ResourcePolicyEvidence) (api.ResourcePolicyEvidence, bool) {
+	for _, evidence := range items {
+		if !evidence.Allowed {
+			return evidence, true
+		}
+	}
+	return api.ResourcePolicyEvidence{}, false
+}
+
+func protectedResourceUserMessage(evidence api.ResourcePolicyEvidence) string {
+	path := evidence.RealPath
+	if strings.TrimSpace(path) == "" {
+		path = evidence.MatchedPath
+	}
+	return strings.Join([]string{
+		"Lynx Guardian blocked this tool call before execution.",
+		"Rule: resource_policy.protected_resource_violation",
+		"Protected path: " + path,
+		"Operation: " + evidence.Operation,
+		"Preset: " + evidence.Preset,
+		"Reason: " + evidence.Reason,
+	}, "\n")
 }
 
 func mergeMatchedModules(groups ...[]string) []string {

@@ -13,6 +13,7 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/grants"
 	"github.com/openclaw/lynx-guardian/backend/internal/ingest"
 	"github.com/openclaw/lynx-guardian/backend/internal/middleware"
+	"github.com/openclaw/lynx-guardian/backend/internal/policy"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
 	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	"github.com/openclaw/lynx-guardian/backend/internal/service"
@@ -50,7 +51,9 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	decisions := repo.NewDecisionRepository(database)
 	chains := repo.NewChainRepository(database)
 	approvalGrants := repo.NewGrantRepository(database)
+	policyRepository := repo.NewPolicyRepository(database)
 	decisionService := decision.NewService(decisions)
+	policyService := policy.NewService(policyRepository)
 	grantService := grants.NewService(approvalGrants)
 	chainService := chain.NewService(chains, grantService)
 	lynxCheckService := tasks.NewLynxCheckService(lynxCheckTasks)
@@ -87,7 +90,8 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	routes.RegisterChains(query, ingestGroup, chainService, chains)
 	routes.RegisterGrants(query, ingestGroup, grantService, approvalGrants)
 	routes.RegisterIngest(ingestGroup, ingestService)
-	routes.RegisterDecisions(query, ingestGroup, decisionService, decisions)
+	routes.RegisterDecisions(query, ingestGroup, decisionService, decisions, policyService)
+	routes.RegisterPolicy(query, policyRepository)
 
 	closer := func() error { return database.Close() }
 	return root, closer, nil

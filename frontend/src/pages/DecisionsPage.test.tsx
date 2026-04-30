@@ -26,6 +26,22 @@ describe("DecisionsPage", () => {
           enforcementAction: "warn",
           color: "yellow",
         },
+        metadataJson: {
+          policyVersion: 9,
+          scriptEvidence: [
+            {
+              evidenceId: "script-1",
+              scriptPath: "bad.py",
+              riskLevel: "L4",
+              findings: [
+                {
+                  ruleId: "script.credential_external_exfiltration",
+                  behavior: "exfiltrates credentials",
+                },
+              ],
+            },
+          ],
+        },
         arbiters: [
           {
             arbiter: "evidence_score",
@@ -55,11 +71,16 @@ describe("DecisionsPage", () => {
     expect(within(row!).getByText("未阻断")).toHaveClass("status-badge--warning");
     expect(screen.queryByText(/block:false/)).not.toBeInTheDocument();
     expect(screen.queryByText("evidence_score")).not.toBeInTheDocument();
+    expect(screen.queryByText("脚本预检证据")).not.toBeInTheDocument();
 
     fireEvent.click(within(row!).getByRole("button", { name: "查看 decision-warn-1 裁决详情" }));
 
     expect(screen.getByRole("dialog", { name: "裁决详情" })).toBeInTheDocument();
     expect(screen.getByText("evidence_score")).toBeInTheDocument();
     expect(screen.getByText("input.warn_signal +42")).toBeInTheDocument();
+    expect(screen.getByText("策略版本")).toBeInTheDocument();
+    expect(screen.getByText("9")).toBeInTheDocument();
+    expect(screen.getByText("脚本预检证据")).toBeInTheDocument();
+    expect(screen.getByText(/script\.credential_external_exfiltration/)).toBeInTheDocument();
   });
 });

@@ -39,3 +39,7 @@ func NewIngestRepository(db *sql.DB) *IngestRepository { return &IngestRepositor
 type SkillRepository struct{ db *sql.DB }
 
 func NewSkillRepository(db *sql.DB) *SkillRepository { return &SkillRepository{db: db} }
+
+type PolicyRepository struct{ db *sql.DB }
+
+func NewPolicyRepository(db *sql.DB) *PolicyRepository { return &PolicyRepository{db: db} }

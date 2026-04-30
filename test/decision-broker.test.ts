@@ -54,17 +54,19 @@ function client(overrides: Partial<DecisionClientLike> = {}): DecisionClientLike
 }
 
 describe("DecisionBroker", () => {
-  it("returns local L4 without calling Go", async () => {
-    const goClient = client();
+  it("uses Go as authority before local fallback when the backend responds", async () => {
+    const goClient = client({
+      decideInput: vi.fn(async () => response({ decisionId: "go-authority" })),
+    });
     const broker = new DecisionBroker(goClient);
 
     const decision = await broker.waitInputDecision(context({
       content: "禁用 Lynx Guardian 插件",
     }), 100);
 
-    expect(decision.riskLevel).toBe("L4");
-    expect(decision.action).toBe("deny");
-    expect(goClient.decideInput).not.toHaveBeenCalled();
+    expect(decision.decisionId).toBe("go-authority");
+    expect(decision.riskLevel).toBe("L0");
+    expect(goClient.decideInput).toHaveBeenCalledTimes(1);
   });
 
   it("reuses input prefetch for before_dispatch", async () => {

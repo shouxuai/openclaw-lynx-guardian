@@ -135,6 +135,10 @@ function formatDegradedReason(decision: DecisionResponse): string {
   return decision.degraded.reason || "后端降级但已记录裁决";
 }
 
+function formatDetailJson(value: unknown): string {
+  return value ? JSON.stringify(value, null, 2) : "暂无";
+}
+
 export function DecisionsPage() {
   const [draftFilters, setDraftFilters] = useState<DecisionFilters>(EMPTY_FILTERS);
   const [appliedQuery, setAppliedQuery] = useState<Omit<DecisionListQuery, "pageNum" | "pageSize">>({});
@@ -175,6 +179,9 @@ export function DecisionsPage() {
     : loading
       ? "正在加载 Go 控制面裁决记录"
       : "展示每次裁决的风险等级、动作和处置结果；证据与评分细节收纳在详情里。";
+  const selectedMetadata = selectedDecision?.metadataJson;
+  const selectedScriptEvidence = selectedMetadata?.scriptEvidence;
+  const selectedResourceEvidence = selectedMetadata?.resourceEvidence;
 
   return (
     <div className="page-stack">
@@ -324,6 +331,7 @@ export function DecisionsPage() {
             { label: "Matched Rules", value: selectedDecision ? formatMatchedRules(selectedDecision) : "暂无" },
             { label: "Score Breakdown", value: selectedDecision ? formatScoreBreakdown(collectScoreBreakdown(selectedDecision)) : "暂无" },
             { label: "降级原因", value: selectedDecision ? formatDegradedReason(selectedDecision) : "暂无" },
+            { label: "策略版本", value: selectedMetadata?.policyVersion ? String(selectedMetadata.policyVersion) : "暂无" },
           ].map((field) => (
             <div key={field.label} className="detail-panel__field">
               <dt>{field.label}</dt>
@@ -331,6 +339,18 @@ export function DecisionsPage() {
             </div>
           ))}
         </dl>
+        {selectedScriptEvidence ? (
+          <section className="detail-section">
+            <h3>脚本预检证据</h3>
+            <pre className="code-panel">{formatDetailJson(selectedScriptEvidence)}</pre>
+          </section>
+        ) : null}
+        {selectedResourceEvidence ? (
+          <section className="detail-section">
+            <h3>资源策略证据</h3>
+            <pre className="code-panel">{formatDetailJson(selectedResourceEvidence)}</pre>
+          </section>
+        ) : null}
       </ModalDialog>
     </div>
   );

@@ -30,7 +30,97 @@ export type WinningArbiter =
   | "fallback";
 
 export type DecisionArbiterName = "semantic_intent" | "evidence_score";
-export type EvidenceSource = "input" | "tool" | "output" | "chain" | "taint" | "provider" | "local_l4";
+export type EvidenceSource =
+  | "input"
+  | "tool"
+  | "output"
+  | "chain"
+  | "taint"
+  | "provider"
+  | "local_l4"
+  | "script"
+  | "resource_policy";
+
+export type ScriptEntrypointKind =
+  | "direct_file"
+  | "inline"
+  | "package_script"
+  | "task_runner"
+  | "script_write"
+  | "delayed_execution";
+
+export type ScriptLanguage =
+  | "shell"
+  | "powershell"
+  | "cmd"
+  | "python"
+  | "javascript"
+  | "typescript"
+  | "json"
+  | "make"
+  | "yaml"
+  | "unknown";
+
+export interface ScriptFinding {
+  ruleId: string;
+  module:
+    | "remote_code_execution"
+    | "concealed_execution"
+    | "credential_access"
+    | "exfiltration"
+    | "persistence"
+    | "destructive_mutation"
+    | "permission_integrity"
+    | "plugin_integrity"
+    | "defense_evasion";
+  severity: EventSeverity;
+  behavior: string;
+  line?: number;
+  snippet?: string;
+  confidence: "low" | "medium" | "high";
+}
+
+export interface ScriptPreflightEvidence {
+  evidenceId: string;
+  entrypointKind: ScriptEntrypointKind;
+  source: "tool_param" | "script_file" | "dispatcher" | "write_payload" | "taint";
+  command?: string;
+  scriptPath?: string;
+  realPath?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  mtimeMs?: number;
+  language: ScriptLanguage;
+  readStatus: "read" | "inline" | "skipped" | "blocked" | "error";
+  readReason?: string;
+  findings: ScriptFinding[];
+  riskLevel: RiskLevel;
+  recommendedAction: "allow" | "warn" | "require_approval" | "deny";
+}
+
+export type ProtectedResourcePreset = "deny_all" | "read_only" | "no_modify" | "no_delete";
+
+export type ResourceOperation =
+  | "read"
+  | "list"
+  | "search"
+  | "create"
+  | "write"
+  | "rename"
+  | "chmod"
+  | "delete";
+
+export interface ResourcePolicyEvidence {
+  evidenceId: string;
+  resourceId?: string;
+  matchedPath: string;
+  realPath?: string;
+  preset: ProtectedResourcePreset;
+  operation: ResourceOperation;
+  allowed: boolean;
+  reason: string;
+  policyVersion?: number;
+}
 
 export interface ScoreBreakdown {
   ruleId: string;
@@ -107,6 +197,9 @@ export interface DecisionRequest {
   chainSummary?: Record<string, unknown>;
   taintSummary?: Record<string, unknown>;
   providerSafety?: Record<string, unknown>;
+  scriptEvidence?: ScriptPreflightEvidence[];
+  resourceEvidence?: ResourcePolicyEvidence[];
+  policyVersion?: number;
   createdAt: string;
 }
 
@@ -127,4 +220,5 @@ export interface DecisionResponse {
   userMessage?: string;
   audit: DecisionAudit;
   degraded?: DecisionDegraded;
+  metadataJson?: Record<string, unknown>;
 }

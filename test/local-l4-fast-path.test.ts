@@ -119,4 +119,45 @@ describe("evaluateLocalL4FastPath", () => {
     expect(result.matched).toBe(false);
     expect(result.decision).toBeUndefined();
   });
+
+  it("fails closed locally for script L4 evidence when Go decision is unavailable", () => {
+    const result = evaluateLocalL4FastPath(context({
+      stage: "tool_call",
+      hook: "before_tool_call",
+      toolName: "exec",
+      content: "{\"command\":\"python bad.py\"}",
+      backendAvailable: false,
+      scriptEvidence: [
+        {
+          evidenceId: "script-1",
+          entrypointKind: "direct_file",
+          source: "script_file",
+          command: "python bad.py",
+          scriptPath: "bad.py",
+          language: "python",
+          readStatus: "read",
+          findings: [
+            {
+              ruleId: "script.credential_external_exfiltration",
+              module: "exfiltration",
+              severity: "critical",
+              behavior: "exfiltrates credentials",
+              confidence: "high",
+            },
+          ],
+          riskLevel: "L4",
+          recommendedAction: "deny",
+        },
+      ],
+    }));
+
+    expect(result.matched).toBe(true);
+    expect(result.decision?.block).toBe(true);
+    expect(result.decision?.riskLevel).toBe("L4");
+    expect(result.decision?.metadataJson).toMatchObject({
+      policyAuthority: "local_l4_fallback",
+      backendUnavailable: true,
+      localFallbackUsed: true,
+    });
+  });
 });

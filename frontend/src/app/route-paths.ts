@@ -7,6 +7,7 @@ export const ROUTE_PATHS = {
   decisions: "/decisions",
   toolCalls: "/tool-calls",
   approvals: "/approvals",
+  policies: "/policies",
   chains: "/chains",
   grants: "/grants",
   lynxChecks: "/lynx-checks",

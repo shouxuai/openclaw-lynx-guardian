@@ -1,4 +1,9 @@
-import type { DecisionRequest, DecisionStage } from "../../shared/src/decision.js";
+import type {
+  DecisionRequest,
+  DecisionStage,
+  ResourcePolicyEvidence,
+  ScriptPreflightEvidence,
+} from "../../shared/src/decision.js";
 import { resolveLocalConsoleQaRecordId } from "../console/event-builder.js";
 
 export interface DecisionContext {
@@ -19,6 +24,10 @@ export interface DecisionContext {
   chainSummary?: Record<string, unknown>;
   taintSummary?: Record<string, unknown>;
   providerSafety?: Record<string, unknown>;
+  scriptEvidence?: ScriptPreflightEvidence[];
+  resourceEvidence?: ResourcePolicyEvidence[];
+  policyVersion?: number;
+  backendAvailable?: boolean;
   createdAt: string;
 }
 
@@ -46,6 +55,9 @@ export function decisionRequestFromContext(context: DecisionContext): DecisionRe
     chainSummary: context.chainSummary,
     taintSummary: context.taintSummary,
     providerSafety: context.providerSafety,
+    scriptEvidence: context.scriptEvidence,
+    resourceEvidence: context.resourceEvidence,
+    policyVersion: context.policyVersion,
     createdAt: context.createdAt,
   };
 }

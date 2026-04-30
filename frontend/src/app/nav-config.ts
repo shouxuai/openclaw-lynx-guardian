@@ -67,6 +67,12 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
         pageTitle: "审批管理",
       },
       {
+        id: "policies",
+        label: "策略配置",
+        path: ROUTE_PATHS.policies,
+        pageTitle: "策略配置",
+      },
+      {
         id: "chains",
         label: "多轮链路",
         path: ROUTE_PATHS.chains,

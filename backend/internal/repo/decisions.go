@@ -449,33 +449,47 @@ func decisionAuditPayload(req api.DecisionRequest, decision api.DecisionResponse
 		}
 		scoreBreakdown = append(scoreBreakdown, arbiter.ScoreBreakdown...)
 	}
-	return map[string]any{
-		"decisionId":        decision.DecisionID,
-		"requestId":         nonEmptyString(req.RequestID, decision.DecisionID),
-		"stage":             decision.Stage,
-		"hook":              req.Hook,
-		"sessionKey":        req.SessionKey,
-		"channelProfile":    req.ChannelProfile,
-		"conversationId":    req.ConversationID,
-		"requesterId":       req.RequesterID,
-		"riskLevel":         decision.RiskLevel,
-		"action":            decision.Action,
-		"block":             decision.Block,
-		"score":             decision.Score,
-		"riskScore":         int(decision.Score),
-		"winningArbiter":    decision.WinningArbiter,
-		"matchedModules":    decision.MatchedModules,
-		"matchedRules":      matchedRules,
-		"scoreBreakdown":    scoreBreakdown,
-		"evidence":          evidence,
-		"arbiters":          decision.Arbiters,
-		"audit":             decision.Audit,
-		"requiresApproval":  decision.RequiresApproval,
-		"policyDecision":    decision.Audit.PolicyDecision,
-		"enforcementAction": decision.Audit.EnforcementAction,
-		"request":           req,
-		"decision":          decision,
+	payload := map[string]any{
+		"decisionId":            decision.DecisionID,
+		"requestId":             nonEmptyString(req.RequestID, decision.DecisionID),
+		"stage":                 decision.Stage,
+		"hook":                  req.Hook,
+		"sessionKey":            req.SessionKey,
+		"channelProfile":        req.ChannelProfile,
+		"conversationId":        req.ConversationID,
+		"requesterId":           req.RequesterID,
+		"riskLevel":             decision.RiskLevel,
+		"action":                decision.Action,
+		"block":                 decision.Block,
+		"score":                 decision.Score,
+		"riskScore":             int(decision.Score),
+		"winningArbiter":        decision.WinningArbiter,
+		"matchedModules":        decision.MatchedModules,
+		"matchedRules":          matchedRules,
+		"scoreBreakdown":        scoreBreakdown,
+		"evidence":              evidence,
+		"arbiters":              decision.Arbiters,
+		"audit":                 decision.Audit,
+		"requiresApproval":      decision.RequiresApproval,
+		"policyDecision":        decision.Audit.PolicyDecision,
+		"enforcementAction":     decision.Audit.EnforcementAction,
+		"policyAuthority":       "go",
+		"scriptEvidenceCount":   len(req.ScriptEvidence),
+		"resourceEvidenceCount": len(req.ResourceEvidence),
+		"localFallbackUsed":     false,
+		"request":               req,
+		"decision":              decision,
 	}
+	if len(req.ScriptEvidence) > 0 {
+		payload["scriptEvidence"] = req.ScriptEvidence
+	}
+	if len(req.ResourceEvidence) > 0 {
+		payload["resourceEvidence"] = req.ResourceEvidence
+	}
+	if req.PolicyVersion > 0 {
+		payload["policyVersion"] = req.PolicyVersion
+	}
+	return payload
 }
 
 func decisionContentKind(req api.DecisionRequest) string {
@@ -590,11 +604,13 @@ func decisionEvidenceRowID(decisionID string, evidenceID string, arbiterIndex in
 
 func (r *DecisionRepository) GetDecision(ctx context.Context, id string) (api.DecisionResponse, error) {
 	row, err := r.scanDecisionRow(ctx, `
-		SELECT id, stage, risk_level, action, block, score, winning_arbiter,
-		       matched_modules_json, requires_approval, approval_request_json,
-		       redactions_json, prompt_context, user_message, audit_json, degraded_json
-		FROM decisions
-		WHERE id = ?`,
+		SELECT d.id, d.stage, d.risk_level, d.action, d.block, d.score, d.winning_arbiter,
+		       d.matched_modules_json, d.requires_approval, d.approval_request_json,
+		       d.redactions_json, d.prompt_context, d.user_message, d.audit_json, d.degraded_json,
+		       COALESCE(a.payload_json, '')
+		FROM decisions d
+		LEFT JOIN audit_events a ON a.event_id = d.id || '-audit'
+		WHERE d.id = ?`,
 		id,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -612,11 +628,13 @@ func (r *DecisionRepository) ListDecisions(ctx context.Context, q DecisionListQu
 		limit = *q.Limit
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, stage, risk_level, action, block, score, winning_arbiter,
-		       matched_modules_json, requires_approval, approval_request_json,
-		       redactions_json, prompt_context, user_message, audit_json, degraded_json
-		FROM decisions
-		ORDER BY created_at DESC, id DESC
+		SELECT d.id, d.stage, d.risk_level, d.action, d.block, d.score, d.winning_arbiter,
+		       d.matched_modules_json, d.requires_approval, d.approval_request_json,
+		       d.redactions_json, d.prompt_context, d.user_message, d.audit_json, d.degraded_json,
+		       COALESCE(a.payload_json, '')
+		FROM decisions d
+		LEFT JOIN audit_events a ON a.event_id = d.id || '-audit'
+		ORDER BY d.created_at DESC, d.id DESC
 		LIMIT ?`,
 		limit,
 	)
@@ -667,6 +685,7 @@ type decisionRow struct {
 	UserMessage         string
 	AuditJSON           string
 	DegradedJSON        string
+	MetadataJSON        string
 }
 
 type decisionRowsScanner interface {
@@ -695,6 +714,7 @@ func scanDecisionRows(rows decisionRowsScanner) (decisionRow, error) {
 		&row.UserMessage,
 		&row.AuditJSON,
 		&row.DegradedJSON,
+		&row.MetadataJSON,
 	)
 	return row, err
 }
@@ -712,6 +732,8 @@ func (r *DecisionRepository) hydrateDecision(ctx context.Context, row decisionRo
 	unmarshalJSONText(row.AuditJSON, &audit)
 	approvalRequest := decodeOptional[api.ApprovalRequestDraft](row.ApprovalRequestJSON)
 	degraded := decodeOptional[api.DecisionDegraded](row.DegradedJSON)
+	var metadataJson map[string]any
+	unmarshalJSONText(row.MetadataJSON, &metadataJson)
 
 	return api.DecisionResponse{
 		DecisionID:       row.ID,
@@ -730,6 +752,7 @@ func (r *DecisionRepository) hydrateDecision(ctx context.Context, row decisionRo
 		UserMessage:      row.UserMessage,
 		Audit:            audit,
 		Degraded:         degraded,
+		MetadataJson:     metadataJson,
 	}, nil
 }
 

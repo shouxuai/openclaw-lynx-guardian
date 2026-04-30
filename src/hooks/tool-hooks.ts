@@ -2,8 +2,56 @@ import type { OpenClawPluginApi } from "../types.js";
 import type { CheckExecBlacklistContext } from "../blacklist.js";
 import type { MaliciousSkillEntry } from "../skills/skill-guard.js";
 import type { LynxHookRuntimeContext } from "./setup.js";
+import type { ResourcePolicyEvidence, ScriptPreflightEvidence } from "../../shared/src/decision.js";
 import * as blacklist from "../blacklist.js";
 import * as safetyGuard from "../guard/safety-guard.js";
+import {
+  buildDecisionOnlyToolEvent,
+  buildScriptPreflightMetadata,
+  collectScriptPreflightEvidence,
+} from "../script-preflight/evidence-adapter.js";
+import { explainScriptDenial } from "../script-preflight/explanation.js";
+import { collectResourcePolicyEvidence } from "../protected-resources/evidence-adapter.js";
+import { buildProtectedResourceDenialExplanation } from "../protected-resources/explanation.js";
+
+function hasDenyingScriptEvidence(scriptEvidence: ScriptPreflightEvidence[]): boolean {
+  return scriptEvidence.some((item) => item.riskLevel === "L4" || item.recommendedAction === "deny");
+}
+
+function scriptRuleIds(scriptEvidence: ScriptPreflightEvidence[]): string[] {
+  return scriptEvidence.flatMap((item) => item.findings.map((finding) => finding.ruleId).filter(Boolean));
+}
+
+function hasDenyingResourceEvidence(resourceEvidence: ResourcePolicyEvidence[]): boolean {
+  return resourceEvidence.some((item) => item.allowed === false);
+}
+
+async function mergeScriptBlockReason(
+  blockReason: string | undefined,
+  scriptEvidence: ScriptPreflightEvidence[],
+): Promise<string> {
+  const explanation = await explainScriptDenial({ evidence: scriptEvidence });
+  const existing = blockReason?.trim() ?? "";
+  if (!existing) {
+    return explanation;
+  }
+  const addsRuleId = scriptRuleIds(scriptEvidence).some((ruleId) => !existing.includes(ruleId));
+  return addsRuleId ? `${existing}\n\n${explanation}` : existing;
+}
+
+function mergeResourceBlockReason(
+  blockReason: string | undefined,
+  resourceEvidence: ResourcePolicyEvidence[],
+): string {
+  const explanation = buildProtectedResourceDenialExplanation(resourceEvidence);
+  const existing = blockReason?.trim() ?? "";
+  if (!existing) {
+    return explanation;
+  }
+  return existing.includes("resource_policy.protected_resource_violation")
+    ? existing
+    : `${existing}\n\n${explanation}`;
+}
 
 export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRuntimeContext): void {
   const {
@@ -247,18 +295,36 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
   api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
     log.info(`[lynx-guardian] before_tool_call tool=${JSON.stringify(toolName)} params=${JSON.stringify(params)}`);
-    if (decisionBroker) {
-      const decisionResult = await handleBeforeToolCallDecision(decisionBroker, event, ctx);
-      if (decisionResult?.block || decisionResult?.requireApproval) {
-        return decisionResult;
-      }
-    }
+    const scriptEvidence = collectScriptPreflightEvidence({
+      toolName,
+      params: (params ?? {}) as Record<string, unknown>,
+      cwd: typeof (ctx as any).cwd === "string" ? (ctx as any).cwd : undefined,
+    });
+    const scriptPreflightMetadata = buildScriptPreflightMetadata(scriptEvidence);
+    const resourceEvidence = collectResourcePolicyEvidence({
+      toolName,
+      params: (params ?? {}) as Record<string, unknown>,
+      protectedResources: [],
+    });
     const localConsoleOccurredAtMs = Date.now();
     const localConsoleSessionKey = normalizeString(ctx.sessionKey) || undefined;
     const localConsoleRunId = normalizeString((ctx as any).runId) || undefined;
     const localConsoleToolCallId = normalizeString((event as any)?.toolCallId) || undefined;
     const localConsoleParamSummary = buildParamSummary(toolName, params ?? {});
     const recordBeforeToolCall = (overrides: Record<string, unknown> = {}) => {
+      const overrideMetadata = overrides.metadataJson;
+      const metadataJson = scriptPreflightMetadata || (
+        overrideMetadata && typeof overrideMetadata === "object" && !Array.isArray(overrideMetadata)
+      )
+        ? {
+            ...(
+              overrideMetadata && typeof overrideMetadata === "object" && !Array.isArray(overrideMetadata)
+                ? overrideMetadata as Record<string, unknown>
+                : {}
+            ),
+            ...(scriptPreflightMetadata ? { scriptPreflight: scriptPreflightMetadata } : {}),
+          }
+        : undefined;
       localConsoleHooks?.beforeToolCall({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey: localConsoleSessionKey,
@@ -268,8 +334,47 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
         params,
         paramSummary: localConsoleParamSummary,
         ...overrides,
+        metadataJson,
       } as any);
     };
+    const decisionOnlyEvent = buildDecisionOnlyToolEvent(event, { scriptEvidence, resourceEvidence });
+    if (decisionBroker) {
+      const decisionResult = await handleBeforeToolCallDecision(decisionBroker, decisionOnlyEvent, ctx);
+      if (decisionResult?.block) {
+        let blockReason = decisionResult.blockReason;
+        if (hasDenyingScriptEvidence(scriptEvidence)) {
+          blockReason = await mergeScriptBlockReason(blockReason, scriptEvidence);
+        }
+        if (hasDenyingResourceEvidence(resourceEvidence)) {
+          blockReason = mergeResourceBlockReason(blockReason, resourceEvidence);
+        }
+        if (blockReason !== decisionResult.blockReason) {
+          recordBeforeToolCall({
+            enforcementAction: "block",
+            policyDecision: "deny",
+            metadataJson: blockReason ? { blockReason } : undefined,
+          });
+          return {
+            ...decisionResult,
+            blockReason,
+          };
+        }
+        recordBeforeToolCall({
+          enforcementAction: "block",
+          policyDecision: "deny",
+          metadataJson: decisionResult.blockReason ? { blockReason: decisionResult.blockReason } : undefined,
+        });
+      }
+      if (decisionResult?.block || decisionResult?.requireApproval) {
+        if (decisionResult.requireApproval) {
+          recordBeforeToolCall({
+            enforcementAction: "requireApproval",
+            policyDecision: "require_approval",
+          });
+        }
+        return decisionResult;
+      }
+    }
     const buildLocalConsoleApproval = (approvalParams: {
       approvalId: string;
       module: string;

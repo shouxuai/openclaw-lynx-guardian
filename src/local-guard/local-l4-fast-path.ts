@@ -117,6 +117,23 @@ const localL4Rules: LocalL4Rule[] = [
 ];
 
 export function evaluateLocalL4FastPath(context: DecisionContext): LocalL4Decision {
+  const scriptFallbackHit = findUnavailableScriptEvidenceDeny(context);
+  if (scriptFallbackHit) {
+    return {
+      matched: true,
+      decision: buildLocalL4Decision(
+        context.stage,
+        scriptFallbackHit.module,
+        scriptFallbackHit.reason,
+        {
+          policyAuthority: "local_l4_fallback",
+          backendUnavailable: true,
+          localFallbackUsed: true,
+        },
+      ),
+    };
+  }
+
   const text = normalizeContextText(context);
   const promptHit = findLocalPromptHardDeny(text);
   if (promptHit) {
@@ -216,7 +233,12 @@ export function evaluateLocalL4Output(
   });
 }
 
-function buildLocalL4Decision(stage: DecisionStage, module: string, reason: string): DecisionResponse {
+function buildLocalL4Decision(
+  stage: DecisionStage,
+  module: string,
+  reason: string,
+  metadataJson?: Record<string, unknown>,
+): DecisionResponse {
   return {
     decisionId: `local-l4-${Date.now()}`,
     stage,
@@ -235,6 +257,28 @@ function buildLocalL4Decision(stage: DecisionStage, module: string, reason: stri
       color: "red",
     },
     userMessage: reason,
+    metadataJson,
+  };
+}
+
+function findUnavailableScriptEvidenceDeny(context: DecisionContext): { module: string; reason: string } | null {
+  if (context.backendAvailable !== false) {
+    return null;
+  }
+  const evidence = context.scriptEvidence?.find((item) =>
+    item.riskLevel === "L4" && item.recommendedAction === "deny"
+  );
+  if (!evidence) {
+    return null;
+  }
+  const ruleIds = evidence.findings.map((finding) => finding.ruleId).filter(Boolean);
+  return {
+    module: "local_script_l4_fallback",
+    reason: [
+      "Decision backend unavailable; local script preflight evidence requires fail-closed denial.",
+      evidence.scriptPath ? `script=${evidence.scriptPath}` : "",
+      ruleIds.length > 0 ? `rules=${ruleIds.join(",")}` : "",
+    ].filter(Boolean).join(" "),
   };
 }
 

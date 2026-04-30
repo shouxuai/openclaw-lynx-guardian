@@ -69,12 +69,20 @@ function formatToolSignals(call: ToolCallListItemDto): string {
   ].filter(Boolean).join("；") || "暂无";
 }
 
-function formatDetailJson(value: Record<string, unknown> | undefined): string {
+function formatDetailJson(value: unknown): string {
   return value ? JSON.stringify(value, null, 2) : "暂无";
 }
 
 function formatList(values: string[] | undefined): string {
   return values && values.length > 0 ? values.join("；") : "暂无";
+}
+
+function generalMetadata(metadata: ToolCallDetailDto["metadataJson"] | undefined): Record<string, unknown> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+  const { scriptPreflight: _scriptPreflight, ...rest } = metadata;
+  return rest;
 }
 
 export function ToolCallsPage() {
@@ -107,6 +115,7 @@ export function ToolCallsPage() {
   }, [items]);
   const statusText = error ? `工具调用数据加载失败：${error}` : loading ? "正在加载调用流水" : "详细审计记录基于 tool_calls 协议层追踪";
   const isDetailDialogOpen = Boolean(selectedDetail || detailError);
+  const selectedScriptPreflight = selectedDetail?.metadataJson?.scriptPreflight;
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -333,7 +342,7 @@ export function ToolCallsPage() {
             { label: "结果摘要", value: selectedDetail?.resultExcerpt ?? "暂无" },
             {
               label: "Metadata",
-              value: <pre className="code-panel">{formatDetailJson(selectedDetail?.metadataJson)}</pre>,
+              value: <pre className="code-panel">{formatDetailJson(generalMetadata(selectedDetail?.metadataJson))}</pre>,
             },
           ].map((field) => (
             <div key={field.label} className="detail-panel__field">
@@ -342,6 +351,12 @@ export function ToolCallsPage() {
             </div>
           ))}
         </dl>
+        {selectedScriptPreflight ? (
+          <section className="detail-section">
+            <h3>脚本预检证据</h3>
+            <pre className="code-panel">{formatDetailJson(selectedScriptPreflight)}</pre>
+          </section>
+        ) : null}
       </ModalDialog>
     </div>
   );

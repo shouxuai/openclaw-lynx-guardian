@@ -7,6 +7,7 @@ import type {
   RiskLevel,
   TokenTrendBucket,
 } from "./enums.js";
+import type { ResourcePolicyEvidence, ScriptPreflightEvidence } from "./decision.js";
 import { LOCAL_CONSOLE_QUERY_API_VERSION } from "./enums.js";
 
 export interface CursorPage<T> {
@@ -120,12 +121,31 @@ export interface ToolCallListItemDto {
 
 export type ToolCallListResponse = PageResponse<ToolCallListItemDto>;
 
+export interface ScriptPreflightMetadataDto {
+  policyVersion?: number;
+  evidence?: ScriptPreflightEvidence[];
+  [key: string]: unknown;
+}
+
+export interface DecisionReplayMetadataDto {
+  policyVersion?: number;
+  scriptEvidence?: ScriptPreflightEvidence[];
+  resourceEvidence?: ResourcePolicyEvidence[];
+  policyAuthority?: string;
+  scriptEvidenceCount?: number;
+  resourceEvidenceCount?: number;
+  localFallbackUsed?: boolean;
+  [key: string]: unknown;
+}
+
 export interface ToolCallDetailDto extends ToolCallListItemDto {
   paramSummary?: string;
   paramHash?: string;
   triggeredModules?: string[];
   errorText?: string;
-  metadataJson?: Record<string, unknown>;
+  metadataJson?: Record<string, unknown> & {
+    scriptPreflight?: ScriptPreflightMetadataDto;
+  };
 }
 
 export interface ApprovalListItemDto {

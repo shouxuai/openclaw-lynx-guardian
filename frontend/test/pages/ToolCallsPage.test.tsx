@@ -44,6 +44,21 @@ function createToolCallDetail() {
       decisionId: "decision-001",
       grantId: "grant-001",
       taintSummary: "secret-read",
+      scriptPreflight: {
+        policyVersion: 9,
+        evidence: [
+          {
+            evidenceId: "script-1",
+            scriptPath: "bad.py",
+            findings: [
+              {
+                ruleId: "script.credential_external_exfiltration",
+                behavior: "exfiltrates credentials",
+              },
+            ],
+          },
+        ],
+      },
     },
   };
 }
@@ -99,6 +114,8 @@ describe("ToolCallsPage", () => {
     expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
     expect(screen.getByText("powershell Get-Content secret.txt")).toBeInTheDocument();
     expect(screen.getByText("M2:protected_file_access")).toBeInTheDocument();
+    expect(screen.getByText("脚本预检证据")).toBeInTheDocument();
+    expect(screen.getByText(/script\.credential_external_exfiltration/)).toBeInTheDocument();
     expect(screen.getByText(/"decisionId": "decision-001"/)).toBeInTheDocument();
   });
 

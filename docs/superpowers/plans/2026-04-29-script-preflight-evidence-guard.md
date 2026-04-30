@@ -196,7 +196,7 @@ export interface ResourcePolicyEvidence {
 - Inspect: `backend/internal/decision/rules_tool.go`
 - Modify only if implementation touches these files: the touched file itself
 
-- [ ] **Step 0.1: Record current dirty state**
+- [x] **Step 0.1: Record current dirty state**
 
 Run:
 
@@ -214,7 +214,7 @@ Expected current baseline includes generated backend binaries and the existing p
 
 Do not revert those files unless the user explicitly asks.
 
-- [ ] **Step 0.2: Scan files that are likely to be touched for mojibake**
+- [x] **Step 0.2: Scan files that are likely to be touched for mojibake**
 
 Run:
 
@@ -227,7 +227,7 @@ Get-ChildItem src,shared,backend,frontend,test -Recurse -File -Include *.ts,*.ts
 
 Expected: either no hits in files planned for modification, or a short list of exact files to repair before changing them.
 
-- [ ] **Step 0.3: If a planned file contains mojibake, repair only the touched lines**
+- [x] **Step 0.3: If a planned file contains mojibake, repair only the touched lines**
 
 Use `apply_patch` with exact line replacements. Do not use `Set-Content`, `Out-File`, or shell text redirection for Chinese text.
 
@@ -238,7 +238,7 @@ Example repair for `frontend/src/app/nav-config.ts` if this file is touched:
 +    label: "总览",
 ```
 
-- [ ] **Step 0.4: Verify repaired text is still UTF-8-readable**
+- [x] **Step 0.4: Verify repaired text is still UTF-8-readable**
 
 Run:
 
@@ -257,7 +257,7 @@ Expected: changed Chinese is readable in the diff; `npx tsc --noEmit` exits 0.
 - Modify: `backend/internal/api/dto.go`
 - Test: `test/decision-dto-script-resource.test.ts`
 
-- [ ] **Step 1.1: Write a shared DTO regression test**
+- [x] **Step 1.1: Write a shared DTO regression test**
 
 Create `test/decision-dto-script-resource.test.ts`:
 
@@ -348,7 +348,7 @@ describe("DecisionRequest script/resource evidence DTO", () => {
 });
 ```
 
-- [ ] **Step 1.2: Run the test to verify it fails**
+- [x] **Step 1.2: Run the test to verify it fails**
 
 Run:
 
@@ -358,7 +358,7 @@ npx vitest run test/decision-dto-script-resource.test.ts
 
 Expected: TypeScript compile failure because `scriptEvidence`, `resourceEvidence`, `script`, and `resource_policy` are not defined yet.
 
-- [ ] **Step 1.3: Extend `shared/src/decision.ts`**
+- [x] **Step 1.3: Extend `shared/src/decision.ts`**
 
 Add the shared types and extend `EvidenceSource` and `DecisionRequest`:
 
@@ -482,7 +482,7 @@ export interface DecisionRequest {
 }
 ```
 
-- [ ] **Step 1.4: Extend `src/runtime/decision-context.ts`**
+- [x] **Step 1.4: Extend `src/runtime/decision-context.ts`**
 
 Import the new evidence types and add fields:
 
@@ -525,7 +525,7 @@ resourceEvidence: context.resourceEvidence,
 policyVersion: context.policyVersion,
 ```
 
-- [ ] **Step 1.5: Extend `backend/internal/api/dto.go`**
+- [x] **Step 1.5: Extend `backend/internal/api/dto.go`**
 
 Add Go DTOs:
 
@@ -579,7 +579,7 @@ ResourceEvidence []ResourcePolicyEvidence  `json:"resourceEvidence,omitempty"`
 PolicyVersion    int64                     `json:"policyVersion,omitempty"`
 ```
 
-- [ ] **Step 1.6: Verify DTO build**
+- [x] **Step 1.6: Verify DTO build**
 
 Run:
 
@@ -607,7 +607,7 @@ git commit -m "feat: add script and resource decision evidence DTOs"
 - Create: `src/script-preflight/dispatcher-parser.ts`
 - Test: `test/script-preflight.test.ts`
 
-- [ ] **Step 2.1: Write entrypoint and safe-reader tests**
+- [x] **Step 2.1: Write entrypoint and safe-reader tests**
 
 Create `test/script-preflight.test.ts`:
 
@@ -719,7 +719,7 @@ describe("safe script reader", () => {
 });
 ```
 
-- [ ] **Step 2.2: Run tests to verify missing modules**
+- [x] **Step 2.2: Run tests to verify missing modules**
 
 Run:
 
@@ -729,7 +729,7 @@ npx vitest run test/script-preflight.test.ts
 
 Expected: FAIL because `src/script-preflight/*` files do not exist.
 
-- [ ] **Step 2.3: Create `src/script-preflight/types.ts`**
+- [x] **Step 2.3: Create `src/script-preflight/types.ts`**
 
 ```ts
 import type {
@@ -773,7 +773,7 @@ export interface SafeScriptReadResult {
 }
 ```
 
-- [ ] **Step 2.4: Create `src/script-preflight/entrypoint-resolver.ts`**
+- [x] **Step 2.4: Create `src/script-preflight/entrypoint-resolver.ts`**
 
 Implement conservative parsing with explicit patterns:
 
@@ -927,7 +927,7 @@ function dedupeEntries(entries: ScriptEntrypoint[]): ScriptEntrypoint[] {
 }
 ```
 
-- [ ] **Step 2.5: Create `src/script-preflight/safe-script-reader.ts`**
+- [x] **Step 2.5: Create `src/script-preflight/safe-script-reader.ts`**
 
 ```ts
 import { createHash } from "crypto";
@@ -963,7 +963,7 @@ export function readScriptForPreflight(input: SafeScriptReadInput): SafeScriptRe
 }
 ```
 
-- [ ] **Step 2.6: Create `src/script-preflight/dispatcher-parser.ts`**
+- [x] **Step 2.6: Create `src/script-preflight/dispatcher-parser.ts`**
 
 Start with deterministic package script parsing:
 
@@ -994,7 +994,7 @@ export function resolvePackageJsonScript(cwd: string, key: string): DispatcherSc
 }
 ```
 
-- [ ] **Step 2.7: Run focused tests**
+- [x] **Step 2.7: Run focused tests**
 
 Run:
 
@@ -1019,7 +1019,7 @@ git commit -m "feat: resolve and read script preflight entrypoints"
 - Modify: `test/script-preflight.test.ts`
 - Reuse: `src/guard/concealed-intent.ts`
 
-- [ ] **Step 3.1: Add scanner tests**
+- [x] **Step 3.1: Add scanner tests**
 
 Append to `test/script-preflight.test.ts`:
 
@@ -1086,7 +1086,7 @@ describe("script scanner", () => {
 });
 ```
 
-- [ ] **Step 3.2: Run tests to verify scanner modules are missing**
+- [x] **Step 3.2: Run tests to verify scanner modules are missing**
 
 Run:
 
@@ -1096,7 +1096,7 @@ npx vitest run test/script-preflight.test.ts
 
 Expected: FAIL because `script-scanner.ts` and `explanation.ts` do not exist.
 
-- [ ] **Step 3.3: Create `src/script-preflight/script-scanner.ts`**
+- [x] **Step 3.3: Create `src/script-preflight/script-scanner.ts`**
 
 ```ts
 import type { RiskLevel, ScriptFinding, ScriptPreflightEvidence } from "../../shared/src/decision.js";
@@ -1235,7 +1235,7 @@ function actionFromRisk(riskLevel: RiskLevel): ScriptPreflightEvidence["recommen
 }
 ```
 
-- [ ] **Step 3.4: Create `src/script-preflight/explanation.ts`**
+- [x] **Step 3.4: Create `src/script-preflight/explanation.ts`**
 
 ```ts
 import type { ScriptPreflightEvidence } from "../../shared/src/decision.js";
@@ -1260,7 +1260,7 @@ export function buildScriptDenialExplanation(evidence: ScriptPreflightEvidence[]
 }
 ```
 
-- [ ] **Step 3.5: Run focused tests**
+- [x] **Step 3.5: Run focused tests**
 
 Run:
 
@@ -1286,7 +1286,7 @@ git commit -m "feat: scan script preflight evidence"
 - Modify: `src/console/event-builder.ts`
 - Test: `test/hook-script-preflight-decision.test.ts`
 
-- [ ] **Step 4.1: Write hook-order regression test**
+- [x] **Step 4.1: Write hook-order regression test**
 
 Create `test/hook-script-preflight-decision.test.ts`:
 
@@ -1342,7 +1342,7 @@ describe("script preflight decision injection", () => {
 });
 ```
 
-- [ ] **Step 4.2: Run test to verify adapter is missing**
+- [x] **Step 4.2: Run test to verify adapter is missing**
 
 Run:
 
@@ -1352,7 +1352,7 @@ npx vitest run test/hook-script-preflight-decision.test.ts
 
 Expected: FAIL because `evidence-adapter.ts` does not exist.
 
-- [ ] **Step 4.3: Create `src/script-preflight/evidence-adapter.ts`**
+- [x] **Step 4.3: Create `src/script-preflight/evidence-adapter.ts`**
 
 ```ts
 import type {
@@ -1383,7 +1383,7 @@ export function buildDecisionOnlyToolEvent(
 }
 ```
 
-- [ ] **Step 4.4: Modify `src/runtime/hook-decision-handlers.ts` to include evidence**
+- [x] **Step 4.4: Modify `src/runtime/hook-decision-handlers.ts` to include evidence**
 
 In `handleBeforeToolCallDecision()`, read evidence fields from the decision-only event:
 
@@ -1410,7 +1410,7 @@ const decision = await broker.waitToolDecision(nowDecisionContext({
 
 Import `DecisionContext` type is already present in this file; keep that import.
 
-- [ ] **Step 4.5: Add a collector orchestration helper**
+- [x] **Step 4.5: Add a collector orchestration helper**
 
 In `src/script-preflight/evidence-adapter.ts`, add:
 
@@ -1475,7 +1475,7 @@ export function collectScriptPreflightEvidence(input: {
 }
 ```
 
-- [ ] **Step 4.6: Integrate before `handleBeforeToolCallDecision()` in `src/hooks/tool-hooks.ts`**
+- [x] **Step 4.6: Integrate before `handleBeforeToolCallDecision()` in `src/hooks/tool-hooks.ts`**
 
 Near the top imports:
 
@@ -1505,7 +1505,7 @@ const decisionResult = await handleBeforeToolCallDecision(decisionBroker, decisi
 
 Keep all later local guard/tool execution logic using the original `event` and original `params`.
 
-- [ ] **Step 4.7: Attach script evidence to local console metadata**
+- [x] **Step 4.7: Attach script evidence to local console metadata**
 
 In `recordBeforeToolCall()` input construction inside `src/hooks/tool-hooks.ts`, merge script evidence:
 
@@ -1527,7 +1527,7 @@ metadataJson: {
 
 If the existing local helper already has `metadataJson`, merge into that object and avoid overwriting approval metadata.
 
-- [ ] **Step 4.8: Run focused tests**
+- [x] **Step 4.8: Run focused tests**
 
 Run:
 
@@ -1553,7 +1553,7 @@ git commit -m "feat: send script preflight evidence to Go decision"
 - Modify: `backend/internal/decision/rules_tool.go`
 - Test: `backend/test/decision_script_evidence_contract_test.go`
 
-- [ ] **Step 5.1: Add backend contract tests**
+- [x] **Step 5.1: Add backend contract tests**
 
 Create `backend/test/decision_script_evidence_contract_test.go`:
 
@@ -1670,7 +1670,7 @@ func containsString(values []string, want string) bool {
 }
 ```
 
-- [ ] **Step 5.2: Run backend test to verify missing rules**
+- [x] **Step 5.2: Run backend test to verify missing rules**
 
 Run:
 
@@ -1682,7 +1682,7 @@ Pop-Location
 
 Expected: FAIL because Go decision does not score `ScriptEvidence`.
 
-- [ ] **Step 5.3: Create `backend/internal/decision/script_evidence.go`**
+- [x] **Step 5.3: Create `backend/internal/decision/script_evidence.go`**
 
 ```go
 package decision
@@ -1733,7 +1733,7 @@ func hasScriptRecommendedAction(req api.DecisionRequest, actions ...api.Decision
 }
 ```
 
-- [ ] **Step 5.4: Add script evidence rules to `backend/internal/decision/rules_tool.go`**
+- [x] **Step 5.4: Add script evidence rules to `backend/internal/decision/rules_tool.go`**
 
 Append rules near the existing high-confidence tool hard-deny rules:
 
@@ -1808,7 +1808,7 @@ Append rules near the existing high-confidence tool hard-deny rules:
 },
 ```
 
-- [ ] **Step 5.5: Add unit tests for helper behavior**
+- [x] **Step 5.5: Add unit tests for helper behavior**
 
 Create `backend/internal/decision/script_evidence_test.go`:
 
@@ -1841,7 +1841,7 @@ func TestHasHighConfidenceScriptFinding(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5.6: Run backend tests**
+- [x] **Step 5.6: Run backend tests**
 
 Run:
 
@@ -1871,7 +1871,7 @@ git commit -m "feat: score script evidence in Go decisions"
 - Modify: `backend/internal/repo/repositories.go`
 - Test: `backend/test/policy_routes_contract_test.go`
 
-- [ ] **Step 6.1: Add migration contract test**
+- [x] **Step 6.1: Add migration contract test**
 
 Create `backend/test/policy_routes_contract_test.go` with the first test focused on persistence:
 
@@ -1918,7 +1918,7 @@ func TestPolicyMigrationCreatesPolicyTables(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6.2: Run test to verify missing schema/repo**
+- [x] **Step 6.2: Run test to verify missing schema/repo**
 
 Run:
 
@@ -1930,7 +1930,7 @@ Pop-Location
 
 Expected: FAIL because policy migration and repository do not exist.
 
-- [ ] **Step 6.3: Create `backend/internal/db/migrations/004_policy_resources_scripts.sql`**
+- [x] **Step 6.3: Create `backend/internal/db/migrations/004_policy_resources_scripts.sql`**
 
 ```sql
 CREATE TABLE IF NOT EXISTS policy_versions (
@@ -2007,7 +2007,7 @@ CREATE INDEX IF NOT EXISTS idx_script_taints_real_path ON script_taints(real_pat
 CREATE INDEX IF NOT EXISTS idx_script_taints_sha256 ON script_taints(sha256);
 ```
 
-- [ ] **Step 6.4: Create policy DTOs in `backend/internal/api/policy_dto.go`**
+- [x] **Step 6.4: Create policy DTOs in `backend/internal/api/policy_dto.go`**
 
 ```go
 package api
@@ -2072,7 +2072,7 @@ type PolicyOverview struct {
 }
 ```
 
-- [ ] **Step 6.5: Create repository constructor**
+- [x] **Step 6.5: Create repository constructor**
 
 Modify `backend/internal/repo/repositories.go`:
 
@@ -2082,7 +2082,7 @@ type PolicyRepository struct{ db *sql.DB }
 func NewPolicyRepository(db *sql.DB) *PolicyRepository { return &PolicyRepository{db: db} }
 ```
 
-- [ ] **Step 6.6: Create `backend/internal/repo/policy.go`**
+- [x] **Step 6.6: Create `backend/internal/repo/policy.go`**
 
 Implement version creation and list methods:
 
@@ -2126,7 +2126,7 @@ func (r *PolicyRepository) CurrentVersion(ctx context.Context) (int64, error) {
 }
 ```
 
-- [ ] **Step 6.7: Run migration/repo test**
+- [x] **Step 6.7: Run migration/repo test**
 
 Run:
 
@@ -2158,7 +2158,7 @@ git commit -m "feat: add policy and script evidence storage schema"
 - Modify: `src/hooks/tool-hooks.ts`
 - Test: `test/protected-resources.test.ts`
 
-- [ ] **Step 7.1: Write TS operation mapping tests**
+- [x] **Step 7.1: Write TS operation mapping tests**
 
 Create `test/protected-resources.test.ts`:
 
@@ -2182,7 +2182,7 @@ describe("protected resource operation mapping", () => {
 });
 ```
 
-- [ ] **Step 7.2: Create TS operation mapper**
+- [x] **Step 7.2: Create TS operation mapper**
 
 Create `src/protected-resources/tool-operation.ts`:
 
@@ -2206,7 +2206,7 @@ export function classifyToolResourceOperations(toolName: string, params: Record<
 }
 ```
 
-- [ ] **Step 7.3: Add protected resource policy evaluator**
+- [x] **Step 7.3: Add protected resource policy evaluator**
 
 Create `src/protected-resources/evidence-adapter.ts`:
 
@@ -2269,7 +2269,7 @@ export function collectResourcePolicyEvidence(input: {
 }
 ```
 
-- [ ] **Step 7.4: Run TS tests**
+- [x] **Step 7.4: Run TS tests**
 
 Run:
 
@@ -2279,7 +2279,7 @@ npx vitest run test/protected-resources.test.ts
 
 Expected: tests pass.
 
-- [ ] **Step 7.5: Write Go protected resource decision tests**
+- [x] **Step 7.5: Write Go protected resource decision tests**
 
 Create `backend/test/protected_resource_decision_contract_test.go`:
 
@@ -2326,7 +2326,7 @@ func TestDecisionDeniesProtectedResourceWriteViolation(t *testing.T) {
 }
 ```
 
-- [ ] **Step 7.6: Implement Go resource policy helper**
+- [x] **Step 7.6: Implement Go resource policy helper**
 
 Create `backend/internal/decision/resource_policy.go`:
 
@@ -2345,7 +2345,7 @@ func hasDeniedResourcePolicyEvidence(req api.DecisionRequest) bool {
 }
 ```
 
-- [ ] **Step 7.7: Add Go resource rule**
+- [x] **Step 7.7: Add Go resource rule**
 
 Append to `backend/internal/decision/rules_tool.go`:
 
@@ -2366,7 +2366,7 @@ Append to `backend/internal/decision/rules_tool.go`:
 },
 ```
 
-- [ ] **Step 7.8: Integrate resource evidence in TS hook**
+- [x] **Step 7.8: Integrate resource evidence in TS hook**
 
 In `src/hooks/tool-hooks.ts`, once policy fetch/cache is implemented in Task 8, pass:
 
@@ -2386,7 +2386,7 @@ const decisionOnlyEvent = buildDecisionOnlyToolEvent(event, {
 
 For this task, `runtimeProtectedResources` can be an empty array. Task 9 makes Go enrich the decision request from the authoritative backend policy snapshot, so TS resource evidence is best-effort metadata and local fallback input, not the final authority.
 
-- [ ] **Step 7.9: Run focused backend tests**
+- [x] **Step 7.9: Run focused backend tests**
 
 Run:
 
@@ -2415,7 +2415,7 @@ git commit -m "feat: enforce protected resource evidence"
 - Modify: `backend/internal/openapi/openapi.yaml`
 - Test: `backend/test/policy_routes_contract_test.go`
 
-- [ ] **Step 8.1: Extend policy route tests**
+- [x] **Step 8.1: Extend policy route tests**
 
 Append to `backend/test/policy_routes_contract_test.go`:
 
@@ -2461,7 +2461,7 @@ func TestPolicyRoutesManageProtectedResourcesAndRules(t *testing.T) {
 
 If helpers `buildTestApp`, `postJSON`, `getJSON`, or `contractBodyContains` already exist in backend tests, reuse them. If not, add minimal versions in the same test file using `httptest`.
 
-- [ ] **Step 8.2: Implement repository methods**
+- [x] **Step 8.2: Implement repository methods**
 
 Add to `backend/internal/repo/policy.go`:
 
@@ -2561,7 +2561,7 @@ func stableID(parts ...string) string {
 
 with imports `crypto/sha256`, `encoding/hex`, and `strings`.
 
-- [ ] **Step 8.3: Add list methods**
+- [x] **Step 8.3: Add list methods**
 
 Add to `backend/internal/repo/policy.go`:
 
@@ -2589,7 +2589,7 @@ func (r *PolicyRepository) Overview(ctx context.Context) (api.PolicyOverview, er
 
 Implement `ListPolicyRules()` and `ListProtectedResources()` with explicit SQL columns, scanning booleans through integer fields.
 
-- [ ] **Step 8.4: Create `backend/internal/routes/policy.go`**
+- [x] **Step 8.4: Create `backend/internal/routes/policy.go`**
 
 ```go
 package routes
@@ -2642,7 +2642,7 @@ func RegisterPolicy(router gin.IRoutes, repository *repo.PolicyRepository) {
 }
 ```
 
-- [ ] **Step 8.5: Wire repository and routes in `backend/internal/app/app.go`**
+- [x] **Step 8.5: Wire repository and routes in `backend/internal/app/app.go`**
 
 Add repository:
 
@@ -2656,7 +2656,7 @@ Register route:
 routes.RegisterPolicy(query, policyRepository)
 ```
 
-- [ ] **Step 8.6: Run route tests**
+- [x] **Step 8.6: Run route tests**
 
 Run:
 
@@ -2686,7 +2686,7 @@ git commit -m "feat: add policy management API"
 - Test: `backend/test/protected_resource_decision_contract_test.go`
 - Test: `backend/test/policy_rules_decision_contract_test.go`
 
-- [ ] **Step 9.1: Write route-level proof that Go can deny protected resources without TS-provided resource evidence**
+- [x] **Step 9.1: Write route-level proof that Go can deny protected resources without TS-provided resource evidence**
 
 Extend `backend/test/protected_resource_decision_contract_test.go`:
 
@@ -2728,7 +2728,7 @@ func TestDecisionRouteEnrichesProtectedResourceEvidenceFromGoPolicy(t *testing.T
 
 This test is the authority boundary: the request contains no `ResourceEvidence`, so a pass proves the Go route loaded stored policy and enriched the request before calling `decision.Service`.
 
-- [ ] **Step 9.2: Add policy overview repository method if Task 8 did not finish it**
+- [x] **Step 9.2: Add policy overview repository method if Task 8 did not finish it**
 
 Ensure `backend/internal/repo/policy.go` exposes:
 
@@ -2738,7 +2738,7 @@ func (r *PolicyRepository) Overview(ctx context.Context) (api.PolicyOverview, er
 
 It must return the current policy version, enabled and disabled policy rules, and protected resources. Decision enrichment filters `Enabled == true`.
 
-- [ ] **Step 9.3: Create `backend/internal/policy/evaluator.go`**
+- [x] **Step 9.3: Create `backend/internal/policy/evaluator.go`**
 
 ```go
 package policy
@@ -2848,7 +2848,7 @@ func classifyResourceOperations(req api.DecisionRequest) []string {
 }
 ```
 
-- [ ] **Step 9.4: Implement policy service enrichment**
+- [x] **Step 9.4: Implement policy service enrichment**
 
 In `backend/internal/policy/service.go`:
 
@@ -2885,7 +2885,7 @@ func (s *Service) EnrichDecisionRequest(ctx context.Context, req api.DecisionReq
 }
 ```
 
-- [ ] **Step 9.5: Modify `backend/internal/routes/decision.go`**
+- [x] **Step 9.5: Modify `backend/internal/routes/decision.go`**
 
 Change `RegisterDecisions()` signature:
 
@@ -2926,7 +2926,7 @@ func registerDecisionPost(router gin.IRoutes, path string, service *decision.Ser
 
 Register all four decision routes with the policy service.
 
-- [ ] **Step 9.6: Wire policy service in `backend/internal/app/app.go`**
+- [x] **Step 9.6: Wire policy service in `backend/internal/app/app.go`**
 
 After repositories:
 
@@ -2944,7 +2944,7 @@ routes.RegisterDecisions(query, ingestGroup, decisionService, decisions, policyS
 
 Import `github.com/openclaw/lynx-guardian/backend/internal/policy`.
 
-- [ ] **Step 9.7: Run route-level authority tests**
+- [x] **Step 9.7: Run route-level authority tests**
 
 Run:
 
@@ -2972,7 +2972,7 @@ git commit -m "feat: enrich Go decisions with stored policy"
 - Modify: `backend/internal/decision/rules_tool.go`
 - Test: `backend/test/policy_rules_decision_contract_test.go`
 
-- [ ] **Step 10.1: Write policy rule decision tests**
+- [x] **Step 10.1: Write policy rule decision tests**
 
 Create `backend/test/policy_rules_decision_contract_test.go`:
 
@@ -3070,7 +3070,7 @@ func TestAllowlistDoesNotOverrideL4ScriptDeny(t *testing.T) {
 }
 ```
 
-- [ ] **Step 10.2: Implement policy rule extraction and scoring**
+- [x] **Step 10.2: Implement policy rule extraction and scoring**
 
 Create helper in `backend/internal/decision/policy_rules.go`:
 
@@ -3133,7 +3133,7 @@ func policyRuleMatches(rule runtimePolicyRule, req api.DecisionRequest, text str
 
 Use existing map helper style if present; otherwise add local helpers.
 
-- [ ] **Step 10.3: Add evidence rules for user policy**
+- [x] **Step 10.3: Add evidence rules for user policy**
 
 Add rules in `backend/internal/decision/rules_tool.go` or a new `rules_policy.go`:
 
@@ -3176,7 +3176,7 @@ Add rules in `backend/internal/decision/rules_tool.go` or a new `rules_policy.go
 
 Keep allowlist score reduction small. Hard-deny rules with `HardRiskLevel` and `HardAction` continue to dominate.
 
-- [ ] **Step 10.4: Run policy decision tests**
+- [x] **Step 10.4: Run policy decision tests**
 
 Run:
 
@@ -3206,7 +3206,7 @@ git commit -m "feat: apply user policy rules in Go decisions"
 - Test: `backend/test/decision_routes_contract_test.go`
 - Test: `frontend/test/pages/PoliciesPage.test.tsx`
 
-- [ ] **Step 11.1: Add backend persistence assertion**
+- [x] **Step 11.1: Add backend persistence assertion**
 
 Extend an existing decision route test or add a focused test:
 
@@ -3253,7 +3253,7 @@ func TestDecisionPersistsScriptEvidenceAndPolicyVersion(t *testing.T) {
 }
 ```
 
-- [ ] **Step 11.2: Persist script evidence in `decisionAuditPayload()`**
+- [x] **Step 11.2: Persist script evidence in `decisionAuditPayload()`**
 
 In `backend/internal/repo/decisions.go`, extend `decisionAuditPayload()`:
 
@@ -3267,7 +3267,7 @@ if req.PolicyVersion > 0 {
 
 Use existing JSON helper functions in this file instead of ad hoc serialization.
 
-- [ ] **Step 11.3: Insert script findings into `script_findings`**
+- [x] **Step 11.3: Insert script findings into `script_findings`**
 
 Add repository method in `backend/internal/repo/policy.go` or a focused `script_findings.go`:
 
@@ -3293,7 +3293,7 @@ func (r *PolicyRepository) InsertScriptFindings(ctx context.Context, decisionID 
 
 Call this method after `InsertDecision()` succeeds, either from the decision route or through a service layer that has access to both repositories.
 
-- [ ] **Step 11.4: Update frontend DTOs and detail panels**
+- [x] **Step 11.4: Update frontend DTOs and detail panels**
 
 Add `scriptEvidence`, `resourceEvidence`, and `policyVersion` to the shared query DTO shape if decision/tool detail payloads expose audit metadata.
 
@@ -3310,7 +3310,7 @@ In `frontend/src/pages/DecisionsPage.tsx`, show:
 
 In `frontend/src/pages/ToolCallsPage.tsx`, show `metadataJson.scriptPreflight` in the existing detail JSON panel or as a dedicated section.
 
-- [ ] **Step 11.5: Run backend/frontend focused tests**
+- [x] **Step 11.5: Run backend/frontend focused tests**
 
 Run:
 
@@ -3340,7 +3340,7 @@ git commit -m "feat: persist and display script decision evidence"
 - Modify: `frontend/src/app/router.tsx`
 - Modify: `frontend/src/app/nav-config.ts`
 
-- [ ] **Step 12.1: Write frontend page tests**
+- [x] **Step 12.1: Write frontend page tests**
 
 Create `frontend/test/pages/PoliciesPage.test.tsx`:
 
@@ -3426,7 +3426,7 @@ describe("PoliciesPage", () => {
 });
 ```
 
-- [ ] **Step 12.2: Create frontend API client**
+- [x] **Step 12.2: Create frontend API client**
 
 Create `frontend/src/api/policies.ts`:
 
@@ -3502,7 +3502,7 @@ export function createPolicyRule(input: {
 }
 ```
 
-- [ ] **Step 12.3: Create `frontend/src/pages/PoliciesPage.tsx`**
+- [x] **Step 12.3: Create `frontend/src/pages/PoliciesPage.tsx`**
 
 Build a dense admin page with two forms and two tables. Required visible labels:
 
@@ -3533,7 +3533,7 @@ const PRESET_LABELS = {
 
 The page must state through controls, not explanatory hero copy, that `no_execute` is absent. Do not add a `no_execute` select option.
 
-- [ ] **Step 12.4: Wire route and nav**
+- [x] **Step 12.4: Wire route and nav**
 
 Modify `frontend/src/app/route-paths.ts`:
 
@@ -3562,7 +3562,7 @@ Modify `frontend/src/app/nav-config.ts` under governance:
 
 If `nav-config.ts` still contains mojibake, repair all edited labels in the same patch.
 
-- [ ] **Step 12.5: Run frontend tests**
+- [x] **Step 12.5: Run frontend tests**
 
 Run:
 
@@ -3589,7 +3589,7 @@ git commit -m "feat: add policy management UI"
 - Test: `test/script-preflight.test.ts`
 - Test: `backend/test/decision_script_evidence_contract_test.go`
 
-- [ ] **Step 13.1: Add TS taint test**
+- [x] **Step 13.1: Add TS taint test**
 
 Append:
 
@@ -3612,7 +3612,7 @@ describe("script preflight taint correlation", () => {
 });
 ```
 
-- [ ] **Step 13.2: Persist taints for dangerous script writes**
+- [x] **Step 13.2: Persist taints for dangerous script writes**
 
 When script evidence has `entrypointKind === "script_write"` and `riskLevel` is `L3` or `L4`, insert a row into `script_taints` with:
 
@@ -3630,7 +3630,7 @@ expires_at_ms: created_at_ms + 7 days
 
 Use `script_findings` and `script_taints` as durable correlation storage. If `realPath` is unavailable on write payload, store `scriptPath` and later match exact normalized path.
 
-- [ ] **Step 13.3: Read matching taints during decision**
+- [x] **Step 13.3: Read matching taints during decision**
 
 Before evaluating a tool call that resolves `direct_file`, lookup taint by `realPath` or `sha256`. If found, append synthetic script evidence:
 
@@ -3657,7 +3657,7 @@ api.ScriptPreflightEvidence{
 }
 ```
 
-- [ ] **Step 13.4: Add Go contract test**
+- [x] **Step 13.4: Add Go contract test**
 
 Extend `backend/test/decision_script_evidence_contract_test.go` to verify `script.taint_inherited` denies execution:
 
@@ -3696,7 +3696,7 @@ func TestDecisionDeniesInheritedScriptTaint(t *testing.T) {
 }
 ```
 
-- [ ] **Step 13.5: Add Go rule**
+- [x] **Step 13.5: Add Go rule**
 
 In `backend/internal/decision/rules_tool.go`:
 
@@ -3717,7 +3717,7 @@ In `backend/internal/decision/rules_tool.go`:
 },
 ```
 
-- [ ] **Step 13.6: Run focused tests**
+- [x] **Step 13.6: Run focused tests**
 
 Run:
 
@@ -3747,7 +3747,7 @@ git commit -m "feat: correlate risky script writes with later execution"
 - Test: `test/local-l4-fast-path.test.ts`
 - Test: `backend/test/decision_routes_contract_test.go`
 
-- [ ] **Step 14.1: Add local fail-closed test**
+- [x] **Step 14.1: Add local fail-closed test**
 
 Extend `test/local-l4-fast-path.test.ts`:
 
@@ -3790,7 +3790,7 @@ it("fails closed locally for script L4 evidence when Go decision is unavailable"
 
 Adapt the input shape to the existing `evaluateLocalL4FastPath()` signature. If the current fast path does not accept `scriptEvidence`, add it as a typed optional field.
 
-- [ ] **Step 14.2: Define authority order in code**
+- [x] **Step 14.2: Define authority order in code**
 
 In `src/hooks/tool-hooks.ts`, enforce this order:
 
@@ -3806,7 +3806,7 @@ In `src/hooks/tool-hooks.ts`, enforce this order:
 
 Do not let local allowlist or UI policy bypass Go L4.
 
-- [ ] **Step 14.3: Persist policy authority metadata**
+- [x] **Step 14.3: Persist policy authority metadata**
 
 Every decision record must include:
 
@@ -3830,7 +3830,7 @@ When backend is unavailable and local fail-closed triggers:
 }
 ```
 
-- [ ] **Step 14.4: Add backend replay fields**
+- [x] **Step 14.4: Add backend replay fields**
 
 Decision detail must be sufficient to replay:
 
@@ -3850,7 +3850,7 @@ userMessage or explanation text
 
 Use existing `decisions` and `decision_evidence` tables first; only add columns if JSON metadata cannot preserve the replay fields.
 
-- [ ] **Step 14.5: Run focused authority tests**
+- [x] **Step 14.5: Run focused authority tests**
 
 Run:
 
@@ -3877,7 +3877,7 @@ git commit -m "feat: make Go policy authority with local L4 fallback"
 - Modify: `src/hooks/tool-hooks.ts`
 - Test: `test/script-preflight.test.ts`
 
-- [ ] **Step 15.1: Add explanation fallback tests**
+- [x] **Step 15.1: Add explanation fallback tests**
 
 Append:
 
@@ -3913,7 +3913,7 @@ describe("script denial explanation fallback", () => {
 });
 ```
 
-- [ ] **Step 15.2: Implement bounded explanation payload**
+- [x] **Step 15.2: Implement bounded explanation payload**
 
 In `src/script-preflight/explanation.ts`:
 
@@ -3976,7 +3976,7 @@ export async function explainScriptDenial(input: {
 }
 ```
 
-- [ ] **Step 15.3: Use explanation only after deny**
+- [x] **Step 15.3: Use explanation only after deny**
 
 In `src/hooks/tool-hooks.ts`, when Go or local fallback returns a block caused by script evidence, set:
 
@@ -3986,7 +3986,7 @@ blockReason: await explainScriptDenial({ evidence: scriptEvidence })
 
 If the block reason already contains a richer Go `userMessage`, prefer Go message and append the deterministic evidence summary only if it adds rule IDs missing from the message.
 
-- [ ] **Step 15.4: Run explanation tests**
+- [x] **Step 15.4: Run explanation tests**
 
 Run:
 
@@ -4013,7 +4013,7 @@ git commit -m "feat: explain script denials from structured evidence"
   - `%USERPROFILE%\.openclaw\docker-state\agents\main\sessions\*.jsonl`
   - local console webview routes
 
-- [ ] **Step 16.1: Run focused local verification**
+- [x] **Step 16.1: Run focused local verification**
 
 Run:
 
@@ -4030,7 +4030,7 @@ npm --prefix frontend run build
 
 Expected: all focused verification commands pass. If broad Vitest is still historically noisy in this repo, report focused results and do not claim broad suite is green.
 
-- [ ] **Step 16.2: Run repo sync validation**
+- [x] **Step 16.2: Run repo sync validation**
 
 Run from repo root:
 
@@ -4047,7 +4047,7 @@ Expected:
 
 If it says `blocked`, inspect gateway logs before claiming runtime behavior changed.
 
-- [ ] **Step 16.3: Verify gateway health**
+- [x] **Step 16.3: Verify gateway health**
 
 Run:
 
@@ -4057,7 +4057,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18789/healthz
 
 Expected HTTP 200 with a live/ok payload.
 
-- [ ] **Step 16.4: Run live OpenClaw denial proof**
+- [x] **Step 16.4: Run live OpenClaw denial proof**
 
 Use a harmless fixture path in a temp workspace. Do not point the proof at real secrets.
 
@@ -4077,7 +4077,7 @@ Lynx Guardian blocks the tool call before execution.
 The visible denial mentions script preflight evidence and rule script.credential_external_exfiltration.
 ```
 
-- [ ] **Step 16.5: Verify protected resource proof**
+- [x] **Step 16.5: Verify protected resource proof**
 
 Add a protected resource through the UI or API:
 
@@ -4094,7 +4094,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:18789/lynx/protected-resou
 
 Then ask OpenClaw to write under that folder and verify the denial includes `resource_policy.protected_resource_violation`.
 
-- [ ] **Step 16.6: Verify local console evidence**
+- [x] **Step 16.6: Verify local console evidence**
 
 Open the local console webview and inspect:
 
@@ -4110,7 +4110,7 @@ Expected:
 - Decision detail shows `scriptEvidence`, `resourceEvidence`, and `policyVersion`.
 - Tool call detail shows `metadataJson.scriptPreflight`.
 
-- [ ] **Step 16.7: Final no-overclaim checklist**
+- [x] **Step 16.7: Final no-overclaim checklist**
 
 Before reporting completion, confirm:
 

@@ -46,25 +46,68 @@ type WinningArbiter string
 type DecisionArbiterName string
 type EvidenceSource string
 
+type ScriptFinding struct {
+	RuleID     string        `json:"ruleId"`
+	Module     string        `json:"module"`
+	Severity   EventSeverity `json:"severity"`
+	Behavior   string        `json:"behavior"`
+	Line       *int          `json:"line,omitempty"`
+	Snippet    string        `json:"snippet,omitempty"`
+	Confidence string        `json:"confidence"`
+}
+
+type ScriptPreflightEvidence struct {
+	EvidenceID        string          `json:"evidenceId"`
+	EntrypointKind    string          `json:"entrypointKind"`
+	Source            string          `json:"source"`
+	Command           string          `json:"command,omitempty"`
+	ScriptPath        string          `json:"scriptPath,omitempty"`
+	RealPath          string          `json:"realPath,omitempty"`
+	SHA256            string          `json:"sha256,omitempty"`
+	SizeBytes         int64           `json:"sizeBytes,omitempty"`
+	MtimeMs           int64           `json:"mtimeMs,omitempty"`
+	Language          string          `json:"language"`
+	ReadStatus        string          `json:"readStatus"`
+	ReadReason        string          `json:"readReason,omitempty"`
+	Findings          []ScriptFinding `json:"findings"`
+	RiskLevel         RiskLevel       `json:"riskLevel"`
+	RecommendedAction DecisionAction  `json:"recommendedAction"`
+}
+
+type ResourcePolicyEvidence struct {
+	EvidenceID    string `json:"evidenceId"`
+	ResourceID    string `json:"resourceId,omitempty"`
+	MatchedPath   string `json:"matchedPath"`
+	RealPath      string `json:"realPath,omitempty"`
+	Preset        string `json:"preset"`
+	Operation     string `json:"operation"`
+	Allowed       bool   `json:"allowed"`
+	Reason        string `json:"reason"`
+	PolicyVersion int64  `json:"policyVersion,omitempty"`
+}
+
 type DecisionRequest struct {
-	RequestID      string         `json:"requestId"`
-	QARecordID     string         `json:"qaRecordId"`
-	Stage          DecisionStage  `json:"stage"`
-	Hook           string         `json:"hook"`
-	SessionKey     string         `json:"sessionKey"`
-	RunID          string         `json:"runId"`
-	ChannelProfile string         `json:"channelProfile"`
-	ChannelID      string         `json:"channelId"`
-	ConversationID string         `json:"conversationId"`
-	RequesterID    string         `json:"requesterId"`
-	Content        string         `json:"content"`
-	ToolName       string         `json:"toolName"`
-	ToolArgs       map[string]any `json:"toolArgs"`
-	TargetURI      string         `json:"targetUri"`
-	ChainSummary   map[string]any `json:"chainSummary"`
-	TaintSummary   map[string]any `json:"taintSummary"`
-	ProviderSafety map[string]any `json:"providerSafety"`
-	CreatedAt      string         `json:"createdAt"`
+	RequestID        string                    `json:"requestId"`
+	QARecordID       string                    `json:"qaRecordId"`
+	Stage            DecisionStage             `json:"stage"`
+	Hook             string                    `json:"hook"`
+	SessionKey       string                    `json:"sessionKey"`
+	RunID            string                    `json:"runId"`
+	ChannelProfile   string                    `json:"channelProfile"`
+	ChannelID        string                    `json:"channelId"`
+	ConversationID   string                    `json:"conversationId"`
+	RequesterID      string                    `json:"requesterId"`
+	Content          string                    `json:"content"`
+	ToolName         string                    `json:"toolName"`
+	ToolArgs         map[string]any            `json:"toolArgs"`
+	TargetURI        string                    `json:"targetUri"`
+	ChainSummary     map[string]any            `json:"chainSummary"`
+	TaintSummary     map[string]any            `json:"taintSummary"`
+	ProviderSafety   map[string]any            `json:"providerSafety"`
+	ScriptEvidence   []ScriptPreflightEvidence `json:"scriptEvidence,omitempty"`
+	ResourceEvidence []ResourcePolicyEvidence  `json:"resourceEvidence,omitempty"`
+	PolicyVersion    int64                     `json:"policyVersion,omitempty"`
+	CreatedAt        string                    `json:"createdAt"`
 }
 
 type ScoreBreakdown struct {
@@ -141,6 +184,7 @@ type DecisionResponse struct {
 	UserMessage      string                `json:"userMessage,omitempty"`
 	Audit            DecisionAudit         `json:"audit"`
 	Degraded         *DecisionDegraded     `json:"degraded,omitempty"`
+	MetadataJson     map[string]any        `json:"metadataJson,omitempty"`
 }
 
 type ChainSummary struct {

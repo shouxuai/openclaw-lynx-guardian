@@ -4,6 +4,136 @@ import "github.com/openclaw/lynx-guardian/backend/internal/api"
 
 var toolEvidenceRules = []evidenceRule{
 	{
+		ID:            "script.download_execute_dynamic_eval",
+		Module:        "remote_code_execution",
+		Kind:          "script_download_execute_dynamic_eval",
+		Source:        "script",
+		Severity:      "critical",
+		ScoreDelta:    95,
+		Reason:        "script evidence shows remote content is downloaded and executed or evaluated",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, _ string) bool {
+			return hasHighConfidenceScriptFinding(req, "script.download_execute_dynamic_eval")
+		},
+	},
+	{
+		ID:            "script.credential_external_exfiltration",
+		Module:        "exfiltration",
+		Kind:          "script_credential_external_exfiltration",
+		Source:        "script",
+		Severity:      "critical",
+		ScoreDelta:    95,
+		Reason:        "script evidence shows credential-like content is sent to an external target",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, _ string) bool {
+			return hasHighConfidenceScriptFinding(req, "script.credential_external_exfiltration")
+		},
+	},
+	{
+		ID:            "script.destructive_mutation",
+		Module:        "destructive_mutation",
+		Kind:          "script_destructive_mutation",
+		Source:        "script",
+		Severity:      "critical",
+		ScoreDelta:    90,
+		Reason:        "script evidence shows recursive deletion or destructive mutation",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, _ string) bool {
+			return hasHighConfidenceScriptFinding(req, "script.destructive_mutation")
+		},
+	},
+	{
+		ID:         "script.persistence_silent_execution",
+		Module:     "persistence",
+		Kind:       "script_persistence_silent_execution",
+		Source:     "script",
+		Severity:   "error",
+		ScoreDelta: 75,
+		Reason:     "script evidence shows delayed, scheduled, hook-based, or background execution",
+		Matcher: func(req api.DecisionRequest, _ string) bool {
+			return hasScriptFinding(req, "script.persistence_silent_execution")
+		},
+	},
+	{
+		ID:            "script.taint_inherited",
+		Module:        "concealed_execution",
+		Kind:          "script_taint_inherited",
+		Source:        "taint",
+		Severity:      "critical",
+		ScoreDelta:    90,
+		Reason:        "script execution inherits high-risk taint from an earlier script write",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, _ string) bool {
+			return hasScriptFinding(req, "script.taint_inherited")
+		},
+	},
+	{
+		ID:            "script.recommended_deny",
+		Module:        "script_preflight",
+		Kind:          "script_preflight_recommended_deny",
+		Source:        "script",
+		Severity:      "critical",
+		ScoreDelta:    90,
+		Reason:        "script preflight recommended deny for this tool call",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, _ string) bool {
+			return hasScriptRecommendedAction(req, "deny")
+		},
+	},
+	{
+		ID:            "resource_policy.protected_resource_violation",
+		Module:        "protected_resource",
+		Kind:          "protected_resource_policy_violation",
+		Source:        "resource_policy",
+		Severity:      "critical",
+		ScoreDelta:    95,
+		Reason:        "tool call violates a user configured protected resource policy",
+		HardRiskLevel: "L4",
+		HardAction:    "deny",
+		Matcher: func(req api.DecisionRequest, _ string) bool {
+			return hasDeniedResourcePolicyEvidence(req)
+		},
+	},
+	{
+		ID:         "policy.user_blacklist",
+		Module:     "user_policy",
+		Kind:       "user_blacklist_match",
+		Source:     "tool",
+		Severity:   "warn",
+		ScoreDelta: 70,
+		Reason:     "tool or script text matched a user configured blacklist rule",
+		Matcher: func(req api.DecisionRequest, text string) bool {
+			for _, rule := range extractRuntimePolicyRules(req) {
+				if rule.Kind == "blacklist" && policyRuleMatches(rule, req, text) {
+					return true
+				}
+			}
+			return false
+		},
+	},
+	{
+		ID:         "policy.user_allowlist_low_privilege",
+		Module:     "user_policy",
+		Kind:       "user_allowlist_match",
+		Source:     "tool",
+		Severity:   "info",
+		ScoreDelta: -15,
+		Reason:     "tool or script text matched a user configured allowlist rule; this never overrides hard-deny evidence",
+		Matcher: func(req api.DecisionRequest, text string) bool {
+			for _, rule := range extractRuntimePolicyRules(req) {
+				if rule.Kind == "allowlist" && policyRuleMatches(rule, req, text) {
+					return true
+				}
+			}
+			return false
+		},
+	},
+	{
 		ID:            "tool.flow.secret_to_external",
 		Module:        "exfiltration",
 		Kind:          "secret_to_external_target",

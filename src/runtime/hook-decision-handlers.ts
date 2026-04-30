@@ -71,6 +71,11 @@ export async function handleBeforeToolCallDecision(
     return decisionToBeforeToolCallResult(decision, "Blocked by Lynx Guardian install decision.", "Lynx Guardian install approval required");
   }
 
+  const eventWithEvidence = event as ToolCallEvent & {
+    scriptEvidence?: DecisionContext["scriptEvidence"];
+    resourceEvidence?: DecisionContext["resourceEvidence"];
+    policyVersion?: DecisionContext["policyVersion"];
+  };
   const decision = await broker.waitToolDecision(nowDecisionContext({
     stage: "tool_call",
     hook: "before_tool_call",
@@ -80,6 +85,9 @@ export async function handleBeforeToolCallDecision(
     toolName: event.toolName,
     toolArgs: event.params,
     targetUri: JSON.stringify(event.params ?? {}),
+    scriptEvidence: eventWithEvidence.scriptEvidence,
+    resourceEvidence: eventWithEvidence.resourceEvidence,
+    policyVersion: eventWithEvidence.policyVersion,
   }), timeoutMs);
   return decisionToBeforeToolCallResult(decision, "Blocked by Lynx Guardian decision control plane.", "Lynx Guardian approval required");
 }

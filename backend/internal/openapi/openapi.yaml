@@ -38,6 +38,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CapabilitiesResponse"
+  /lynx/policies:
+    get:
+      tags: [query]
+      operationId: getPolicies
+      summary: Read policy rules, protected resources, and current policy version.
+      responses:
+        "200":
+          $ref: "#/components/responses/ObjectResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /lynx/protected-resources:
+    post:
+      tags: [query]
+      operationId: upsertProtectedResource
+      summary: Create or update one protected resource policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/ObjectResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /lynx/policy-rules:
+    post:
+      tags: [query]
+      operationId: upsertPolicyRule
+      summary: Create or update one user-managed policy rule.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/ObjectResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
   /lynx/events:
     get:
       tags: [query]
