@@ -1,6 +1,14 @@
 import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
 import { normalizeString } from "../runtime/plugin-runtime-helpers.js";
 
+export function compactApprovalText(value: string, maxLength: number): string {
+  const normalized = normalizeString(value).replace(/\s+/g, " ");
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
 export function resolveToolApprovalProtectedTargetSummary(
   toolName: string,
   params: Record<string, any> | undefined,

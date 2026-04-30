@@ -5,7 +5,7 @@ import {
   getOpenClawRuntimeVersion,
   isVersionAtLeast,
 } from "../runtime/hook-capabilities.js";
-import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
+import { compactApprovalText } from "./approval-prompts.js";
 import type { ApprovalTransportProfile, ChannelProfile } from "./requester-provenance-store.js";
 
 export {
@@ -905,21 +905,19 @@ export function buildToolApprovalRequest(params: {
   timeoutMs: number;
   onResolution: (decision: ToolApprovalResolution) => Promise<void> | void;
 }): ToolApprovalRequest {
-  const description = [
+  const description = compactApprovalText([
     `[module] ${params.module}`,
     `[risk] ${params.riskLevel}`,
     params.description,
-    "Approval will resume the current tool call.",
-  ].join("\n");
+    "Approval resumes the current tool call.",
+  ].join(" | "), 256);
 
   return {
     title:
       params.riskLevel === "L3"
         ? `Lynx Guardian Approval (High Risk): ${params.toolName}`
         : `Lynx Guardian Approval: ${params.toolName}`,
-    description: params.riskLevel === "L3"
-      ? appendLocalConsoleWebviewFootnote(description)
-      : description,
+    description,
     severity: params.riskLevel === "L3" ? "critical" : "warning",
     timeoutMs: params.timeoutMs,
     timeoutBehavior: "deny",
