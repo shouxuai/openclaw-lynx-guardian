@@ -240,16 +240,6 @@ export function LynxChecksPage() {
 
       <section className="filter-panel">
         <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
-          <label className="filter-field filter-field--search">
-            <span>关键词</span>
-            <Input
-              allowClear
-              aria-label="关键词"
-              placeholder="搜索请求 ID、会话、问答记录"
-              value={draftFilters.q}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
-            />
-          </label>
           <label className="filter-field">
             <span>处理状态</span>
             <Select
@@ -270,6 +260,16 @@ export function LynxChecksPage() {
               placeholder="全部方式"
               value={draftFilters.trigger || undefined}
               onChange={(value) => setDraftFilters((current) => ({ ...current, trigger: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索请求 ID、会话、问答记录"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
             />
           </label>
           <div className="audit-filter-form__actions">

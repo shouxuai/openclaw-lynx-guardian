@@ -119,6 +119,14 @@ func putString(out map[string]any, key string, value sql.NullString) {
 	}
 }
 
+func putRiskLevel(out map[string]any, key string, value sql.NullString) {
+	if !value.Valid || value.String == "" {
+		out[key] = "L0"
+		return
+	}
+	out[key] = value.String
+}
+
 func putInt64(out map[string]any, key string, value sql.NullInt64) {
 	if value.Valid {
 		out[key] = value.Int64

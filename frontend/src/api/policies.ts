@@ -37,6 +37,7 @@ export function getPolicyOverview(): Promise<PolicyOverview> {
 }
 
 export function createProtectedResource(input: {
+  resourceId?: string;
   path: string;
   realPath?: string;
   preset: ProtectedResource["preset"];
@@ -52,6 +53,7 @@ export function createProtectedResource(input: {
 }
 
 export function createPolicyRule(input: {
+  ruleId?: string;
   kind: PolicyRule["kind"];
   scope: PolicyRule["scope"];
   patternType: PolicyRule["patternType"];

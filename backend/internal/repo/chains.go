@@ -18,6 +18,7 @@ func NewChainRepository(db *sql.DB) *ChainRepository {
 }
 
 func (r *ChainRepository) Upsert(ctx context.Context, input api.ChainUpdateRequest, summary api.ChainSummary, now string) error {
+	normalizeChainSummary(&summary)
 	summaryJSON := jsonText(summary, "{}")
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO chains (
@@ -96,6 +97,7 @@ func (r *ChainRepository) Get(ctx context.Context, chainID string) (api.ChainSum
 	}
 	var summary api.ChainSummary
 	unmarshalJSONText(summaryJSON, &summary)
+	normalizeChainSummary(&summary)
 	return summary, nil
 }
 
@@ -118,9 +120,34 @@ func (r *ChainRepository) List(ctx context.Context) ([]api.ChainSummary, error) 
 		}
 		var summary api.ChainSummary
 		unmarshalJSONText(summaryJSON, &summary)
+		normalizeChainSummary(&summary)
 		out = append(out, summary)
 	}
 	return out, rows.Err()
+}
+
+func normalizeChainSummary(summary *api.ChainSummary) {
+	if summary.RecentIdentity == nil {
+		summary.RecentIdentity = []string{}
+	}
+	if summary.RecentSensitive == nil {
+		summary.RecentSensitive = []string{}
+	}
+	if summary.RecentDenials == nil {
+		summary.RecentDenials = []string{}
+	}
+	if summary.RecentApprovals == nil {
+		summary.RecentApprovals = []string{}
+	}
+	if summary.RecentTools == nil {
+		summary.RecentTools = []string{}
+	}
+	if summary.RecentTaintReads == nil {
+		summary.RecentTaintReads = []string{}
+	}
+	if summary.RecentEvasions == nil {
+		summary.RecentEvasions = []string{}
+	}
 }
 
 func chainStatus(eventType string) string {

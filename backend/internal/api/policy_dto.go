@@ -34,6 +34,7 @@ type ProtectedResource struct {
 }
 
 type PolicyRuleUpsertRequest struct {
+	RuleID        string `json:"ruleId,omitempty"`
 	Kind          string `json:"kind"`
 	Scope         string `json:"scope"`
 	PatternType   string `json:"patternType"`
@@ -45,6 +46,7 @@ type PolicyRuleUpsertRequest struct {
 }
 
 type ProtectedResourceUpsertRequest struct {
+	ResourceID    string `json:"resourceId,omitempty"`
 	Path          string `json:"path"`
 	RealPath      string `json:"realPath,omitempty"`
 	Preset        string `json:"preset"`

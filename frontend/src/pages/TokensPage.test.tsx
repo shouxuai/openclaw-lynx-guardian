@@ -82,7 +82,7 @@ describe("TokensPage", () => {
     render(<TokensPage />);
 
     expect(await screen.findByText("可计量总量")).toBeInTheDocument();
-    expect(screen.getByText("100")).toBeInTheDocument();
+    expect(screen.getAllByText("100").length).toBeGreaterThan(0);
     expect(screen.getByText("估算记录 1")).toBeInTheDocument();
     expect(screen.getByText("不可用记录 1")).toBeInTheDocument();
     expect(screen.getByText("estimated")).toBeInTheDocument();

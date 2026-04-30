@@ -211,16 +211,6 @@ export function DecisionsPage() {
 
       <section className="filter-panel">
         <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
-          <label className="filter-field filter-field--search">
-            <span>关键词</span>
-            <Input
-              allowClear
-              aria-label="关键词"
-              placeholder="搜索裁决 ID、规则、模块"
-              value={draftFilters.q}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
-            />
-          </label>
           <label className="filter-field">
             <span>风险等级</span>
             <Select
@@ -252,6 +242,16 @@ export function DecisionsPage() {
               placeholder="全部动作"
               value={draftFilters.action || undefined}
               onChange={(value) => setDraftFilters((current) => ({ ...current, action: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索裁决 ID、规则、模块"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
             />
           </label>
           <div className="audit-filter-form__actions">

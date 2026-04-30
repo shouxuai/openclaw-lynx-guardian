@@ -158,16 +158,6 @@ export function ApprovalsPage() {
 
       <section className="filter-panel">
         <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
-          <label className="filter-field filter-field--search">
-            <span>关键词</span>
-            <Input
-              allowClear
-              aria-label="关键词"
-              placeholder="搜索审批 ID、请求摘要、模块"
-              value={draftFilters.q}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
-            />
-          </label>
           <label className="filter-field">
             <span>处理状态</span>
             <Select
@@ -188,6 +178,16 @@ export function ApprovalsPage() {
               placeholder="全部级别"
               value={draftFilters.riskLevel || undefined}
               onChange={(value) => setDraftFilters((current) => ({ ...current, riskLevel: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索审批 ID、请求摘要、模块"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
             />
           </label>
           <label className="filter-field">

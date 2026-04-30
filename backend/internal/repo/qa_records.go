@@ -12,6 +12,9 @@ import (
 type QARecordsListQuery struct {
 	SessionKey *string
 	RunID      *string
+	Q          *string
+	RiskLevel  []string
+	Status     *string
 	PageNum    *int
 	PageSize   *int
 	Limit      *int
@@ -59,6 +62,16 @@ func (r *QARecordsRepository) List(query QARecordsListQuery) (service.PageRespon
 	filter := &Filter{}
 	filter.AppendEquals("session_key", query.SessionKey)
 	filter.AppendEquals("run_id", query.RunID)
+	filter.AppendEquals("status", query.Status)
+	filter.AppendRiskLevelIn("risk_level", query.RiskLevel)
+	filter.AppendTextSearch([]string{
+		"qa_record_id",
+		"session_key",
+		"run_id",
+		"agent_id",
+		"user_prompt_excerpt",
+		"final_answer_excerpt",
+	}, query.Q)
 
 	total, err := countRows(r.db, "qa_records", filter)
 	if err != nil {
@@ -369,7 +382,7 @@ func mapQARecordListRow(row qaRecordRow) map[string]any {
 	putString(out, "agentId", row.AgentID)
 	putString(out, "userPromptExcerpt", row.UserPromptExcerpt)
 	putString(out, "finalAnswerExcerpt", row.FinalAnswerExcerpt)
-	putString(out, "riskLevel", row.RiskLevel)
+	putRiskLevel(out, "riskLevel", row.RiskLevel)
 	putInt64(out, "riskScore", row.RiskScore)
 	putInt64(out, "completedAtMs", row.CompletedAt)
 	putString(out, "linkOrigin", row.LinkOrigin)

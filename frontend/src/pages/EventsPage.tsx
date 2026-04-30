@@ -96,7 +96,7 @@ function eventMatchesQuery(event: AuditEventListItemDto, query: EventListQuery):
   if (query.toMs !== undefined && event.occurredAtMs > query.toMs) {
     return false;
   }
-  if (query.riskLevel?.length && (!event.riskLevel || !query.riskLevel.includes(event.riskLevel))) {
+  if (query.riskLevel?.length && !query.riskLevel.includes(event.riskLevel ?? "L0")) {
     return false;
   }
   if (query.category && event.category !== query.category) {
@@ -459,16 +459,6 @@ export function EventsPage() {
 
       <section className="filter-panel">
         <form className="audit-filter-form" onSubmit={handleSubmit}>
-          <label className="filter-field filter-field--search">
-            <span>关键词</span>
-            <Input
-              allowClear
-              aria-label="关键词"
-              placeholder="搜索事件 ID、标题、摘要、请求 ID"
-              value={draftFilters.q}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
-            />
-          </label>
 
           <label className="filter-field" onMouseDownCapture={() => setDatePickerOpen(false)}>
             <span>风险等级</span>
@@ -509,6 +499,16 @@ export function EventsPage() {
                 enforcementAction: value ?? "",
               }))}
               onOpenChange={handleSelectOpenChange}
+            />
+          </label>
+          <label className="filter-field filter-field--search">
+            <span>关键词</span>
+            <Input
+              allowClear
+              aria-label="关键词"
+              placeholder="搜索事件 ID、标题、摘要、请求 ID"
+              value={draftFilters.q}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
             />
           </label>
 

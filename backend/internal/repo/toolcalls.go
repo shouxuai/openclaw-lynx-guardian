@@ -59,7 +59,7 @@ func (r *ToolCallsRepository) List(query ToolCallsListQuery) (service.PageRespon
 	filter.AppendEquals("tool_name", query.ToolName)
 	filter.AppendEquals("result_status", query.ResultStatus)
 	filter.AppendEquals("approval_id", query.ApprovalID)
-	filter.AppendIn("risk_level", query.RiskLevel)
+	filter.AppendRiskLevelIn("risk_level", query.RiskLevel)
 	filter.AppendIn("enforcement_action", mapStringSlice(query.EnforcementAction, toDBEnforcementAction))
 
 	total, err := countRows(r.db, "tool_calls", filter)
@@ -153,7 +153,7 @@ func mapToolCallListRow(row toolCallListRow) map[string]any {
 	putString(out, "qaRecordId", row.QARecordID)
 	putString(out, "runId", row.RunID)
 	putString(out, "approvalId", row.ApprovalID)
-	putString(out, "riskLevel", row.RiskLevel)
+	putRiskLevel(out, "riskLevel", row.RiskLevel)
 	putInt64(out, "riskScore", row.RiskScore)
 	putString(out, "policyDecision", row.PolicyDecision)
 	putInt64(out, "finishedAtMs", row.FinishedAt)

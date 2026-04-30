@@ -293,6 +293,26 @@ func TestChainSummaryAccumulatesEvents(t *testing.T) {
 	}
 }
 
+func TestChainListReturnsEmptySignalArrays(t *testing.T) {
+	router := setupGrantRouter(t)
+	postJSON(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:    "chain-empty-signals",
+		SessionKey: "session-empty-signals",
+		EventType:  "before_dispatch",
+		Hook:       "before_dispatch",
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/lynx/chains", nil)
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d for chain list: %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "null") {
+		t.Fatalf("chain list should use empty arrays instead of null: %s", recorder.Body.String())
+	}
+}
+
 func TestChainSummaryClearsPendingApprovalAfterGrantResolution(t *testing.T) {
 	router := setupGrantRouter(t)
 

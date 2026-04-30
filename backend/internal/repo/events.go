@@ -87,7 +87,7 @@ func (r *EventsRepository) List(query EventsListQuery) (service.PageResponse[map
 	filter.AppendEquals("request_id", query.RequestID)
 	filter.AppendEquals("tool_call_id", query.ToolCallID)
 	filter.AppendEquals("approval_id", query.ApprovalID)
-	filter.AppendIn("risk_level", query.RiskLevel)
+	filter.AppendRiskLevelIn("risk_level", query.RiskLevel)
 	filter.AppendIn("enforcement_action", mapStringSlice(query.EnforcementAction, toDBEnforcementAction))
 	appendRoutineHeartbeatDefaultFilter(filter, query.IncludeRoutineHeartbeat)
 
@@ -196,7 +196,7 @@ func mapAuditEventListRow(row auditEventListRow) map[string]any {
 	putString(out, "subCategory", row.SubCategory)
 	putString(out, "direction", row.Direction)
 	putString(out, "primaryModule", row.PrimaryModule)
-	putString(out, "riskLevel", row.RiskLevel)
+	putRiskLevel(out, "riskLevel", row.RiskLevel)
 	putInt64(out, "riskScore", row.RiskScore)
 	putString(out, "policyDecision", row.PolicyDecision)
 	putString(out, "summary", row.Summary)

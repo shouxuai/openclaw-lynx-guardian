@@ -182,6 +182,17 @@ export function ToolCallsPage() {
 
       <section className="filter-panel">
         <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field">
+            <span>状态</span>
+            <Select
+              allowClear
+              aria-label="状态"
+              options={RESULT_STATUS_OPTIONS}
+              placeholder="全部状态"
+              value={draftFilters.resultStatus || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, resultStatus: value ?? "" }))}
+            />
+          </label>
           <label className="filter-field filter-field--search">
             <span>关键词</span>
             <Input
@@ -200,17 +211,6 @@ export function ToolCallsPage() {
               placeholder="例如 exec / read_file"
               value={draftFilters.toolName}
               onChange={(event) => setDraftFilters((current) => ({ ...current, toolName: event.target.value }))}
-            />
-          </label>
-          <label className="filter-field">
-            <span>状态</span>
-            <Select
-              allowClear
-              aria-label="状态"
-              options={RESULT_STATUS_OPTIONS}
-              placeholder="全部状态"
-              value={draftFilters.resultStatus || undefined}
-              onChange={(value) => setDraftFilters((current) => ({ ...current, resultStatus: value ?? "" }))}
             />
           </label>
           <div className="audit-filter-form__actions">

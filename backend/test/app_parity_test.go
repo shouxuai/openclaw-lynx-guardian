@@ -301,6 +301,13 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 	expectNumber(t, eventsBody, "pageSize", 1)
 	expectNumber(t, eventsBody, "totalPages", 3)
 
+	l0Events := doJSON(t, handler, http.MethodGet, "/lynx/events?pageNum=1&pageSize=5&riskLevel=L0", nil, false)
+	l0EventItems := expectItems(t, l0Events, http.StatusOK)
+	l0EventsBody := decodeObject(t, l0Events)
+	expectNumber(t, l0EventsBody, "total", 1)
+	expectString(t, l0EventItems[0], "eventId", "event-allow")
+	expectString(t, l0EventItems[0], "riskLevel", "L0")
+
 	eventDetail := doJSON(t, handler, http.MethodGet, "/lynx/events/event-approval", nil, false)
 	eventDetailBody := decodeObjectStatus(t, eventDetail, http.StatusOK)
 	expectString(t, eventDetailBody, "eventId", "event-approval")
@@ -352,6 +359,14 @@ func TestQueryRoutesServeIngestedFixtureData(t *testing.T) {
 	expectNumber(t, totals, "approvalCount", 1)
 	expectNumber(t, totals, "lynxCheckCount", 1)
 	expectNumber(t, totals, "totalTokens", 315)
+	riskDistribution, ok := dashboardBody["riskDistribution"].([]any)
+	if !ok {
+		t.Fatalf("expected dashboard riskDistribution array")
+	}
+	expectRiskBucketCount(t, riskDistribution, "L0", 1)
+	expectRiskBucketCount(t, riskDistribution, "L2", 1)
+	expectRiskBucketCount(t, riskDistribution, "L3", 1)
+	expectRiskBucketTotal(t, riskDistribution, 3)
 
 	tokenUsage := doJSON(t, handler, http.MethodGet, "/lynx/tokens/usage?limit=5&provider=openai&isEstimated=true", nil, false)
 	tokenItems := expectItems(t, tokenUsage, http.StatusOK)
@@ -496,6 +511,41 @@ func expectStringSlice(t *testing.T, payload map[string]any, key string, want []
 		if got, _ := raw[i].(string); got != want[i] {
 			t.Fatalf("expected %s[%d]=%q, got %#v", key, i, want[i], raw[i])
 		}
+	}
+}
+
+func expectRiskBucketCount(t *testing.T, raw []any, riskLevel string, want int) {
+	t.Helper()
+	for _, item := range raw {
+		bucket, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("expected risk bucket object, got %T", item)
+		}
+		if got, _ := bucket["riskLevel"].(string); got != riskLevel {
+			continue
+		}
+		expectNumber(t, bucket, "count", want)
+		return
+	}
+	t.Fatalf("expected risk bucket %s in %#v", riskLevel, raw)
+}
+
+func expectRiskBucketTotal(t *testing.T, raw []any, want int) {
+	t.Helper()
+	total := 0
+	for _, item := range raw {
+		bucket, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("expected risk bucket object, got %T", item)
+		}
+		got, ok := bucket["count"].(float64)
+		if !ok {
+			t.Fatalf("expected risk bucket count number, got %#v", bucket["count"])
+		}
+		total += int(got)
+	}
+	if total != want {
+		t.Fatalf("expected risk bucket total %d, got %d in %#v", want, total, raw)
 	}
 }
 

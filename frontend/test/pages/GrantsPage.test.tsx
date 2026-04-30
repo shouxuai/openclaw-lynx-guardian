@@ -59,6 +59,7 @@ describe("GrantsPage", () => {
 
     render(<GrantsPage />);
 
+    expect(await screen.findByRole("heading", { name: "链路授权" })).toBeInTheDocument();
     await screen.findByText("grant-1");
     expect(screen.getByLabelText("关键词")).toBeInTheDocument();
     expect(screen.getByLabelText("申请人")).toBeInTheDocument();

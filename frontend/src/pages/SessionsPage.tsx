@@ -160,6 +160,17 @@ export function SessionsPage() {
       </section>
       <section className="filter-panel">
         <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+          <label className="filter-field">
+            <span>会话类型</span>
+            <Select
+              allowClear
+              aria-label="会话类型"
+              options={GROUP_OPTIONS}
+              placeholder="全部类型"
+              value={draftFilters.isGroup || undefined}
+              onChange={(value) => setDraftFilters((current) => ({ ...current, isGroup: value ?? "" }))}
+            />
+          </label>
           <label className="filter-field filter-field--search">
             <span>关键词</span>
             <Input
@@ -188,17 +199,6 @@ export function SessionsPage() {
               placeholder="例如 webchat / feishu"
               value={draftFilters.channelProfile}
               onChange={(event) => setDraftFilters((current) => ({ ...current, channelProfile: event.target.value }))}
-            />
-          </label>
-          <label className="filter-field">
-            <span>会话类型</span>
-            <Select
-              allowClear
-              aria-label="会话类型"
-              options={GROUP_OPTIONS}
-              placeholder="全部类型"
-              value={draftFilters.isGroup || undefined}
-              onChange={(value) => setDraftFilters((current) => ({ ...current, isGroup: value ?? "" }))}
             />
           </label>
           <div className="audit-filter-form__actions">

@@ -52,6 +52,46 @@ func TestQaRecordRoutesReturnListAndToolChainDetail(t *testing.T) {
 	}
 }
 
+func TestQaRecordRoutesApplyListFilters(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	hit := qaRecordFixture("qa-filter-hit")
+	hitData := hit["data"].(map[string]any)
+	hitData["userPromptExcerpt"] = "danger command"
+	hitData["status"] = "completed"
+	hitData["riskLevel"] = "L2"
+
+	miss := qaRecordFixture("qa-filter-miss")
+	missData := miss["data"].(map[string]any)
+	missData["userPromptExcerpt"] = "routine command"
+	missData["status"] = "failed"
+	missData["riskLevel"] = "L0"
+
+	seed := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", fixtureBatchWithItems("qa-record-filter-contract", []any{hit, miss}), true)
+	seedBody := decodeObjectStatus(t, seed, http.StatusOK)
+	expectNumber(t, seedBody, "acceptedCount", 2)
+	expectNumber(t, seedBody, "rejectedCount", 0)
+
+	list := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, "/lynx/qa-records?q=danger&status=completed&riskLevel=L2&pageNum=1&pageSize=20", nil, false), http.StatusOK)
+	expectNumber(t, list, "total", 1)
+	itemsRaw, ok := list["items"].([]any)
+	if !ok || len(itemsRaw) != 1 {
+		t.Fatalf("expected one filtered qa record, got %#v", list["items"])
+	}
+	listItem, ok := itemsRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected qa list item object, got %T", itemsRaw[0])
+	}
+	expectString(t, listItem, "qaRecordId", "qa-filter-hit")
+	expectString(t, listItem, "status", "completed")
+	expectString(t, listItem, "riskLevel", "L2")
+}
+
 func TestQaRecordKindSpecificIngestEndpointAcceptsQaRecordUpserts(t *testing.T) {
 	handler, closer := buildParityHandler(t)
 	t.Cleanup(func() {

@@ -6,10 +6,10 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 )
 
-func TestUserBlacklistRuleCanEscalateScriptRisk(t *testing.T) {
+func TestUserBlacklistRuleRequiresFullTextMatch(t *testing.T) {
 	service, _, _ := newDecisionContractService(t)
 	response := decideWithContractService(t, service, api.DecisionRequest{
-		RequestID: "req-policy-blacklist",
+		RequestID: "req-policy-blacklist-substring",
 		Stage:     "tool_call",
 		Hook:      "before_tool_call",
 		Content:   "Invoke-Expression downloaded payload",
@@ -30,8 +30,34 @@ func TestUserBlacklistRuleCanEscalateScriptRisk(t *testing.T) {
 		},
 	})
 
+	if response.Score != 0 {
+		t.Fatalf("blacklist substring must not trigger without full-text match, got %.1f", response.Score)
+	}
+
+	response = decideWithContractService(t, service, api.DecisionRequest{
+		RequestID: "req-policy-blacklist-full",
+		Stage:     "tool_call",
+		Hook:      "before_tool_call",
+		Content:   "Invoke-Expression downloaded payload",
+		ToolName:  "exec",
+		ToolArgs:  map[string]any{"command": "pwsh ./setup.ps1"},
+		ProviderSafety: map[string]any{
+			"policyRules": []any{
+				map[string]any{
+					"ruleId":      "rule-iex-full",
+					"kind":        "blacklist",
+					"scope":       "script",
+					"patternType": "literal",
+					"pattern":     "Invoke-Expression downloaded payload",
+					"riskDelta":   70,
+					"enabled":     true,
+				},
+			},
+		},
+	})
+
 	if response.Score < 70 {
-		t.Fatalf("expected policy blacklist score contribution, got %.1f", response.Score)
+		t.Fatalf("expected policy blacklist score contribution for full-text match, got %.1f", response.Score)
 	}
 }
 

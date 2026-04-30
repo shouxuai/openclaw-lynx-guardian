@@ -72,6 +72,12 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
         path: ROUTE_PATHS.policies,
         pageTitle: "策略配置",
       },
+    ],
+  },
+  {
+    id: "diagnostics",
+    label: "高级诊断",
+    items: [
       {
         id: "chains",
         label: "多轮链路",
@@ -80,9 +86,9 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
       },
       {
         id: "grants",
-        label: "授权 Grant",
+        label: "链路授权",
         path: ROUTE_PATHS.grants,
-        pageTitle: "授权 Grant",
+        pageTitle: "链路授权",
       },
     ],
   },

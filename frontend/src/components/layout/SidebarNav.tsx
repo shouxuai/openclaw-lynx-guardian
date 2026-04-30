@@ -34,13 +34,23 @@ function NavIcon({ id }: { id: string }) {
         </svg>
       );
     case "events":
+      return (
+        <svg {...commonProps}>
+          <path d="M5 4h14v16H5z" />
+          <path d="M8 8h8" />
+          <path d="M8 12h6" />
+          <path d="M8 16h8" />
+          <path d="M4 8h2" />
+          <path d="M4 16h2" />
+        </svg>
+      );
     case "decisions":
       return (
         <svg {...commonProps}>
-          <path d="M7 3h10v4H7z" />
-          <path d="M5 7h14v14H5z" />
-          <path d="M8 12h8" />
-          <path d="M8 16h6" />
+          <path d="M12 3 20 8v8l-8 5-8-5V8l8-5Z" />
+          <path d="M12 8v5" />
+          <path d="M12 17h.01" />
+          <path d="M8.8 10.5h6.4" />
         </svg>
       );
     case "tool-calls":
@@ -53,11 +63,21 @@ function NavIcon({ id }: { id: string }) {
         </svg>
       );
     case "approvals":
-    case "grants":
       return (
         <svg {...commonProps}>
           <path d="M12 3.5 5.5 6v5.5c0 4.1 2.6 7.7 6.5 9 3.9-1.3 6.5-4.9 6.5-9V6L12 3.5Z" />
           <path d="m9.2 12 1.9 1.9 3.7-4" />
+        </svg>
+      );
+    case "policies":
+      return (
+        <svg {...commonProps}>
+          <path d="M5 5h14" />
+          <path d="M5 12h14" />
+          <path d="M5 19h14" />
+          <circle cx="9" cy="5" r="2" />
+          <circle cx="15" cy="12" r="2" />
+          <circle cx="11" cy="19" r="2" />
         </svg>
       );
     case "chains":
@@ -70,13 +90,29 @@ function NavIcon({ id }: { id: string }) {
           <path d="M7 7c5 0 5 10 10 10" />
         </svg>
       );
+    case "grants":
+      return (
+        <svg {...commonProps}>
+          <circle cx="8" cy="15" r="3" />
+          <path d="m10.2 12.8 7-7" />
+          <path d="M15 6h4v4" />
+          <path d="M6.5 17.5 5 19" />
+        </svg>
+      );
     case "lynx-checks":
-    case "skills":
       return (
         <svg {...commonProps}>
           <path d="M7 5h10a2 2 0 0 1 2 2v12H5V7a2 2 0 0 1 2-2Z" />
           <path d="m8.8 13 2 2 4.4-5" />
           <path d="M9 3h6v4H9z" />
+        </svg>
+      );
+    case "skills":
+      return (
+        <svg {...commonProps}>
+          <path d="M12 3 4.5 7.2 12 11.4l7.5-4.2L12 3Z" />
+          <path d="M4.5 12 12 16.2 19.5 12" />
+          <path d="M4.5 16.8 12 21l7.5-4.2" />
         </svg>
       );
     case "sessions":

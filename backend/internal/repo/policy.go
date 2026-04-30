@@ -45,7 +45,10 @@ func (r *PolicyRepository) UpsertProtectedResource(ctx context.Context, request 
 		return api.ProtectedResource{}, err
 	}
 	now := time.Now().UnixMilli()
-	id := stablePolicyID("protected-resource", request.Path, request.Preset)
+	id := strings.TrimSpace(request.ResourceID)
+	if id == "" {
+		id = stablePolicyID("protected-resource", request.Path, request.Preset)
+	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO protected_resources (resource_id, version, path, real_path, preset, enabled, created_by, created_at_ms, updated_at_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -79,7 +82,10 @@ func (r *PolicyRepository) UpsertPolicyRule(ctx context.Context, request api.Pol
 		return api.PolicyRule{}, err
 	}
 	now := time.Now().UnixMilli()
-	id := stablePolicyID("policy-rule", request.Kind, request.Scope, request.PatternType, request.Pattern)
+	id := strings.TrimSpace(request.RuleID)
+	if id == "" {
+		id = stablePolicyID("policy-rule", request.Kind, request.Scope, request.PatternType, request.Pattern)
+	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO policy_rules (rule_id, version, kind, scope, pattern_type, pattern, risk_delta, enabled, created_by, created_at_ms, updated_at_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

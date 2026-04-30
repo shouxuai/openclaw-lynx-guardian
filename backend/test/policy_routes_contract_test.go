@@ -82,6 +82,90 @@ func TestPolicyRoutesManageProtectedResourcesAndRules(t *testing.T) {
 	}
 }
 
+func TestPolicyRoutesUpdateExistingProtectedResourceAndRuleById(t *testing.T) {
+	router, closer := buildTestHandler(t)
+	defer closer()
+
+	protectedResource := policyPostJSON(t, router, "/lynx/protected-resources", map[string]any{
+		"path":          "C:\\Users\\alice\\Secrets",
+		"preset":        "read_only",
+		"enabled":       true,
+		"actorId":       "alice",
+		"changeSummary": "protect local secrets",
+	})
+	if protectedResource.Code != http.StatusOK {
+		t.Fatalf("create protected resource status=%d body=%s", protectedResource.Code, protectedResource.Body.String())
+	}
+	var createdResource struct {
+		ResourceID string `json:"resourceId"`
+	}
+	if err := json.Unmarshal(protectedResource.Body.Bytes(), &createdResource); err != nil {
+		t.Fatalf("decode protected resource: %v", err)
+	}
+
+	updatedResource := policyPostJSON(t, router, "/lynx/protected-resources", map[string]any{
+		"resourceId":    createdResource.ResourceID,
+		"path":          "C:\\Users\\alice\\Secrets2",
+		"preset":        "no_modify",
+		"enabled":       true,
+		"actorId":       "alice",
+		"changeSummary": "tighten local secrets",
+	})
+	if updatedResource.Code != http.StatusOK {
+		t.Fatalf("update protected resource status=%d body=%s", updatedResource.Code, updatedResource.Body.String())
+	}
+
+	rule := policyPostJSON(t, router, "/lynx/policy-rules", map[string]any{
+		"kind":          "blacklist",
+		"scope":         "script",
+		"patternType":   "literal",
+		"pattern":       "Invoke-Expression",
+		"riskDelta":     70,
+		"enabled":       true,
+		"actorId":       "alice",
+		"changeSummary": "flag powershell dynamic execution",
+	})
+	if rule.Code != http.StatusOK {
+		t.Fatalf("create policy rule status=%d body=%s", rule.Code, rule.Body.String())
+	}
+	var createdRule struct {
+		RuleID string `json:"ruleId"`
+	}
+	if err := json.Unmarshal(rule.Body.Bytes(), &createdRule); err != nil {
+		t.Fatalf("decode policy rule: %v", err)
+	}
+
+	updatedRule := policyPostJSON(t, router, "/lynx/policy-rules", map[string]any{
+		"ruleId":        createdRule.RuleID,
+		"kind":          "blacklist",
+		"scope":         "script",
+		"patternType":   "literal",
+		"pattern":       "Invoke-Expression downloaded payload",
+		"riskDelta":     70,
+		"enabled":       true,
+		"actorId":       "alice",
+		"changeSummary": "tighten powershell dynamic execution",
+	})
+	if updatedRule.Code != http.StatusOK {
+		t.Fatalf("update policy rule status=%d body=%s", updatedRule.Code, updatedRule.Body.String())
+	}
+
+	overview := policyGetJSON(t, router, "/lynx/policies")
+	if overview.Code != http.StatusOK {
+		t.Fatalf("policy overview status=%d body=%s", overview.Code, overview.Body.String())
+	}
+	body := overview.Body.String()
+	if !policyBodyContains(body, "Secrets2") || !policyBodyContains(body, "no_modify") {
+		t.Fatalf("overview missing updated protected resource: %s", body)
+	}
+	if policyBodyContains(body, "C:\\\\Users\\\\alice\\\\Secrets\"") {
+		t.Fatalf("overview kept old protected resource path after id update: %s", body)
+	}
+	if !policyBodyContains(body, "Invoke-Expression downloaded payload") {
+		t.Fatalf("overview missing updated policy rule: %s", body)
+	}
+}
+
 func policyPostJSON(t *testing.T, router http.Handler, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	data, err := json.Marshal(body)

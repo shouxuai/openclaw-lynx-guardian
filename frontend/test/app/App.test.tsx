@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/app/App";
+import { PRIMARY_NAV_ITEMS } from "../../src/app/nav-config";
 
 function createJsonResponse(data: unknown): Response {
   return {
@@ -79,7 +80,9 @@ describe("App", () => {
     expect(screen.getByText("L0 指标")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "过去 24 小时" })).not.toBeInTheDocument();
     expect(container.querySelector("a.topbar__githubButton")).toBeNull();
-    expect(container.querySelectorAll(".sidebar__linkIcon")).toHaveLength(12);
+    const sidebarIcons = [...container.querySelectorAll(".sidebar__linkIcon")];
+    expect(sidebarIcons).toHaveLength(PRIMARY_NAV_ITEMS.length);
+    expect(new Set(sidebarIcons.map((icon) => icon.innerHTML)).size).toBe(sidebarIcons.length);
     expect(screen.queryByText("系统管理员")).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -124,7 +127,7 @@ describe("App", () => {
       "href",
       "/webview/chains",
     );
-    expect(screen.getByRole("link", { name: "授权 Grant" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "链路授权" })).toHaveAttribute(
       "href",
       "/webview/grants",
     );

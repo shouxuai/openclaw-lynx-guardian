@@ -75,6 +75,30 @@ func (f *Filter) AppendIn(field string, values []string) {
 	}
 }
 
+func (f *Filter) AppendRiskLevelIn(field string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+
+	includeDefaultL0 := false
+	placeholders := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "L0" {
+			includeDefaultL0 = true
+		}
+		placeholders = append(placeholders, "?")
+	}
+
+	clause := field + " IN (" + strings.Join(placeholders, ", ") + ")"
+	if includeDefaultL0 {
+		clause = "(" + clause + " OR " + field + " IS NULL OR " + field + " = '')"
+	}
+	f.clauses = append(f.clauses, clause)
+	for _, value := range values {
+		f.params = append(f.params, value)
+	}
+}
+
 // AppendTextSearch mirrors appendTextSearchFilter.
 func (f *Filter) AppendTextSearch(fields []string, value *string) {
 	if value == nil {

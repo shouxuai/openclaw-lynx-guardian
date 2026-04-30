@@ -92,21 +92,21 @@ export function ChainsPage() {
     ? `链路记录加载失败：${error}`
     : loading
       ? "正在加载多轮链路"
-      : "展示会话链路中的身份、敏感请求、工具、taint 和审批上下文。";
+      : "高级诊断视图，用于查看会话链路中的身份、敏感请求、工具、taint 和审批上下文。";
 
   return (
     <div className="page-stack">
       <PageHeader
         title="多轮链路"
         description={statusDescription}
-        eyebrow="CHAIN STATE"
+        eyebrow="链路诊断"
       />
 
-      <section className="summary-card-grid">
-        <article className="summary-card">
-          <p className="summary-card__label">链路数量</p>
-          <strong className="summary-card__value">{formatInteger(items.length)}</strong>
-          <p className="summary-card__unit">来自 Go chain summary</p>
+      <section className="metric-grid metric-grid--compact">
+        <article className="metric-card">
+          <p className="metric-card__label">链路数量</p>
+          <strong className="metric-card__value">{formatInteger(items.length)}</strong>
+          <p className="metric-card__note">来自链路状态摘要</p>
         </article>
       </section>
 
@@ -143,7 +143,7 @@ export function ChainsPage() {
         <div className="table-panel__header">
           <div>
             <h2 className="panel__title">链路列表</h2>
-            <p className="panel__subtitle">表格展示可判断走向的摘要，taint、Grant 与审批证据进入详情。</p>
+            <p className="panel__subtitle">表格展示可判断走向的摘要，taint、链路授权与审批证据进入详情。</p>
           </div>
         </div>
         <DataTable
@@ -204,8 +204,8 @@ export function ChainsPage() {
             { label: "工具", value: selectedChain ? joinSignals(selectedChain.recentTools) : "暂无" },
             { label: "Taint 读取", value: selectedChain ? joinSignals(selectedChain.recentTaintReads) : "暂无" },
             { label: "规避信号", value: selectedChain ? joinSignals(selectedChain.recentEvasions) : "暂无" },
-            { label: "Active Grant", value: selectedChain?.activeGrantId || "暂无" },
-            { label: "Pending Approval", value: selectedChain?.pendingApproval || "暂无" },
+            { label: "当前授权", value: selectedChain?.activeGrantId || "暂无" },
+            { label: "待审批", value: selectedChain?.pendingApproval || "暂无" },
           ].map((field) => (
             <div key={field.label} className="detail-panel__field">
               <dt>{field.label}</dt>

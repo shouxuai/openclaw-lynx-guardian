@@ -117,11 +117,11 @@ func andWhere(filter *Filter, clause string) string {
 func (r *DashboardRepository) riskDistribution(filter *Filter) ([]map[string]any, error) {
 	rows, err := r.db.Query(
 		`
-		SELECT risk_level, COUNT(*)
+		SELECT COALESCE(NULLIF(risk_level, ''), 'L0') AS normalized_risk_level, COUNT(*)
 		FROM audit_events
-		`+andWhere(filter, "risk_level IS NOT NULL")+`
-		GROUP BY risk_level
-		ORDER BY risk_level ASC`,
+		`+filter.Where()+`
+		GROUP BY normalized_risk_level
+		ORDER BY normalized_risk_level ASC`,
 		filter.Params()...,
 	)
 	if err != nil {

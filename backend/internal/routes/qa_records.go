@@ -14,6 +14,9 @@ func RegisterQARecords(router gin.IRoutes, repository *repo.QARecordsRepository)
 		page, err := repository.List(repo.QARecordsListQuery{
 			SessionKey: httpserver.ReadString(values, "sessionKey"),
 			RunID:      httpserver.ReadString(values, "runId"),
+			Q:          httpserver.ReadString(values, "q"),
+			RiskLevel:  httpserver.ReadStringSlice(values, "riskLevel"),
+			Status:     httpserver.ReadString(values, "status"),
 			PageNum:    httpserver.ReadInt(values, "pageNum"),
 			PageSize:   httpserver.ReadInt(values, "pageSize"),
 			Limit:      httpserver.ReadInt(values, "limit"),

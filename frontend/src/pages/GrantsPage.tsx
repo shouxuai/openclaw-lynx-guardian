@@ -78,7 +78,7 @@ export function GrantsPage() {
         }
         startTransition(() => {
           setItems([]);
-          setError(loadError instanceof Error ? loadError.message : "Grant 记录加载失败");
+          setError(loadError instanceof Error ? loadError.message : "链路授权记录加载失败");
           setLoading(false);
         });
       }
@@ -107,27 +107,29 @@ export function GrantsPage() {
   const activeCount = items.filter((item) => !item.revokedAt).length;
   const revokedCount = items.length - activeCount;
   const statusDescription = error
-    ? `Grant 记录加载失败：${error}`
+    ? `链路授权记录加载失败：${error}`
     : loading
-      ? "正在加载 allow-current-chain 授权"
-      : "展示审批后的 chain-scoped grant、资源范围和撤销原因。";
+      ? "正在加载链路授权记录"
+      : "展示审批通过后在当前链路内临时生效的授权、适用范围和撤销原因。";
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="授权 Grant"
+        title="链路授权"
         description={statusDescription}
-        eyebrow="ALLOW CURRENT CHAIN"
+        eyebrow="短期链路授权"
       />
 
-      <section className="summary-card-grid">
-        <article className="summary-card">
-          <p className="summary-card__label">活跃 Grant</p>
-          <strong className="summary-card__value">{formatInteger(activeCount)}</strong>
+      <section className="metric-grid metric-grid--compact">
+        <article className="metric-card">
+          <p className="metric-card__label">有效授权</p>
+          <strong className="metric-card__value">{formatInteger(activeCount)}</strong>
+          <p className="metric-card__note">当前链路范围</p>
         </article>
-        <article className="summary-card">
-          <p className="summary-card__label">已撤销</p>
-          <strong className="summary-card__value">{formatInteger(revokedCount)}</strong>
+        <article className="metric-card">
+          <p className="metric-card__label">已撤销</p>
+          <strong className="metric-card__value">{formatInteger(revokedCount)}</strong>
+          <p className="metric-card__note">过期、升级或上下文变化</p>
         </article>
       </section>
 
@@ -163,8 +165,8 @@ export function GrantsPage() {
       <section className="table-panel">
         <div className="table-panel__header">
           <div>
-            <h2 className="panel__title">授权列表</h2>
-            <p className="panel__subtitle">保留授权状态与责任人，资源范围、目标哈希和撤销原因进入详情。</p>
+            <h2 className="panel__title">链路授权列表</h2>
+            <p className="panel__subtitle">保留当前链路内的临时授权状态与责任人，资源范围、目标哈希和撤销原因进入详情。</p>
           </div>
         </div>
         <DataTable
@@ -216,7 +218,7 @@ export function GrantsPage() {
         closeLabel="关闭详情"
         open={Boolean(selectedGrant)}
         title="授权详情"
-        subtitle={selectedGrant?.grantId ?? "查看授权的资源范围和撤销上下文。"}
+        subtitle={selectedGrant?.grantId ?? "查看链路授权的适用范围和撤销上下文。"}
         onClose={() => setSelectedGrant(null)}
       >
         <dl className="detail-panel__grid">

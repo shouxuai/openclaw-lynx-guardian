@@ -29,6 +29,22 @@ function createChain(chainId = "chain-1") {
   };
 }
 
+function createSparseChain(chainId = "chain-sparse") {
+  return {
+    chainId,
+    sessionKey: "session-sparse",
+    recentIdentity: null,
+    recentSensitive: null,
+    recentDenials: null,
+    recentApprovals: null,
+    recentTools: null,
+    recentTaintReads: null,
+    recentEvasions: null,
+    activeGrantId: "",
+    pendingApproval: "",
+  };
+}
+
 describe("ChainsPage", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -73,5 +89,15 @@ describe("ChainsPage", () => {
     await screen.findByText("chain-filtered");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/chains?q=filtered&channelProfile=webchat");
+  });
+
+  it("renders chain summaries when backend returns null signal arrays", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse({ items: [createSparseChain()] }));
+
+    render(<ChainsPage />);
+
+    await screen.findByText("chain-sparse");
+    expect(screen.getByText("session-sparse")).toBeInTheDocument();
+    expect(screen.getAllByText("暂无").length).toBeGreaterThan(0);
   });
 });
