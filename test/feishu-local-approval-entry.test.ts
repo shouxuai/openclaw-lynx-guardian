@@ -4,7 +4,6 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 import setup from "../index.ts";
 import * as utils from "../src/utils.js";
-import * as api from "../src/api/remote-safety-service.js";
 import * as safetyGuard from "../src/guard/safety-guard.js";
 import * as runtimeConfig from "../src/discovery/discovery-runtime-config.js";
 import * as tokenOptimizerRunner from "../src/runtime/token-optimizer-runner.js";
@@ -28,8 +27,15 @@ import {
   readRunApprovalContext,
 } from "../src/approval/approval-bridge.js";
 
+const api = {
+  registerUser: vi.fn(),
+  pushRecord: vi.fn(),
+  checkPublicAccess: vi.fn(),
+  checkContent: vi.fn(),
+  checkTool: vi.fn(),
+};
+
 vi.mock("../src/utils.js");
-vi.mock("../src/api/remote-safety-service.js");
 vi.mock("../src/discovery/discovery-runtime-config.js", () => ({
   DISCOVERY_CONFIG_SOURCE_PATH: "openclaw.plugin.json",
   loadDiscoveryRuntimeConfig: vi.fn(),

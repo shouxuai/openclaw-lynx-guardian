@@ -157,6 +157,28 @@ func TestSkillInventoryListDoesNotBlockWhileLoadingFindings(t *testing.T) {
 	}
 }
 
+func TestRemoteSkillSecurityRoutesReturnDisabledDiagnostics(t *testing.T) {
+	router := setupSkillRouter(t)
+
+	blacklist := getSkillJSON(t, router, "/lynx/internal/v1/security/skill-blacklist")
+	if blacklist["message"] != "remote safety disabled" {
+		t.Fatalf("unexpected blacklist diagnostic: %#v", blacklist)
+	}
+
+	check := postSkillJSON(t, router, http.MethodPost, "/lynx/internal/v1/security/skill-check", map[string]any{
+		"id":        "user-1",
+		"skillName": "demo-skill",
+		"skillHash": "hash",
+	})
+	result, ok := check["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected check result object, got %#v", check["result"])
+	}
+	if result["risk_level"] != float64(0) {
+		t.Fatalf("expected disabled skill check risk_level=0, got %#v", result["risk_level"])
+	}
+}
+
 func TestTokenSummaryAggregatesActualOnly(t *testing.T) {
 	router, database := setupTokenRouter(t)
 

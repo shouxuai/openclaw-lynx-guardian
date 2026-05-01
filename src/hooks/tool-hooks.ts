@@ -1,6 +1,5 @@
 import type { OpenClawPluginApi } from "../types.js";
 import type { CheckExecBlacklistContext } from "../blacklist.js";
-import type { MaliciousSkillEntry } from "../skills/skill-guard.js";
 import type { LynxHookRuntimeContext } from "./setup.js";
 import type { ResourcePolicyEvidence, ScriptPreflightEvidence } from "../../shared/src/decision.js";
 import * as blacklist from "../blacklist.js";
@@ -125,14 +124,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    checkContentWeighted,
-    checkPublicAccessWeighted,
-    checkToolWeighted,
-    fetchMaliciousSkillBlacklistWeighted,
-    getWeightedRiskLevel,
-    isRemoteAvailable,
-    pushRecordBestEffort,
-    registerUserBestEffort,
     canonicalizePath,
     buildGuardContext,
     createReplacementMessage,
@@ -202,8 +193,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
     buildManualLynxCheckPrompt,
     buildScheduledLynxCheckPrompt,
     deliverManagedLynxAuditReport,
-    adaptContentCheckResult,
-    adaptToolCheckResult,
     createLocalConsoleTokenProvider,
     ensureLocalConsoleToken,
     createLocalConsoleIngestClient,
@@ -511,20 +500,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
         if (guardActionRequired) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${effectiveAssessment.description}`);
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG:tool] ${toolName} ${effectiveAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "managed tool guard block",
-            },
-          );
 
           const approvalRiskLevel = toApprovalRiskLevel(effectiveAssessment.level);
           const primaryModule = effectiveAssessment.modules[0];
@@ -853,20 +828,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
         if (guardActionRequired && !approvedToolOverride) {
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           log.warn(`[lynx-guardian] Self-safety-guard blocked tool: ${effectiveAssessment.description}`);
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG:tool] ${toolName} ${effectiveAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "tool guard block",
-            },
-          );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
             const alreadyPending = resolveOverrideKeys(ctx).some((k: string) => getPendingOverride(k));
             savePendingOverrideFull(ctx, {
@@ -937,54 +898,66 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
           const quick = quickBlacklistCheck(installAttempt.skillName);
           if (quick.blocked) {
             log.warn(`[lynx-guardian] Malicious Skill blocked: ${installAttempt.skillName} ${quick.reason}`);
-            await pushRecordBestEffort(
-              {
-                id: userId,
-                content: `[SkillGuard] blocked: ${installAttempt.skillName} (${quick.reason})`,
-                riskLevel: 3,
-              },
-              {
-                log,
-                context: "skill guard blocked",
-              },
-            );
             return {
               block: true,
               blockReason: `[Lynx Guardian] 恶意 Skill 拦截: "${installAttempt.skillName}" ${quick.reason}`,
             };
           }
 
-          const fetchRemote = async (): Promise<MaliciousSkillEntry[] | null> => {
-            const remoteBlacklist = await fetchMaliciousSkillBlacklistWeighted();
-            if (!isRemoteAvailable(remoteBlacklist)) {
-              log.warn(`[lynx-guardian] Remote skill blacklist unavailable: ${remoteBlacklist.errorMessage}`);
-              return null;
+          const fetchRemoteBlacklistViaGo = localConsoleRuntime
+            ? async () => {
+              try {
+                const client = new GoControlPlaneClient({
+                  config: localConsoleRuntime.config,
+                  getToken: createLocalConsoleTokenProvider(localConsoleRuntime.config.paths.tokenPath),
+                });
+                const response = await client.fetchRemoteSkillBlacklist();
+                const remoteBlacklist = response as {
+                  result?: {
+                    entries?: Array<{
+                      name?: string;
+                      namePattern?: string;
+                      hash?: string;
+                      reason?: string;
+                      severity?: string;
+                    }>;
+                  };
+                };
+                const entries = Array.isArray(remoteBlacklist?.result?.entries)
+                  ? remoteBlacklist.result.entries
+                  : [];
+                return entries.map((entry) => {
+                  let namePattern: RegExp | undefined;
+                  if (typeof entry.namePattern === "string" && entry.namePattern.trim()) {
+                    try {
+                      namePattern = new RegExp(entry.namePattern, "i");
+                    } catch {
+                      namePattern = undefined;
+                    }
+                  }
+                  return {
+                    name: typeof entry.name === "string" ? entry.name : undefined,
+                    namePattern,
+                    hash: typeof entry.hash === "string" ? entry.hash : undefined,
+                    reason: typeof entry.reason === "string" && entry.reason.trim()
+                      ? entry.reason
+                      : "remote skill blacklist",
+                    severity: entry.severity === "warning" ? "warning" as const : "critical" as const,
+                  };
+                });
+              } catch (error) {
+                log.warn(
+                  `[lynx-guardian] Remote skill blacklist via local Go skipped: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                return null;
+              }
             }
-            const res = remoteBlacklist.value;
-            if (res.code === 0 && res.result?.entries) {
-              return res.result.entries.map((e: any) => ({
-                ...e,
-                namePattern: e.namePattern ? new RegExp(e.namePattern) : undefined,
-              }));
-            }
-            return null;
-          };
+            : undefined;
 
-          const assessment = await assessSkillRisk(installAttempt, fetchRemote);
+          const assessment = await assessSkillRisk(installAttempt, fetchRemoteBlacklistViaGo);
           log.info(`[lynx-guardian] Skill assess risk detected: ${JSON.stringify(assessment)}`);
           if (assessment.block) {
             log.warn(`[lynx-guardian] ${assessment.message}`);
-            await pushRecordBestEffort(
-              {
-                id: userId,
-                content: `[SkillGuard] ${assessment.level}: ${installAttempt.skillName}`,
-                riskLevel: 3,
-              },
-              {
-                log,
-                context: "skill guard assessment block",
-              },
-            );
 
             if (skillGuardConfig.autoQuarantine && installAttempt.skillPath) {
               try {
@@ -1006,17 +979,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
 
           if (assessment.level === "warning") {
             log.warn(`[lynx-guardian] ${assessment.message}`);
-            await pushRecordBestEffort(
-              {
-                id: userId,
-                content: `[SkillGuard] warning: ${installAttempt.skillName}`,
-                riskLevel: 1,
-              },
-              {
-                log,
-                context: "skill guard warning",
-              },
-            );
           }
         }
       } catch (err: any) {
@@ -1047,57 +1009,17 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
 
     const detail = toolName === "exec" ? (params?.command ?? "") : (params?.file_path ?? params?.path ?? "");
     const blacklistModules = inferBlacklistModules(toolName, match.reason);
-    const contentToReport = toolName === "exec" ? `执行 ${detail} 命令` : `${toolName} ${detail}`;
-
-    const riskLevel = match.level === "critical" ? 3 : 2;
-    await pushRecordBestEffort(
-      {
-        id: userId,
-        content: contentToReport,
-        riskLevel,
-      },
-      {
-        log,
-        context: "blacklist record",
-      },
-    );
 
     try {
-      const userContext = readRecentContext(ctx.sessionKey);
-      log.info(`[lynx-guardian] User context: ${userContext}`);
-      const content = `是否${match.reason} ${detail}？用户：${userContext}`;
-
-      const toolCheck = await checkToolWeighted(userId, content);
-      const adaptedToolCheck = isRemoteAvailable(toolCheck)
-        ? adaptToolCheckResult(toolCheck.value.result)
-        : {
-            externalRiskLevel: 0,
-            content: "",
-          };
-      if (!isRemoteAvailable(toolCheck)) {
-        log.warn(`[lynx-guardian] Tool weighting unavailable: ${toolCheck.errorMessage}`);
-      } else {
-        log.info(`[lynx-guardian] Tool check result: ${JSON.stringify(toolCheck.value)}`);
-      }
-      // Blacklist hits always require confirmation via the plugin's pending-override
-      // mechanism, even when tool_check returns safe (risk_level=0).
-      // "tool_check safe" means the user asked for the operation - that is necessary
-      // but not sufficient. The plugin's confirmation phrase is the actual gate.
-      // Floor to the blacklist's own severity so we never silently allow a blacklist hit.
-      const rawRiskLevel = adaptedToolCheck.externalRiskLevel;
       const blacklistFloor = match.level === "critical" ? 3 : 2;
-      const riskLevel = getWeightedRiskLevel({
-        localFloor: blacklistFloor,
-        remoteRiskLevel: rawRiskLevel,
-      });
-
-      log.info(`[lynx-guardian] Tool check result: risk=${rawRiskLevel} (effective=${riskLevel}, blacklistFloor=${blacklistFloor})`);
+      const riskLevel = blacklistFloor;
+      log.info(`[lynx-guardian] Tool remote weighting skipped; effectiveRisk=${riskLevel}, blacklistFloor=${blacklistFloor}`);
 
       if (riskLevel >= 2) {
         const apiAssessment = {
           ...buildApiRiskAssessment(
             riskLevel,
-            `API tool risk: ${match.reason}${adaptedToolCheck.content ? ` (${adaptedToolCheck.content})` : ""}`,
+            `API tool risk: ${match.reason}`,
           ),
           modules: blacklistModules,
         };
@@ -1425,7 +1347,7 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
         const apiAssessment = {
           ...buildApiRiskAssessment(
             riskLevel,
-            `API tool risk: ${match.reason}${adaptedToolCheck.content ? ` (${adaptedToolCheck.content})` : ""}`,
+            `API tool risk: ${match.reason}`,
           ),
           modules: blacklistModules,
         };
@@ -1503,29 +1425,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
           primaryModule: blacklistModules[0],
           riskLevel: match.level === "critical" ? "L4" : "L2",
           riskScore: match.level === "critical" ? 9 : 6,
-          policyDecision: "allow",
-          enforcementAction: "allow",
-        });
-        return;
-      } else if (riskLevel === 1) {
-        log.info(`[lynx-guardian] 识别到内容风险：${adaptedToolCheck.content}`);
-        recordBeforeToolCall({
-          summary: `识别到内容风险：${adaptedToolCheck.content}`,
-          triggeredModules: blacklistModules,
-          primaryModule: blacklistModules[0],
-          riskLevel: "L1",
-          riskScore: 3,
-          policyDecision: "warn",
-          enforcementAction: "warn",
-        });
-        return;
-      } else {
-        recordBeforeToolCall({
-          summary: "Blacklist-matched tool call was ultimately allowed.",
-          triggeredModules: blacklistModules,
-          primaryModule: blacklistModules[0],
-          riskLevel: "L0",
-          riskScore: 0,
           policyDecision: "allow",
           enforcementAction: "allow",
         });

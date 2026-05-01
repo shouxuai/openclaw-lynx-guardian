@@ -25,11 +25,15 @@ export type AuditColor = "neutral" | "blue" | "yellow" | "orange" | "red";
 export type WinningArbiter =
   | "semantic_intent"
   | "evidence_score"
+  | "remote_safety"
   | "local_l4"
   | "grant"
   | "fallback";
 
-export type DecisionArbiterName = "semantic_intent" | "evidence_score";
+export type DecisionArbiterName =
+  | "semantic_intent"
+  | "evidence_score"
+  | "remote_safety";
 export type EvidenceSource =
   | "input"
   | "tool"
@@ -39,7 +43,8 @@ export type EvidenceSource =
   | "provider"
   | "local_l4"
   | "script"
-  | "resource_policy";
+  | "resource_policy"
+  | "remote";
 
 export type ScriptEntrypointKind =
   | "direct_file"

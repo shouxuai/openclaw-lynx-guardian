@@ -7,17 +7,34 @@ import (
 	"time"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
+	"github.com/openclaw/lynx-guardian/backend/internal/remote"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
 )
 
+type remoteSkillClient interface {
+	Enabled() bool
+	FetchSkillBlacklist(ctx context.Context) (remote.SkillBlacklistResponse, error)
+	CheckSkill(ctx context.Context, id string, skillName string, skillHash string) (remote.SkillCheckResponse, error)
+}
+
 type Service struct {
 	repository *repo.SkillRepository
+	remote     remoteSkillClient
 	clock      func() time.Time
 }
 
 func NewService(repository *repo.SkillRepository) *Service {
+	return NewServiceWithOptions(repository, ServiceOptions{})
+}
+
+type ServiceOptions struct {
+	RemoteSkillClient remoteSkillClient
+}
+
+func NewServiceWithOptions(repository *repo.SkillRepository, options ServiceOptions) *Service {
 	return &Service{
 		repository: repository,
+		remote:     options.RemoteSkillClient,
 		clock:      time.Now,
 	}
 }
@@ -47,6 +64,32 @@ func (s *Service) SyncInventory(ctx context.Context, request api.SkillInventoryS
 		Items:         items,
 		Findings:      findings,
 	}, nil
+}
+
+func (s *Service) FetchRemoteSkillBlacklist(ctx context.Context) (remote.SkillBlacklistResponse, error) {
+	if s.remote == nil || !s.remote.Enabled() {
+		return remote.SkillBlacklistResponse{
+			Code:    0,
+			Message: "remote safety disabled",
+		}, nil
+	}
+	return s.remote.FetchSkillBlacklist(ctx)
+}
+
+func (s *Service) CheckRemoteSkill(
+	ctx context.Context,
+	id string,
+	skillName string,
+	skillHash string,
+) (remote.SkillCheckResponse, error) {
+	if s.remote == nil || !s.remote.Enabled() {
+		return remote.SkillCheckResponse{
+			Code:    0,
+			Result:  remote.SkillCheckResult{IsSafe: true, RiskLevel: 0, Reason: "remote safety disabled"},
+			Message: "remote safety disabled",
+		}, nil
+	}
+	return s.remote.CheckSkill(ctx, id, skillName, skillHash)
 }
 
 func normalizeInventoryItem(item api.SkillInventoryItem, now time.Time) api.SkillInventoryItem {

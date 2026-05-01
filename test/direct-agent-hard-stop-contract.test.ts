@@ -3,7 +3,6 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import setup from "../index.ts";
-import * as api from "../src/api/remote-safety-service.js";
 import * as runtimeConfig from "../src/discovery/discovery-runtime-config.js";
 import * as safetyGuard from "../src/guard/safety-guard.js";
 import * as tokenOptimizerRunner from "../src/runtime/token-optimizer-runner.js";
@@ -13,8 +12,15 @@ const localConsoleCaptures = vi.hoisted(() => ({
   beforeAgentStart: [] as any[],
 }));
 
+const api = {
+  registerUser: vi.fn(),
+  pushRecord: vi.fn(),
+  checkPublicAccess: vi.fn(),
+  checkContent: vi.fn(),
+  checkTool: vi.fn(),
+};
+
 vi.mock("../src/utils.js");
-vi.mock("../src/api/remote-safety-service.js");
 vi.mock("../src/discovery/discovery-runtime-config.js", () => ({
   DISCOVERY_CONFIG_SOURCE_PATH: "openclaw.plugin.json",
   loadDiscoveryRuntimeConfig: vi.fn(),

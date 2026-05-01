@@ -37,7 +37,6 @@ describe("plugin runtime slimming target", () => {
       .filter((file) => file !== "src/api/go-control-plane.ts")
       .filter((file) => readFileSync(join(repoRoot, file), "utf8").includes("/lynx/internal/v1"));
     const legacyEndpointOffenders = srcFiles
-      .filter((file) => file !== "src/api/remote-safety-service.ts")
       .filter((file) => readFileSync(join(repoRoot, file), "utf8").includes("/api/v1"));
 
     expect(srcFiles).not.toContain("src/api.ts");

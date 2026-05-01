@@ -55,6 +55,44 @@ function client(overrides: Partial<DecisionClientLike> = {}): DecisionClientLike
 }
 
 describe("DecisionBroker", () => {
+  it("accepts remote_safety as a decision arbiter", () => {
+    const decision = response({
+      winningArbiter: "remote_safety",
+      arbiters: [
+        {
+          arbiter: "remote_safety",
+          riskLevel: "L4",
+          action: "deny",
+          score: 95,
+          matchedModules: ["remote:content_check"],
+          evidence: [
+            {
+              id: "remote-content-check",
+              module: "remote:content_check",
+              kind: "remote_risk_level",
+              value: "4",
+              severity: "critical",
+              scoreDelta: 95,
+              source: "remote",
+            },
+          ],
+          scoreBreakdown: [
+            {
+              ruleId: "remote.content_check.risk_level",
+              label: "Remote content check",
+              delta: 95,
+              reason: "remote safety returned risk_level=4",
+            },
+          ],
+          reason: "remote safety returned high risk",
+        },
+      ],
+    });
+
+    expect(decision.winningArbiter).toBe("remote_safety");
+    expect(decision.arbiters[0]?.evidence[0]?.source).toBe("remote");
+  });
+
   it("uses Go as authority before local fallback when the backend responds", async () => {
     const goClient = client({
       decideInput: vi.fn(async () => response({ decisionId: "go-authority" })),

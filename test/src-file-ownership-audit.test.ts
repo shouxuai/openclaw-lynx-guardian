@@ -4,6 +4,15 @@ import { join, relative } from "path";
 
 const repoRoot = process.cwd();
 const srcRoot = join(repoRoot, "src");
+const legacyRemotePatterns = [
+  "/api/v1/register",
+  "/api/v1/content_check",
+  "/api/v1/tool_check",
+  "/api/v1/push_record",
+  "/api/v1/check_public_access",
+  "/api/v1/skill_blacklist",
+  "/api/v1/skill_check",
+];
 
 type OwnershipLabel =
   | "keep-ts"
@@ -20,7 +29,6 @@ const OWNERSHIP: Record<string, OwnershipLabel> = {
   "src/types.ts": "keep-ts",
   "src/utils.ts": "split",
   "src/api/go-control-plane.ts": "keep-ts",
-  "src/api/remote-safety-service.ts": "keep-ts",
   "src/approval/approval-bridge.ts": "split",
   "src/approval/native-approval-description.ts": "keep-ts",
   "src/approval/approval-prompts.ts": "keep-ts",
@@ -145,11 +153,12 @@ describe("src file ownership audit", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("keeps legacy remote safety requests centralized", () => {
+  it("keeps legacy remote safety API paths out of active plugin runtime", () => {
     const offenders = listTsFiles(srcRoot)
       .map(rel)
-      .filter((file) => file !== "src/api/remote-safety-service.ts")
-      .filter((file) => read(file).includes("/api/v1"));
+      .filter((file) =>
+        legacyRemotePatterns.some((pattern) => read(file).includes(pattern)),
+      );
 
     expect(offenders).toEqual([]);
   });

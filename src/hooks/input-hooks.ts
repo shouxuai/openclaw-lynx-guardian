@@ -75,14 +75,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    checkContentWeighted,
-    checkPublicAccessWeighted,
-    checkToolWeighted,
-    fetchMaliciousSkillBlacklistWeighted,
-    getWeightedRiskLevel,
-    isRemoteAvailable,
-    pushRecordBestEffort,
-    registerUserBestEffort,
     canonicalizePath,
     buildGuardContext,
     createReplacementMessage,
@@ -152,8 +144,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
     buildManualLynxCheckPrompt,
     buildScheduledLynxCheckPrompt,
     deliverManagedLynxAuditReport,
-    adaptContentCheckResult,
-    adaptToolCheckResult,
     createLocalConsoleTokenProvider,
     ensureLocalConsoleToken,
     createLocalConsoleIngestClient,
@@ -364,20 +354,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
           },
         });
         log.warn(`[lynx-guardian] Self-safety-guard handled dispatch before model: ${effectiveAssessment.description}`);
-        await pushRecordBestEffort(
-          {
-            id: userId,
-            content: buildPolicyRecordContent(
-              policyEvaluation,
-              `[SSG:before_dispatch] ${effectiveAssessment.modules.join(",")}`,
-            ),
-            riskLevel: policyEvaluation.legacyRiskLevel,
-          },
-          {
-            log,
-            context: "before_dispatch input guard block",
-          },
-        );
         return {
           handled: true,
           text: userFacingBlockReason,
@@ -519,17 +495,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
       */
       if (sensitiveDataBlocker.containsSensitiveData(text)) {
         log.warn("[lynx-guardian] Sensitive data detected in message");
-        await pushRecordBestEffort(
-          {
-            id: userId,
-            content: text,
-            riskLevel: 1,
-          },
-          {
-            log,
-            context: "message sensitive data",
-          },
-        );
         localConsoleHooks?.messageReceived({
           occurredAtMs: localConsoleOccurredAtMs,
           sessionKey: normalizeString(ctx.sessionKey) || undefined,
@@ -593,20 +558,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             },
           });
           log.warn(`[lynx-guardian] Self-safety-guard blocked message: ${effectiveAssessment.description} (${effectiveAssessment.level}, score=${effectiveAssessment.score})`);
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG] ${effectiveAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "message guard block",
-            },
-          );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
             savePendingOverrideFull(ctx, {
               operationFingerprint: inputFingerprint,
@@ -884,19 +835,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
       let publicAccessResult: any = null;
       const ipInfo = await baseIpInfo();
       if (ipInfo.type == "next_check") {
-        const publicAccessCheck = await checkPublicAccessWeighted(userId, ipInfo.ip, ipInfo.port);
-        if (!isRemoteAvailable(publicAccessCheck)) {
-          log.warn(`[lynx-guardian] Public access weighting unavailable: ${publicAccessCheck.errorMessage}`);
-        } else {
-          publicAccessResult = publicAccessCheck.value;
-          if (publicAccessResult.result.is_public) {
-            log.error("[lynx-guardian] Public access check failed");
-            const warning = `重要提醒：当前 IP ${ipInfo.ip} 暴露在公网环境，强烈建议配置防火墙规则，仅开放必要端口。\n`;
-            prependContext += warning;
-          } else {
-            log.info("[lynx-guardian] Public access check passed");
-          }
-        }
+        log.info("[lynx-guardian] Public access remote weighting skipped; Go decision/local audit owns remote safety checks.");
       }
 
       const managedLynxCheckCommandText = resolveManagedLynxCheckCommandText(event);
@@ -1142,20 +1081,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
           log.info(
             `[lynx-guardian] before_agent_start denyContext injected=${String(shouldInjectForcedDenyContext)} risk=${effectiveAssessment.level}`,
           );
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG:agent_start] ${effectiveAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "agent_start forced deny",
-            },
-          );
           if (isDirectAgentPromptLevelFallback) {
             if (pendingBeforeAgentStartDecision?.block) {
               return pendingBeforeAgentStartDecision;
@@ -1179,20 +1104,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
           const policyResult = resolveRiskPolicy(effectiveAssessment, riskPolicyConfig);
           const userFacingBlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
           log.warn(`[lynx-guardian] Self-safety-guard blocked agent start: ${effectiveAssessment.description}`);
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG:agent_start] ${effectiveAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "agent_start guard block",
-            },
-          );
           if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
             localConsoleHooks?.beforeAgentStart({
               occurredAtMs: localConsoleOccurredAtMs,
@@ -1318,110 +1229,6 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
           log.error(`[lynx-guardian] Token optimizer failed: ${err.message}`);
         }
       }
-
-      const input = extractContentAfterDate(promptText);
-      const remoteInputCheck = await checkContentWeighted(userId, input, 1);
-      if (!isRemoteAvailable(remoteInputCheck)) {
-        log.warn(`[lynx-guardian] Input weighting unavailable: ${remoteInputCheck.errorMessage}`);
-      } else {
-        const res = remoteInputCheck.value;
-        const adaptedContentCheck = adaptContentCheckResult(res.result);
-        const inputCategorySummary = [
-          adaptedContentCheck.categoryChain.levelOne,
-          adaptedContentCheck.categoryChain.levelTwo,
-          adaptedContentCheck.categoryChain.levelThree,
-        ].join("、");
-        log.info(`[lynx-guardian] Input risk detected: ${JSON.stringify(res)}`);
-        if (adaptedContentCheck.externalRiskLevel > 0) {
-          let warning = `重要提醒：内容包含内容风险（${inputCategorySummary}），\n`;
-          if (inputCategorySummary.includes("个人隐私")) {
-            warning += "包含隐私内容，需要先进行脱敏处理。";
-          } else if (!adaptedContentCheck.categoryChain.levelOne.includes("其他")) {
-            warning += "包含价值观相关风险，请进行正向引导。";
-          } else {
-            warning += "插件已进行拦截。\n";
-          }
-          log.warn(`[lynx-guardian] Input risk detected: ${warning}`);
-
-          if (adaptedContentCheck.externalRiskLevel >= 3 && managedLynxCheckPreauthorized) {
-            log.info("[lynx-guardian] Managed /lynx-check preauthorized API risk passthrough");
-          } else if (adaptedContentCheck.externalRiskLevel >= 3 && !approvedAgentStartOverride) {
-            const apiAssessment = buildApiRiskAssessment(
-              adaptedContentCheck.externalRiskLevel,
-              `API input risk: ${adaptedContentCheck.categoryChain.levelOne}/${adaptedContentCheck.categoryChain.levelTwo}/${adaptedContentCheck.categoryChain.levelThree}`,
-            );
-            const policyResult = resolveRiskPolicy(apiAssessment, riskPolicyConfig);
-            if (resolveOverrideKey(ctx) && policyResult.override.allowed) {
-              savePendingOverrideFull(ctx, {
-                operationFingerprint: agentStartFingerprint,
-                createdAt: Date.now(),
-                expiresAt: Date.now() + riskPolicyConfig.overrideTtlMs,
-                actionType: "agent_start",
-                replayPayload: { promptText },
-                riskScore: apiAssessment.score,
-                riskLevel: apiAssessment.level,
-                matchedModules: apiAssessment.modules,
-                sourceKeys: resolveOverrideKeys(ctx),
-              });
-              localConsoleHooks?.beforeAgentStart({
-                occurredAtMs: localConsoleOccurredAtMs,
-                sessionKey,
-                runId: normalizeString(ctx.runId) || undefined,
-                promptText,
-                summary: `[Lynx Guardian] ${warning}`,
-                contentExcerpt: promptText,
-                contentKind: "text",
-                primaryModule: apiAssessment.modules[0],
-                modules: apiAssessment.modules,
-                riskLevel: apiAssessment.level,
-                riskScore: apiAssessment.score,
-                policyDecision: "confirm",
-                enforcementAction: "block",
-                lynxCheck: localConsoleLynxCheckSnapshot as any,
-                payloadJson: {
-                  apiRiskLevel: adaptedContentCheck.externalRiskLevel,
-                  inputCategorySummary,
-                  overrideAllowed: true,
-                },
-              });
-              return {
-                block: true,
-                blockReason: buildOverridePrompt(
-                  `[Lynx Guardian] ${warning}`,
-                  policyResult.override.confirmationPhrase ?? riskPolicyConfig.confirmationPhrase,
-                ),
-              } as any;
-            }
-            localConsoleHooks?.beforeAgentStart({
-              occurredAtMs: localConsoleOccurredAtMs,
-              sessionKey,
-              runId: normalizeString(ctx.runId) || undefined,
-              promptText,
-              summary: `[Lynx Guardian] ${warning}`,
-              contentExcerpt: promptText,
-              contentKind: "text",
-              primaryModule: apiAssessment.modules[0],
-              modules: apiAssessment.modules,
-              riskLevel: apiAssessment.level,
-              riskScore: apiAssessment.score,
-              policyDecision: "deny",
-              enforcementAction: "block",
-              lynxCheck: localConsoleLynxCheckSnapshot as any,
-              payloadJson: {
-                apiRiskLevel: adaptedContentCheck.externalRiskLevel,
-                inputCategorySummary,
-                overrideAllowed: false,
-              },
-            });
-            return {
-              block: true,
-              blockReason: `[Lynx Guardian] ${warning}`,
-            } as any;
-          }
-          prependContext += warning;
-        }
-      }
-
       localConsoleHooks?.beforeAgentStart({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey,

@@ -27,8 +27,12 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 	if err != nil {
 		return api.DecisionResponse{}, err
 	}
+	remoteResult, err := s.remoteArbiter.Evaluate(ctx, req, chain)
+	if err != nil {
+		return api.DecisionResponse{}, err
+	}
 
-	winner := stricterResult(semantic, evidence)
+	winner := stricterResult(stricterResult(semantic, evidence), remoteResult)
 	decisionID := strings.TrimSpace(req.RequestID)
 	if decisionID == "" {
 		decisionID = fmt.Sprintf("decision-%d", s.clock().UnixNano())
@@ -42,8 +46,8 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 		RiskLevel:        winner.RiskLevel,
 		Score:            winner.Score,
 		WinningArbiter:   api.WinningArbiter(winner.Arbiter),
-		Arbiters:         []api.ArbiterResult{semantic, evidence},
-		MatchedModules:   mergeMatchedModules(semantic.MatchedModules, evidence.MatchedModules),
+		Arbiters:         []api.ArbiterResult{semantic, evidence, remoteResult},
+		MatchedModules:   mergeMatchedModules(semantic.MatchedModules, evidence.MatchedModules, remoteResult.MatchedModules),
 		RequiresApproval: requiresApproval(winner.Action),
 		UserMessage:      deterministicUserMessage(req, winner.Action),
 		Audit: api.DecisionAudit{
@@ -52,9 +56,15 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 			EnforcementAction: enforcementActionFor(winner.Action),
 			Color:             auditColorFor(winner.RiskLevel, winner.Action),
 		},
+		MetadataJson: remoteDecisionMetadata(remoteResult),
 	}
 	if err := s.repo.InsertDecision(ctx, req, response); err != nil {
 		return api.DecisionResponse{}, err
+	}
+	if reporter, ok := s.remoteArbiter.(interface {
+		ReportDecision(context.Context, api.DecisionRequest, api.DecisionResponse)
+	}); ok {
+		reporter.ReportDecision(ctx, req, response)
 	}
 	if signals := evasionSignalsFromResponse(response); len(signals) > 0 {
 		now := s.clock().UTC().Format(time.RFC3339Nano)
@@ -63,6 +73,22 @@ func (s *Service) Decide(ctx context.Context, req api.DecisionRequest) (api.Deci
 		}
 	}
 	return response, nil
+}
+
+func remoteDecisionMetadata(remoteResult api.ArbiterResult) map[string]any {
+	if remoteResult.Arbiter != "remote_safety" {
+		return nil
+	}
+	available := !strings.Contains(strings.ToLower(remoteResult.Reason), "unavailable") &&
+		!strings.Contains(strings.ToLower(remoteResult.Reason), "disabled")
+	return map[string]any{
+		"remoteSafety": map[string]any{
+			"riskLevel": remoteResult.RiskLevel,
+			"action":    remoteResult.Action,
+			"reason":    remoteResult.Reason,
+			"available": available,
+		},
+	}
 }
 
 func deterministicUserMessage(req api.DecisionRequest, action api.DecisionAction) string {

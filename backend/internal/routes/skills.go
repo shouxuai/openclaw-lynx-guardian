@@ -2,6 +2,7 @@ package routes
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
@@ -25,6 +26,38 @@ func RegisterSkills(
 		response, err := service.SyncInventory(c.Request.Context(), request)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, response)
+	})
+
+	internal.GET("/security/skill-blacklist", func(c *gin.Context) {
+		response, err := service.FetchRemoteSkillBlacklist(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, response)
+	})
+
+	internal.POST("/security/skill-check", func(c *gin.Context) {
+		var request struct {
+			ID        string `json:"id"`
+			SkillName string `json:"skillName"`
+			SkillHash string `json:"skillHash"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		response, err := service.CheckRemoteSkill(
+			c.Request.Context(),
+			strings.TrimSpace(request.ID),
+			strings.TrimSpace(request.SkillName),
+			strings.TrimSpace(request.SkillHash),
+		)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "message": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, response)

@@ -3,6 +3,15 @@ import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
 
 const repoRoot = process.cwd();
+const legacyRemotePatterns = [
+  "/api/v1/register",
+  "/api/v1/content_check",
+  "/api/v1/tool_check",
+  "/api/v1/push_record",
+  "/api/v1/check_public_access",
+  "/api/v1/skill_blacklist",
+  "/api/v1/skill_check",
+];
 
 function listFiles(dir: string): string[] {
   const out: string[] = [];
@@ -47,11 +56,14 @@ describe("Go decision ownership", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("keeps legacy remote safety service requests centralized", () => {
+  it("keeps legacy remote safety API paths out of active plugin runtime", () => {
     const offenders = listFiles(join(repoRoot, "src"))
-      .filter((file) => !rel(file).endsWith("src/api/remote-safety-service.ts"))
-      .filter((file) => readFileSync(file, "utf8").includes("/api/v1"))
-      .map(rel);
+      .map(rel)
+      .filter((file) =>
+        legacyRemotePatterns.some((pattern) =>
+          readFileSync(join(repoRoot, file), "utf8").includes(pattern),
+        ),
+      );
 
     expect(offenders).toEqual([]);
   });

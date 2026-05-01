@@ -14,6 +14,7 @@ import (
 	"github.com/openclaw/lynx-guardian/backend/internal/ingest"
 	"github.com/openclaw/lynx-guardian/backend/internal/middleware"
 	"github.com/openclaw/lynx-guardian/backend/internal/policy"
+	"github.com/openclaw/lynx-guardian/backend/internal/remote"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
 	"github.com/openclaw/lynx-guardian/backend/internal/routes"
 	"github.com/openclaw/lynx-guardian/backend/internal/service"
@@ -53,12 +54,21 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	chains := repo.NewChainRepository(database)
 	approvalGrants := repo.NewGrantRepository(database)
 	policyRepository := repo.NewPolicyRepository(database)
-	decisionService := decision.NewService(decisions)
+	remoteSafetyClient := remote.NewSafetyClient(remote.Config{
+		BaseURL: cfg.RemoteSafetyBaseURL,
+		Timeout: cfg.RemoteSafetyTimeout,
+		Enabled: cfg.RemoteSafetyEnabled,
+	})
+	decisionService := decision.NewServiceWithOptions(decisions, decision.ServiceOptions{
+		RemoteSafetyClient: remoteSafetyClient,
+	})
 	policyService := policy.NewService(policyRepository)
 	grantService := grants.NewService(approvalGrants)
 	chainService := chain.NewService(chains, grantService)
 	lynxCheckService := tasks.NewLynxCheckService(lynxCheckTasks)
-	skillService := skills.NewService(skillRepository)
+	skillService := skills.NewServiceWithOptions(skillRepository, skills.ServiceOptions{
+		RemoteSkillClient: remoteSafetyClient,
+	})
 	ingestService := ingest.NewService(repo.NewIngestRepository(database))
 
 	root := gin.New()

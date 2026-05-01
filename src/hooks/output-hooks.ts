@@ -80,14 +80,6 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    checkContentWeighted,
-    checkPublicAccessWeighted,
-    checkToolWeighted,
-    fetchMaliciousSkillBlacklistWeighted,
-    getWeightedRiskLevel,
-    isRemoteAvailable,
-    pushRecordBestEffort,
-    registerUserBestEffort,
     canonicalizePath,
     buildGuardContext,
     createReplacementMessage,
@@ -157,8 +149,6 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
     buildManualLynxCheckPrompt,
     buildScheduledLynxCheckPrompt,
     deliverManagedLynxAuditReport,
-    adaptContentCheckResult,
-    adaptToolCheckResult,
     createLocalConsoleTokenProvider,
     ensureLocalConsoleToken,
     createLocalConsoleIngestClient,
@@ -522,20 +512,6 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
           if (enforcement.changed) {
             redactAgentOutput(event, enforcement.content);
           }
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG:output] ${effectiveAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "output guard block",
-            },
-          );
           localConsoleHooks?.agentEnd({
             occurredAtMs: localConsoleOccurredAtMs,
             sessionKey: normalizeString(ctx.sessionKey) || undefined,
@@ -553,50 +529,12 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
           return;
             log.warn(`[lynx-guardian] Self-safety-guard blocked output: ${decision.riskAssessment.description}`);
           redactAgentOutput(event, "[Lynx Guardian] 输出已被安全防护替换：检测到受保护配置泄露风险");
-          await pushRecordBestEffort(
-            {
-              id: userId,
-              content: buildPolicyRecordContent(
-                policyEvaluation,
-                `[SSG:output] ${decision.riskAssessment.modules.join(",")}`,
-              ),
-              riskLevel: policyEvaluation.legacyRiskLevel,
-            },
-            {
-              log,
-              context: "output guard fallback block",
-            },
-          );
         }
         if (decision.warning) {
           log.warn(`[lynx-guardian] Self-safety-guard output warning: ${decision.warning}`);
         }
       }
 
-      if (!isDiscoveryResponse) {
-        const remoteOutputCheck = await checkContentWeighted(userId, output, 2);
-        if (!isRemoteAvailable(remoteOutputCheck)) {
-          log.warn(`[lynx-guardian] Output weighting unavailable: ${remoteOutputCheck.errorMessage}`);
-        } else {
-          const res = remoteOutputCheck.value;
-          const adaptedContentCheck = adaptContentCheckResult(res.result);
-          const outputCategorySummary = [
-            adaptedContentCheck.categoryChain.levelOne,
-            adaptedContentCheck.categoryChain.levelTwo,
-            adaptedContentCheck.categoryChain.levelThree,
-          ].join("、");
-          log.info(`[lynx-guardian] Output risk detected: ${JSON.stringify(res)}`);
-          if (adaptedContentCheck.externalRiskLevel > 0) {
-            let warning = `重要提醒：内容包含内容风险（${outputCategorySummary}）。`;
-            if (outputCategorySummary.includes("个人隐私")) {
-              warning += "隐私内容需要先进行脱敏处理，请勿在非必要场景直接提供。";
-            } else {
-              warning += "lynx-guardian 插件已进行拦截。";
-            }
-            log.warn(`[lynx-guardian] Output risk detected: ${warning}`);
-          }
-        }
-      }
       localConsoleHooks?.agentEnd({
         occurredAtMs: localConsoleOccurredAtMs,
         sessionKey: normalizeString(ctx.sessionKey) || undefined,

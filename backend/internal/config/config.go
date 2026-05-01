@@ -6,21 +6,25 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const defaultPort = "31789"
 
 type Config struct {
-	Host              string
-	ListenHost        string
-	Port              string
-	DataDir           string
-	DatabasePath      string
-	IngestToken       string
-	TokenPath         string
-	FrontendDistPath  string
-	TokenUsageEnabled bool
-	TrustedProxyIPs   []string
+	Host                string
+	ListenHost          string
+	Port                string
+	DataDir             string
+	DatabasePath        string
+	IngestToken         string
+	TokenPath           string
+	FrontendDistPath    string
+	TokenUsageEnabled   bool
+	TrustedProxyIPs     []string
+	RemoteSafetyEnabled bool
+	RemoteSafetyBaseURL string
+	RemoteSafetyTimeout time.Duration
 }
 
 func Resolve() (*Config, error) {
@@ -49,17 +53,24 @@ func Resolve() (*Config, error) {
 		ingestToken = readTokenFile(tokenPath)
 	}
 
+	remoteSafetyBaseURL := strings.TrimSpace(os.Getenv("LYNX_REMOTE_SAFETY_BASE_URL"))
+	remoteSafetyEnabled := readBool(os.Getenv("LYNX_REMOTE_SAFETY_ENABLED"), remoteSafetyBaseURL != "")
+	remoteSafetyTimeout := time.Duration(readInt(os.Getenv("LYNX_REMOTE_SAFETY_TIMEOUT_MS"), 2000)) * time.Millisecond
+
 	return &Config{
-		Host:              host,
-		ListenHost:        envOr("LYNX_LOCAL_CONSOLE_LISTEN_HOST", host),
-		Port:              envOr("LYNX_LOCAL_CONSOLE_PORT", defaultPort),
-		DataDir:           dataDir,
-		DatabasePath:      dbPath,
-		IngestToken:       ingestToken,
-		TokenPath:         tokenPath,
-		FrontendDistPath:  resolveFrontendDist(),
-		TokenUsageEnabled: readBool(os.Getenv("LYNX_LOCAL_CONSOLE_TOKEN_USAGE_ENABLED"), false),
-		TrustedProxyIPs:   readStringList(os.Getenv("LYNX_LOCAL_CONSOLE_TRUSTED_PROXY_IPS")),
+		Host:                host,
+		ListenHost:          envOr("LYNX_LOCAL_CONSOLE_LISTEN_HOST", host),
+		Port:                envOr("LYNX_LOCAL_CONSOLE_PORT", defaultPort),
+		DataDir:             dataDir,
+		DatabasePath:        dbPath,
+		IngestToken:         ingestToken,
+		TokenPath:           tokenPath,
+		FrontendDistPath:    resolveFrontendDist(),
+		TokenUsageEnabled:   readBool(os.Getenv("LYNX_LOCAL_CONSOLE_TOKEN_USAGE_ENABLED"), false),
+		TrustedProxyIPs:     readStringList(os.Getenv("LYNX_LOCAL_CONSOLE_TRUSTED_PROXY_IPS")),
+		RemoteSafetyEnabled: remoteSafetyEnabled,
+		RemoteSafetyBaseURL: remoteSafetyBaseURL,
+		RemoteSafetyTimeout: remoteSafetyTimeout,
 	}, nil
 }
 
@@ -105,6 +116,13 @@ func readStringList(value string) []string {
 		}
 	}
 	return out
+}
+
+func readInt(value string, fallback int) int {
+	if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && parsed > 0 {
+		return parsed
+	}
+	return fallback
 }
 
 func resolveFrontendDist() string {

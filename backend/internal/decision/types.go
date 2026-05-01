@@ -24,14 +24,24 @@ type Service struct {
 	repo            *repo.DecisionRepository
 	semanticArbiter Arbiter
 	evidenceArbiter Arbiter
+	remoteArbiter   Arbiter
 	clock           func() time.Time
 }
 
+type ServiceOptions struct {
+	RemoteSafetyClient remoteSafetyClient
+}
+
 func NewService(repository *repo.DecisionRepository) *Service {
+	return NewServiceWithOptions(repository, ServiceOptions{})
+}
+
+func NewServiceWithOptions(repository *repo.DecisionRepository, options ServiceOptions) *Service {
 	return &Service{
 		repo:            repository,
 		semanticArbiter: semanticArbiter{},
 		evidenceArbiter: evidenceArbiter{},
+		remoteArbiter:   remoteSafetyArbiter{client: options.RemoteSafetyClient},
 		clock:           time.Now,
 	}
 }

@@ -67,7 +67,6 @@ import {
   verifyAllInstalledSkills,
 } from "./src/skills/skill-guard.js";
 import { quarantineSkill } from "./src/skills/skill-guard.js";
-import type { MaliciousSkillEntry } from "./src/skills/skill-guard.js";
 import {
   DISCOVERY_CONFIG_SOURCE_PATH,
   loadDiscoveryRuntimeConfig,
@@ -78,16 +77,6 @@ import {
   buildOptimizationHints, isTokenOptimizerAvailable,
 } from "./src/runtime/token-optimizer-runner.js";
 import { reconcileScheduledLynxCheck, resolveScheduledLynxCheckConfig } from "./src/lynx-check/scheduled-lynx-check.js";
-import {
-  checkContentWeighted,
-  checkPublicAccessWeighted,
-  checkToolWeighted,
-  fetchMaliciousSkillBlacklistWeighted,
-  getWeightedRiskLevel,
-  isRemoteAvailable,
-  pushRecordBestEffort,
-  registerUserBestEffort,
-} from "./src/runtime/remote-weighting-service.js";
 import {
   canonicalizePath,
   buildGuardContext,
@@ -225,8 +214,6 @@ import {
 } from "./src/runtime/plugin-setup-helpers.js";
 
 import {
-  adaptContentCheckResult,
-  adaptToolCheckResult,
   guardInboundMessageBeforeWrite,
   guardPromptBuildInput,
   registerLynxHooks,
@@ -420,7 +407,6 @@ export default function setup(api: OpenClawPluginApi) {
     }
 
     userId = ensureUserRegistered();
-    void registerUserBestEffort(userId, log);
 
     try {
       ensureResources();
@@ -617,14 +603,6 @@ export default function setup(api: OpenClawPluginApi) {
     isTokenOptimizerAvailable,
     reconcileScheduledLynxCheck,
     resolveScheduledLynxCheckConfig,
-    checkContentWeighted,
-    checkPublicAccessWeighted,
-    checkToolWeighted,
-    fetchMaliciousSkillBlacklistWeighted,
-    getWeightedRiskLevel,
-    isRemoteAvailable,
-    pushRecordBestEffort,
-    registerUserBestEffort,
     canonicalizePath,
     buildGuardContext,
     createReplacementMessage,
@@ -694,8 +672,6 @@ export default function setup(api: OpenClawPluginApi) {
     buildManualLynxCheckPrompt,
     buildScheduledLynxCheckPrompt,
     deliverManagedLynxAuditReport,
-    adaptContentCheckResult,
-    adaptToolCheckResult,
     createLocalConsoleTokenProvider,
     ensureLocalConsoleToken,
     createLocalConsoleIngestClient,

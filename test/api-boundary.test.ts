@@ -4,6 +4,15 @@ import { join, relative } from "path";
 
 const repoRoot = process.cwd();
 const srcRoot = join(repoRoot, "src");
+const legacyRemotePatterns = [
+  "/api/v1/register",
+  "/api/v1/content_check",
+  "/api/v1/tool_check",
+  "/api/v1/push_record",
+  "/api/v1/check_public_access",
+  "/api/v1/skill_blacklist",
+  "/api/v1/skill_check",
+];
 
 function listTsFiles(dir: string): string[] {
   const output: string[] = [];
@@ -33,11 +42,14 @@ describe("plugin API boundary", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("declares legacy remote API paths only in src/api/remote-safety-service.ts", () => {
+  it("keeps legacy remote safety API paths out of active plugin runtime", () => {
     const offenders = listTsFiles(srcRoot)
-      .filter((file) => !relativeUnix(file).endsWith("src/api/remote-safety-service.ts"))
-      .filter((file) => readFileSync(file, "utf8").includes("/api/v1/"))
-      .map(relativeUnix);
+      .map(relativeUnix)
+      .filter((file) =>
+        legacyRemotePatterns.some((pattern) =>
+          readFileSync(join(repoRoot, file), "utf8").includes(pattern),
+        ),
+      );
 
     expect(offenders).toEqual([]);
   });

@@ -75,6 +75,14 @@ export class GoControlPlaneClient {
     return this.postJson<TResponse>("/lynx/internal/v1/skills/inventory/sync", body, signal);
   }
 
+  fetchRemoteSkillBlacklist<TResponse = unknown>(signal?: AbortSignal): Promise<TResponse> {
+    return this.getJson<TResponse>("/lynx/internal/v1/security/skill-blacklist", signal);
+  }
+
+  checkRemoteSkill<TResponse = unknown>(body: unknown, signal?: AbortSignal): Promise<TResponse> {
+    return this.postJson<TResponse>("/lynx/internal/v1/security/skill-check", body, signal);
+  }
+
   private async postDecision(
     endpoint: GoDecisionEndpoint,
     request: DecisionRequest,
@@ -92,6 +100,23 @@ export class GoControlPlaneClient {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Go control-plane API responded with HTTP ${response.status}`);
+    }
+    const text = await response.text();
+    return (text ? JSON.parse(text) : undefined) as TResponse;
+  }
+
+  async getJson<TResponse>(path: string, signal?: AbortSignal): Promise<TResponse> {
+    const token = this.getToken().trim();
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method: "GET",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
       signal,
     });
     if (!response.ok) {

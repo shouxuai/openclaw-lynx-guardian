@@ -373,14 +373,17 @@ func TestDecisionRouteReturnsBothArbitersForChineseEvasion(t *testing.T) {
 		CreatedAt: "2026-04-29T00:00:00Z",
 	})
 
-	if len(response.Arbiters) != 2 {
-		t.Fatalf("arbiter count = %d, want 2", len(response.Arbiters))
+	if len(response.Arbiters) != 3 {
+		t.Fatalf("arbiter count = %d, want 3", len(response.Arbiters))
 	}
 	if !arbiterHasModule(response.Arbiters, "semantic_intent", "evasive_intent_cn") {
 		t.Fatalf("semantic arbiter missing evasive_intent_cn: %#v", response.Arbiters)
 	}
 	if !arbiterHasModule(response.Arbiters, "evidence_score", "evasive_intent_cn") {
 		t.Fatalf("evidence arbiter missing evasive_intent_cn: %#v", response.Arbiters)
+	}
+	if !hasArbiter(response.Arbiters, "remote_safety") {
+		t.Fatalf("remote_safety diagnostic arbiter missing: %#v", response.Arbiters)
 	}
 }
 
