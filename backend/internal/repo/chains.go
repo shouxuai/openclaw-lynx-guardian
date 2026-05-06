@@ -98,6 +98,9 @@ func (r *ChainRepository) Get(ctx context.Context, chainID string) (api.ChainSum
 	var summary api.ChainSummary
 	unmarshalJSONText(summaryJSON, &summary)
 	normalizeChainSummary(&summary)
+	if err := r.loadPromptCoverage(ctx, &summary); err != nil {
+		return api.ChainSummary{}, err
+	}
 	return summary, nil
 }
 
@@ -110,7 +113,6 @@ func (r *ChainRepository) List(ctx context.Context) ([]api.ChainSummary, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	out := make([]api.ChainSummary, 0)
 	for rows.Next() {
@@ -123,7 +125,18 @@ func (r *ChainRepository) List(ctx context.Context) ([]api.ChainSummary, error) 
 		normalizeChainSummary(&summary)
 		out = append(out, summary)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range out {
+		if err := r.loadPromptCoverage(ctx, &out[index]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func normalizeChainSummary(summary *api.ChainSummary) {
@@ -148,6 +161,59 @@ func normalizeChainSummary(summary *api.ChainSummary) {
 	if summary.RecentEvasions == nil {
 		summary.RecentEvasions = []string{}
 	}
+	if summary.CoveredPrompts == nil {
+		summary.CoveredPrompts = []api.ChainCoveredPrompt{}
+	}
+	summary.PromptCount = len(summary.CoveredPrompts)
+}
+
+func (r *ChainRepository) loadPromptCoverage(ctx context.Context, summary *api.ChainSummary) error {
+	if summary.SessionKey == "" {
+		summary.CoveredPrompts = []api.ChainCoveredPrompt{}
+		summary.PromptCount = 0
+		return nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			qa_record_id,
+			COALESCE(run_id, ''),
+			COALESCE(user_prompt_excerpt, ''),
+			COALESCE(risk_level, ''),
+			started_at,
+			COALESCE(status, '')
+		FROM qa_records
+		WHERE session_key = ?
+		  AND COALESCE(user_prompt_excerpt, '') <> ''
+		ORDER BY started_at ASC, qa_record_id ASC
+		LIMIT 50`,
+		summary.SessionKey,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	prompts := make([]api.ChainCoveredPrompt, 0)
+	for rows.Next() {
+		var prompt api.ChainCoveredPrompt
+		if err := rows.Scan(
+			&prompt.QARecordID,
+			&prompt.RunID,
+			&prompt.UserPromptExcerpt,
+			&prompt.RiskLevel,
+			&prompt.StartedAtMs,
+			&prompt.Status,
+		); err != nil {
+			return err
+		}
+		prompts = append(prompts, prompt)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	summary.CoveredPrompts = prompts
+	summary.PromptCount = len(prompts)
+	return nil
 }
 
 func chainStatus(eventType string) string {

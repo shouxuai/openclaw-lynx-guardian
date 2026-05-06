@@ -88,7 +88,6 @@
               },
               "confirmationPhrase": {
                 "type": "string",
-                "default": "确认放行本次操作",
                 "description": "Deprecated. Free-text approval is no longer used by Lynx native tool approvals."
               },
               "allowOneTimeOverrideLevels": {

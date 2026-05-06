@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildToolApprovalRequest,
+  clearApprovalGrants,
+  matchApprovalGrant,
   persistGrantFromApproval,
 } from "../src/approval/approval-bridge.js";
 
@@ -77,5 +79,61 @@ describe("tool approval runtime", () => {
       targetKind: "file",
       targetHash: "target-a",
     });
+  });
+
+  it("persists temporary release grants with exact runtime scope", async () => {
+    clearApprovalGrants();
+
+    await persistGrantFromApproval({
+      decision: "allow-once",
+      approvalId: "approval-scoped",
+      channelProfile: "webchat",
+      channelId: "web",
+      accountId: "default",
+      conversationId: "conversation-1",
+      sessionKey: "session-1",
+      chainId: "chain-1",
+      runId: "run-1",
+      requesterOuId: "ou-a",
+      module: "M2:protected_file_access",
+      riskLevel: "L3",
+      toolName: "exec",
+      targetFingerprint: "cmd:abc",
+      grantWindowMs: 30_000,
+    } as any);
+
+    expect(
+      matchApprovalGrant({
+        channelProfile: "webchat",
+        channelId: "web",
+        accountId: "default",
+        conversationId: "conversation-1",
+        sessionKey: "session-1",
+        chainId: "chain-1",
+        runId: "run-1",
+        requesterOuId: "ou-a",
+        module: "M2:protected_file_access",
+        riskLevel: "L3",
+        toolName: "exec",
+        targetFingerprint: "cmd:abc",
+      }),
+    ).toMatchObject({ sourceApprovalId: "approval-scoped" });
+
+    expect(
+      matchApprovalGrant({
+        channelProfile: "webchat",
+        channelId: "web",
+        accountId: "default",
+        conversationId: "conversation-1",
+        sessionKey: "session-1",
+        chainId: "chain-1",
+        runId: "run-1",
+        requesterOuId: "ou-a",
+        module: "M2:protected_file_access",
+        riskLevel: "L3",
+        toolName: "exec",
+        targetFingerprint: "cmd:expanded",
+      }),
+    ).toBeUndefined();
   });
 });

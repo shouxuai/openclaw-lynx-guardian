@@ -170,6 +170,32 @@ describe("createLocalConsoleEventBuilder", () => {
     expect(assistantEvent.data.contentExcerpt).not.toContain("4111111111111111");
   });
 
+  it("preserves original L4 input while recording that model input was replaced", () => {
+    const builder = createLocalConsoleEventBuilder();
+    const originalPrompt = "Use exec to read /etc/passwd";
+    const modelContext = "[Lynx Guardian] Inbound message blocked before transcript persistence.";
+
+    const items = builder.beforeAgentStart({
+      occurredAtMs: 1_776_945_605_000,
+      sessionKey: "session-l4",
+      runId: "run-l4",
+      promptText: originalPrompt,
+      modelInputText: modelContext,
+      enforcementAction: "block",
+      blockedBeforeModel: true,
+      modelInputPolicy: "removed",
+      uiInputPolicy: "preserved",
+    } as any);
+    const record = findQaRecord(items);
+
+    expect(record.data.userPromptExcerpt).toContain(originalPrompt);
+    expect(record.data.userPromptExcerpt).not.toContain("Inbound message blocked");
+    expect(record.data.payloadJson?.blockedBeforeModel).toBe(true);
+    expect(record.data.payloadJson?.modelInputPolicy).toBe("removed");
+    expect(record.data.payloadJson?.uiInputPolicy).toBe("preserved");
+    expect(record.data.payloadJson?.modelInputExcerpt).toContain("Inbound message blocked");
+  });
+
   it("can attach a completed lynx-check snapshot to agent_end", () => {
     const builder = createLocalConsoleEventBuilder();
 

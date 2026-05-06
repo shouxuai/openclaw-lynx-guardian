@@ -5,25 +5,29 @@ import type { ConsoleThemeMode } from "../../app/App";
 import { PRIMARY_NAV_ITEMS } from "../../app/nav-config";
 
 const TOPBAR_EYEBROWS: Record<string, string> = {
-  "dashboard": "SECURITY OVERVIEW",
+  dashboard: "SECURITY OVERVIEW",
   "qa-records": "QA RECORDS",
-  "events": "AUDIT LOGS",
-  "decisions": "DECISION CONTROL PLANE",
+  events: "AUDIT LOGS",
+  decisions: "DECISION CONTROL PLANE",
   "tool-calls": "TOOL CALLS MONITOR",
-  "approvals": "APPROVAL GOVERNANCE",
-  "chains": "高级诊断",
-  "grants": "高级诊断",
+  approvals: "APPROVAL GOVERNANCE",
+  chains: "高级诊断",
+  grants: "高级诊断",
   "lynx-checks": "LYNX CHECK RUNS",
-  "sessions": "SESSION INDEX",
-  "skills": "SKILL INVENTORY",
-  "tokens": "TOKEN USAGE",
+  sessions: "SESSION INDEX",
+  skills: "SKILL INVENTORY",
+  tokens: "TOKEN USAGE",
 };
 
-function resolveTopBarContext(pathname: string): { eyebrow?: string; title: string } {
-  const match = PRIMARY_NAV_ITEMS
-    .slice()
+function resolveTopBarContext(pathname: string): {
+  eyebrow?: string;
+  title: string;
+} {
+  const match = PRIMARY_NAV_ITEMS.slice()
     .sort((left, right) => right.path.length - left.path.length)
-    .find((item) => item.path === "/" ? pathname === "/" : pathname.startsWith(item.path));
+    .find((item) =>
+      item.path === "/" ? pathname === "/" : pathname.startsWith(item.path),
+    );
 
   return {
     eyebrow: match ? TOPBAR_EYEBROWS[match.id] : undefined,
@@ -33,6 +37,7 @@ function resolveTopBarContext(pathname: string): { eyebrow?: string; title: stri
 
 interface TopBarProps {
   themeMode: ConsoleThemeMode;
+  onOpenMobileNav: () => void;
   onThemeModeChange: (themeMode: ConsoleThemeMode) => void;
 }
 
@@ -79,13 +84,16 @@ function ThemeIcon({ mode }: { mode: ConsoleThemeMode }) {
 
 export function TopBar({
   themeMode,
+  onOpenMobileNav,
   onThemeModeChange,
 }: TopBarProps) {
   const location = useLocation();
   const themeMenuRef = useRef<HTMLDivElement>(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const { eyebrow, title } = resolveTopBarContext(location.pathname);
-  const activeTheme = THEME_OPTIONS.find((option) => option.mode === themeMode) ?? THEME_OPTIONS[0];
+  const activeTheme =
+    THEME_OPTIONS.find((option) => option.mode === themeMode) ??
+    THEME_OPTIONS[0];
 
   useEffect(() => {
     if (!themeMenuOpen) {
@@ -116,6 +124,18 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="topbar__left">
+        <button
+          aria-label="打开导航"
+          className="topbar__mobileNavButton"
+          onClick={onOpenMobileNav}
+          type="button"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 6h16" />
+            <path d="M4 12h16" />
+            <path d="M4 18h16" />
+          </svg>
+        </button>
         <div className="topbar__titleGroup">
           <h2 className="topbar__title">{title}</h2>
           {eyebrow ? <span className="topbar__divider">|</span> : null}
@@ -136,13 +156,17 @@ export function TopBar({
             type="button"
           >
             <span className="topbar__themeIcon">
-            <ThemeIcon mode={themeMode} />
-          </span>
+              <ThemeIcon mode={themeMode} />
+            </span>
             <span className="topbar__themeLabel">{activeTheme.label}</span>
             <span className="topbar__themeChevron" />
           </button>
           {themeMenuOpen ? (
-            <div aria-label="主题模式选项" className="topbar__themeMenu" role="listbox">
+            <div
+              aria-label="主题模式选项"
+              className="topbar__themeMenu"
+              role="listbox"
+            >
               {THEME_OPTIONS.map((option) => (
                 <button
                   aria-selected={option.mode === themeMode}
@@ -162,7 +186,9 @@ export function TopBar({
                   <span className="topbar__themeIcon">
                     <ThemeIcon mode={option.mode} />
                   </span>
-                  <span className="topbar__themeOptionLabel">{option.label}</span>
+                  <span className="topbar__themeOptionLabel">
+                    {option.label}
+                  </span>
                 </button>
               ))}
             </div>

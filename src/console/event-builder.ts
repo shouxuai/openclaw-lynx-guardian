@@ -96,6 +96,10 @@ export interface LynxCheckSnapshotInput {
 
 export interface BeforeAgentStartInput extends BaseHookInput {
   promptText?: string;
+  modelInputText?: string;
+  blockedBeforeModel?: boolean;
+  modelInputPolicy?: string;
+  uiInputPolicy?: string;
   lynxCheck?: LynxCheckSnapshotInput;
 }
 
@@ -353,6 +357,10 @@ function createAuditItem(input: AuditSeed): AuditEventItem {
 
 interface QARecordSeed extends BaseHookInput {
   userPrompt?: unknown;
+  modelInputText?: unknown;
+  blockedBeforeModel?: boolean;
+  modelInputPolicy?: string;
+  uiInputPolicy?: string;
   finalAnswer?: unknown;
   status: "running" | "completed" | "blocked" | "failed";
   startedAtMs?: number;
@@ -371,6 +379,7 @@ function createQARecordUpsert(input: QARecordSeed): QaRecordUpsertItem | null {
 
   const occurredAtMs = normalizeOccurredAtMs(input.occurredAtMs);
   const userPromptExcerpt = redactAuditExcerpt(input.userPrompt, STORED_EXCERPT_MAX_CHARS);
+  const modelInputExcerpt = redactAuditExcerpt(input.modelInputText, STORED_EXCERPT_MAX_CHARS);
   const finalAnswerExcerpt = redactAuditExcerpt(input.finalAnswer, STORED_EXCERPT_MAX_CHARS);
   const itemId = buildStableId("qa-item", [
     qaRecordId,
@@ -405,6 +414,10 @@ function createQARecordUpsert(input: QARecordSeed): QaRecordUpsertItem | null {
       linkOrigin: "runtime",
       payloadJson: cleanRecord({
         ...(input.payloadJson ?? {}),
+        blockedBeforeModel: input.blockedBeforeModel === true ? true : undefined,
+        modelInputPolicy: input.modelInputPolicy,
+        uiInputPolicy: input.uiInputPolicy,
+        modelInputExcerpt,
       }),
     },
   };

@@ -1,7 +1,6 @@
 import type { WorkflowAuthorization } from "../approval/approval-bridge.js";
 import type { RiskAssessment, RiskLevel } from "../guard/safety-guard.js";
 
-const DEFAULT_CONFIRMATION_PHRASE = "确认放行本次操作";
 const DEFAULT_APPROVABLE_LEVELS = ["L2", "L3"] as const;
 const APPROVABLE_RISK_LEVELS = new Set<RiskLevel>(["L2", "L3"]);
 
@@ -168,6 +167,10 @@ interface GuardEvidenceBundleLike {
   evidenceItems?: unknown[];
 }
 
+function normalizeConfirmationPhrase(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 export function normalizePolicyConfig(policy: any = {}) {
   const approvableRiskLevels = normalizeApprovableRiskLevels(
     policy.approvableRiskLevels
@@ -186,10 +189,11 @@ export function normalizePolicyConfig(policy: any = {}) {
     ),
   );
 
+  const confirmationPhrase = normalizeConfirmationPhrase(policy.confirmationPhrase);
   return {
     absoluteRejectScore: policy.absoluteRejectScore ?? 10,
-    confirmationPhrase: policy.confirmationPhrase ?? DEFAULT_CONFIRMATION_PHRASE,
-    deprecatedConfirmationPhrase: policy.confirmationPhrase ?? DEFAULT_CONFIRMATION_PHRASE,
+    confirmationPhrase,
+    deprecatedConfirmationPhrase: confirmationPhrase,
     approvableRiskLevels,
     allowOneTimeOverrideLevels: approvableRiskLevels,
     moduleOverrides: {
@@ -343,7 +347,10 @@ export function buildApiRiskAssessment(
   return { level: "L0", score: 0, modules: [], description, action: "allow" };
 }
 
-export function buildOverridePrompt(message: string, confirmationPhrase: string): string {
+export function buildOverridePrompt(message: string, confirmationPhrase?: string): string {
+  if (!confirmationPhrase) {
+    return message;
+  }
   return `${message} 如确认放行本次工作流中的此类操作，请回复"${confirmationPhrase}"。`;
 }
 

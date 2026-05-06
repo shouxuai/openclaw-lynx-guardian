@@ -188,17 +188,28 @@ type DecisionResponse struct {
 }
 
 type ChainSummary struct {
-	ChainID          string   `json:"chainId"`
-	SessionKey       string   `json:"sessionKey"`
-	RecentIdentity   []string `json:"recentIdentity"`
-	RecentSensitive  []string `json:"recentSensitive"`
-	RecentDenials    []string `json:"recentDenials"`
-	RecentApprovals  []string `json:"recentApprovals"`
-	RecentTools      []string `json:"recentTools"`
-	RecentTaintReads []string `json:"recentTaintReads"`
-	RecentEvasions   []string `json:"recentEvasions"`
-	ActiveGrantID    string   `json:"activeGrantId"`
-	PendingApproval  string   `json:"pendingApproval"`
+	ChainID          string               `json:"chainId"`
+	SessionKey       string               `json:"sessionKey"`
+	RecentIdentity   []string             `json:"recentIdentity"`
+	RecentSensitive  []string             `json:"recentSensitive"`
+	RecentDenials    []string             `json:"recentDenials"`
+	RecentApprovals  []string             `json:"recentApprovals"`
+	RecentTools      []string             `json:"recentTools"`
+	RecentTaintReads []string             `json:"recentTaintReads"`
+	RecentEvasions   []string             `json:"recentEvasions"`
+	ActiveGrantID    string               `json:"activeGrantId"`
+	PendingApproval  string               `json:"pendingApproval"`
+	CoveredPrompts   []ChainCoveredPrompt `json:"coveredPrompts"`
+	PromptCount      int                  `json:"promptCount"`
+}
+
+type ChainCoveredPrompt struct {
+	QARecordID        string `json:"qaRecordId"`
+	RunID             string `json:"runId,omitempty"`
+	UserPromptExcerpt string `json:"userPromptExcerpt"`
+	RiskLevel         string `json:"riskLevel,omitempty"`
+	StartedAtMs       int64  `json:"startedAtMs,omitempty"`
+	Status            string `json:"status,omitempty"`
 }
 
 type ChainUpdateRequest struct {

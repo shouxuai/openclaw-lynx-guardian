@@ -5,6 +5,7 @@ import { rmSync } from "fs";
 import setup from "../index.ts";
 import * as utils from "../src/utils.js";
 import * as safetyGuard from "../src/guard/safety-guard.js";
+import * as blacklist from "../src/blacklist.js";
 import * as runtimeConfig from "../src/discovery/discovery-runtime-config.js";
 import * as tokenOptimizerRunner from "../src/runtime/token-optimizer-runner.js";
 import {
@@ -436,6 +437,108 @@ describe("approval channel alignment", () => {
     });
     expect(JSON.stringify(result)).not.toContain("Feishu");
     expect(JSON.stringify(result)).not.toContain("/lynx-approve");
+  });
+
+  it("does not create a second Lynx approval request for risky exec in native webchat runtimes", async () => {
+    vi.stubEnv("OPENCLAW_VERSION", "2026.3.28");
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        decisionId: "allow-native-exec-surface-test",
+        block: false,
+        action: "allow",
+        riskLevel: "L0",
+        score: 0,
+        matchedModules: [],
+        requiresApproval: false,
+      }),
+    } as Response)));
+    configureOwnerApproval();
+    const guardSpy = vi.spyOn(safetyGuard, "guardToolCall").mockReturnValue({
+      block: true,
+      blockReason: "[Lynx Guardian] L3 command execution risk",
+      riskAssessment: {
+        level: "L3",
+        score: 8,
+        modules: ["M2:protected_file_access"],
+        description: "exec reads protected system file",
+        action: "block",
+      },
+    } as any);
+
+    const result = await handlers.before_tool_call(
+      {
+        toolName: "exec",
+        params: { command: "cat /etc/passwd" },
+        runId: "run-webchat-native-exec",
+        toolCallId: "tool-webchat-native-exec",
+      },
+      {
+        sessionKey: "sess-webchat-native-exec",
+        channelId: "webchat",
+        runId: "run-webchat-native-exec",
+      },
+    );
+
+    expect((result as any)?.requireApproval).toBeUndefined();
+    expect((result as any)?.block).not.toBe(true);
+    expect(JSON.stringify(result ?? {})).not.toContain("/approve");
+    expect(JSON.stringify(result ?? {})).not.toContain("确认放行本次操作");
+    guardSpy.mockRestore();
+  });
+
+  it("routes blacklist-backed risky exec to native exec approval without Lynx requireApproval", async () => {
+    vi.stubEnv("OPENCLAW_VERSION", "2026.3.28");
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        decisionId: "allow-native-blacklist-exec-surface-test",
+        block: false,
+        action: "allow",
+        riskLevel: "L0",
+        score: 0,
+        matchedModules: [],
+        requiresApproval: false,
+      }),
+    } as Response)));
+    configureOwnerApproval();
+    const guardSpy = vi.spyOn(safetyGuard, "guardToolCall").mockReturnValue({
+      block: false,
+      riskAssessment: {
+        level: "L0",
+        score: 0,
+        modules: [],
+        description: "safe",
+        action: "allow",
+      },
+    } as any);
+    const blacklistSpy = vi.spyOn(blacklist, "checkExecBlacklist").mockReturnValue({
+      level: "warning",
+      reason: "protected system file read",
+    } as any);
+
+    const result = await handlers.before_tool_call(
+      {
+        toolName: "exec",
+        params: { command: "cat /etc/passwd" },
+        runId: "run-webchat-native-blacklist-exec",
+        toolCallId: "tool-webchat-native-blacklist-exec",
+      },
+      {
+        sessionKey: "sess-webchat-native-blacklist-exec",
+        channelId: "webchat",
+        runId: "run-webchat-native-blacklist-exec",
+      },
+    );
+
+    expect((result as any)?.requireApproval).toBeUndefined();
+    expect((result as any)?.block).not.toBe(true);
+    expect(JSON.stringify(result ?? {})).not.toContain("/approve");
+    expect(JSON.stringify(result ?? {})).not.toContain("确认放行本次操作");
+    guardSpy.mockRestore();
+    blacklistSpy.mockRestore();
   });
 
   it("routes legacy webchat runtimes through feishu local approval when a recent owner dm route exists", async () => {

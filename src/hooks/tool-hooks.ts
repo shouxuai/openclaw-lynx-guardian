@@ -9,6 +9,7 @@ import {
   buildScriptPreflightMetadata,
   collectScriptPreflightEvidence,
 } from "../script-preflight/evidence-adapter.js";
+import { resolveToolApprovalSurface } from "../approval/tool-approval-surface.js";
 import { explainScriptDenial } from "../script-preflight/explanation.js";
 import { collectResourcePolicyEvidence } from "../protected-resources/evidence-adapter.js";
 import { buildProtectedResourceDenialExplanation } from "../protected-resources/explanation.js";
@@ -438,6 +439,29 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
       requesterOuId: approvalRoute.requesterOuId,
       conversationId: approvalRoute.conversationId,
     })}`);
+    const buildCurrentGrantScope = (module: string) => {
+      const protectedTargetSummary = resolveToolApprovalProtectedTargetSummary(toolName, params);
+      const targetFingerprint = buildApprovalRequestFingerprint({
+        sessionKey: approvalRoute.sessionKey ?? localConsoleSessionKey,
+        channelProfile: approvalRoute.channelProfile,
+        channelId: approvalRoute.channelId,
+        accountId: approvalRoute.accountId,
+        conversationId: approvalRoute.conversationId,
+        requesterOuId: approvalRoute.requesterOuId,
+        promptText: runApprovalContext?.promptText,
+        toolName,
+        module,
+        protectedTargetSummary,
+      });
+      return {
+        sessionKey: approvalRoute.sessionKey ?? localConsoleSessionKey,
+        chainId: localConsoleRunId ?? approvalRoute.sessionKey ?? localConsoleSessionKey,
+        runId: localConsoleRunId,
+        toolName,
+        protectedTargetSummary,
+        targetFingerprint,
+      };
+    };
     if (!runApprovalContext?.requesterOuId && effectiveRunApprovalContext.requesterOuId) {
       log.info(
         `[lynx-guardian] Recovered Feishu approval context before_tool_call run=${ctx.runId ?? "no-run"} requester=${effectiveRunApprovalContext.requesterOuId} conversation=${effectiveRunApprovalContext.conversationId ?? "none"}`,
@@ -504,6 +528,30 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
           const approvalRiskLevel = toApprovalRiskLevel(effectiveAssessment.level);
           const primaryModule = effectiveAssessment.modules[0];
           const l4BlockReason = appendLogWebviewNoteForL4(blockReason, effectiveAssessment.level);
+          const approvalSurface = resolveToolApprovalSurface({
+            toolName,
+            riskLevel: effectiveAssessment.level as any,
+            modules: effectiveAssessment.modules,
+            nativeExecApprovalAvailable: approvalRoute.approvalTransport === "native",
+            systemPluginApprovalAvailable: approvalRoute.compatMode !== "deny-no-route",
+          });
+          if (approvalSurface.surface === "exec-native" && approvalRiskLevel && primaryModule) {
+            recordBeforeToolCall({
+              summary: blockReason,
+              triggeredModules: effectiveAssessment.modules,
+              primaryModule,
+              riskLevel: effectiveAssessment.level,
+              riskScore: effectiveAssessment.score,
+              policyDecision: "require_approval",
+              enforcementAction: "allow",
+              metadataJson: {
+                approvalSurface: approvalSurface.surface,
+                requiresOpenClawApprovalContext: approvalSurface.requiresOpenClawApprovalContext,
+                approvalContextBlockedByCoreSupport: approvalSurface.requiresOpenClawApprovalContext,
+              },
+            });
+            return;
+          }
           if (!policyResult.override.allowed || !approvalRiskLevel || !primaryModule) {
             recordBeforeToolCall({
               summary: blockReason,
@@ -599,12 +647,18 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
             return;
           }
 
+          const grantScope = buildCurrentGrantScope(primaryModule);
           const matchingGrant = matchApprovalGrant({
             channelProfile: approvalRoute.channelProfile,
             channelId: approvalRoute.channelId,
             accountId: approvalRoute.accountId,
             conversationId: approvalRoute.conversationId,
+            sessionKey: grantScope.sessionKey,
+            chainId: grantScope.chainId,
+            runId: grantScope.runId,
             requesterOuId: approvalRoute.requesterOuId,
+            toolName: grantScope.toolName,
+            targetFingerprint: grantScope.targetFingerprint,
             module: primaryModule,
             riskLevel: approvalRiskLevel,
           });
@@ -747,7 +801,11 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
             module: primaryModule,
             riskLevel: approvalRiskLevel,
             promptText: runApprovalContext?.promptText,
-            protectedTargetSummary: resolveToolApprovalProtectedTargetSummary(toolName, params),
+            protectedTargetSummary: grantScope.protectedTargetSummary,
+            sessionKey: grantScope.sessionKey,
+            chainId: grantScope.chainId,
+            runId: grantScope.runId,
+            targetFingerprint: grantScope.targetFingerprint,
             timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
             grantWindowMs: riskPolicyConfig.grantWindowMs,
             pendingApproval,
@@ -793,7 +851,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
                 riskLevel: approvalRiskLevel ?? "L2",
                 toolName,
                 timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
-                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
               }),
             });
           }
@@ -1026,6 +1083,31 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
         const policyResult = resolveRiskPolicy(apiAssessment, riskPolicyConfig);
         const approvalRiskLevel = toApprovalRiskLevel(apiAssessment.level);
         const primaryModule = blacklistModules[0];
+        const approvalSurface = resolveToolApprovalSurface({
+          toolName,
+          riskLevel: apiAssessment.level as any,
+          modules: blacklistModules,
+          nativeExecApprovalAvailable: approvalRoute.approvalTransport === "native",
+          systemPluginApprovalAvailable: approvalRoute.compatMode !== "deny-no-route",
+        });
+        if (approvalSurface.surface === "exec-native" && approvalRiskLevel && primaryModule) {
+          recordBeforeToolCall({
+            summary: `[Lynx Guardian] Risk Level ${riskLevel}: ${match.reason}`,
+            triggeredModules: blacklistModules,
+            primaryModule,
+            riskLevel: apiAssessment.level,
+            riskScore: apiAssessment.score,
+            policyDecision: "require_approval",
+            enforcementAction: "allow",
+            metadataJson: {
+              approvalSurface: approvalSurface.surface,
+              requiresOpenClawApprovalContext: approvalSurface.requiresOpenClawApprovalContext,
+              approvalContextBlockedByCoreSupport: approvalSurface.requiresOpenClawApprovalContext,
+              blacklistReason: match.reason,
+            },
+          });
+          return;
+        }
         if (policyResult.override.allowed && approvalRiskLevel && primaryModule) {
           if (approvalRoute.compatMode === "deny-no-route") {
             const approvalId = `lynx:blacklist:${ctx.runId ?? "no-run"}:${event.toolCallId ?? toolName}:${primaryModule}`;
@@ -1104,12 +1186,18 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
             return;
           }
 
+          const grantScope = buildCurrentGrantScope(primaryModule);
           const matchingGrant = matchApprovalGrant({
             channelProfile: approvalRoute.channelProfile,
             channelId: approvalRoute.channelId,
             accountId: approvalRoute.accountId,
             conversationId: approvalRoute.conversationId,
+            sessionKey: grantScope.sessionKey,
+            chainId: grantScope.chainId,
+            runId: grantScope.runId,
             requesterOuId: approvalRoute.requesterOuId,
+            toolName: grantScope.toolName,
+            targetFingerprint: grantScope.targetFingerprint,
             module: primaryModule,
             riskLevel: approvalRiskLevel,
           });
@@ -1246,7 +1334,11 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
             module: primaryModule,
             riskLevel: approvalRiskLevel,
             promptText: runApprovalContext?.promptText,
-            protectedTargetSummary: resolveToolApprovalProtectedTargetSummary(toolName, params),
+            protectedTargetSummary: grantScope.protectedTargetSummary,
+            sessionKey: grantScope.sessionKey,
+            chainId: grantScope.chainId,
+            runId: grantScope.runId,
+            targetFingerprint: grantScope.targetFingerprint,
             timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
             grantWindowMs: riskPolicyConfig.grantWindowMs,
             pendingApproval,
@@ -1290,7 +1382,6 @@ export function registerToolHooks(api: OpenClawPluginApi, runtime: LynxHookRunti
                 riskLevel: approvalRiskLevel ?? "L2",
                 toolName,
                 timeoutMs: riskPolicyConfig.toolApprovalTimeoutMs,
-                confirmationPhrase: riskPolicyConfig.confirmationPhrase ?? "确认放行本次操作",
               }),
             });
           }

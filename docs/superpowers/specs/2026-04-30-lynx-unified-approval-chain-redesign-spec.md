@@ -52,17 +52,59 @@ The 2026-04-30 runtime check found:
 - `backend/internal/chain/service.go` revokes Go grants on lifecycle end through `agent_end`, `session_end`, `subagent_ended`, and `chain_complete`.
 - OpenClaw core `PluginHookBeforeToolCallResult` currently supports `params`, `block`, `blockReason`, and `requireApproval`; it does not expose a field for "append this Lynx risk note to the native exec approval card."
 
+The 2026-05-01 latest-code and browser check found:
+
+- `npx tsc --noEmit --pretty false`, frontend `npx tsc --noEmit --pretty false`, focused approval tests, focused Go grant/chain tests, and focused frontend page tests passed before this spec update.
+- `http://127.0.0.1:4173/webview/chains` and `/webview/grants` rendered without page errors or console errors.
+- Mobile layout is still functionally wrong: at `390x844`, the sidebar consumes about `950px` height, the topbar starts around `y=950`, and the page content starts around `y=998`, so the actual page content is outside the first viewport.
+- Advanced-page metric cards remain too large for this diagnostic role: desktop cards are about `274x136`, and mobile cards are about `358x136`.
+- `GET http://127.0.0.1:4173/lynx/chains` returns chain summaries without covered prompts, so `多轮链路` still cannot answer which inputs/conversations it covers.
+- `GET http://127.0.0.1:4173/lynx/grants` can be empty while `GET http://127.0.0.1:4173/lynx/approvals` returns approval records. This confirms that `临时放行` must be explained as an approval effect after approval, not as the approval queue itself.
+- The latest local OpenClaw repo at `D:\all-works\openclaw` still has no `approvalContext` field in `PluginHookBeforeToolCallResult`.
+- Current Lynx plugin code still has risky tool paths that return plugin-side `requireApproval`; no `resolveToolApprovalSurface` split is present yet.
+
 ## Goals
 
-1. Give users one clear approval experience per risky operation.
-2. Keep OpenClaw native exec approval as the actual "execute this command?" authority.
-3. Add Lynx risk context to the same system approval surface where possible.
-4. Use system plugin/generic approval for risky non-exec tools.
-5. Treat L4 as hard deny, not approvable.
-6. Make temporary release narrow, explainable, and revoked by lifecycle.
-7. Make `多轮链路` show which prompts and operations a chain covers.
-8. Rename `链路授权` to a user-understandable "临时放行" concept.
-9. Preserve original blocked L4 input in audit/UI while keeping it out of model context.
+1. Make the advanced pages understandable before deep mechanism work: users must see what a chain covers and what a temporary release means.
+2. Make `多轮链路` show which prompts, conversations, risks, tools, and approvals a chain covers.
+3. Rename `链路授权` to the user-understandable `临时放行` concept and explain that it is an approval effect, not an approval queue.
+4. Fix mobile/card layout so the two pages are usable in the browser before runtime behavior is claimed.
+5. Give users one clear approval experience per risky operation.
+6. Keep OpenClaw native exec approval as the actual "execute this command?" authority.
+7. Add Lynx risk context to the same system approval surface where possible.
+8. Use system plugin/generic approval for risky non-exec tools.
+9. Treat L4 as hard deny, not approvable.
+10. Make temporary release narrow, explainable, and revoked by lifecycle.
+11. Preserve original blocked L4 input in audit/UI while keeping it out of model context.
+
+## Implementation Priority
+
+Use this order unless a later code check proves a dependency has changed:
+
+### Phase A: Page And Data Comprehension
+
+- Do not touch `问答记录`.
+- Make `多轮链路` answer the first user question: "这条链路覆盖了哪些输入词/对话？"
+- Add covered-prompt data to the chain API instead of making the frontend infer it from unrelated pages.
+- Rename `链路授权` to `临时放行` and make the empty state explain that no release exists until an approval creates one.
+- Fix mobile layout and shrink advanced-page metric cards.
+
+### Phase B: Temporary Release Scope And Lifecycle
+
+- Scope plugin memory grants by session, run/chain, requester, tool, risk module, and target fingerprint.
+- Revoke plugin memory grants on `agent_end`, `session_end`, `subagent_ended`, and `chain_complete`, matching the Go-side lifecycle contract.
+
+### Phase C: Approval Popup De-Dup And Routing
+
+- Split exec from non-exec approval routing in Lynx.
+- For exec, suppress duplicate Lynx plugin approval where native OpenClaw exec approval is available.
+- For non-exec L3, keep one system/plugin approval route or fail closed when no route exists.
+- Remove user-facing old free-text confirmation prompts and avoid `/approve ... allow-once` output after a system approval UI has already appeared.
+
+### Phase D: OpenClaw Core Approval Context
+
+- This remains gated by explicit user approval because it edits `D:\all-works\openclaw`.
+- Until OpenClaw core exposes and renders `approvalContext`, plugin-only work can reduce duplicate popups but cannot honestly show Lynx risk text inside the native exec approval card.
 
 ## Non-Goals
 
@@ -173,7 +215,7 @@ Scope key fields:
 
 - chain id
 - session key
-- run id when available
+- run id
 - requester identity
 - approver identity when available
 - tool name
@@ -184,9 +226,22 @@ Scope key fields:
 - creation time
 - expiry time
 
+Plugin in-memory grants must not stay at only `source + module + risk`. The minimum matching key for the current plugin runtime is:
+
+- `sessionKey`
+- `runId` when available
+- `chainId` when available
+- `requesterOuId` or equivalent requester identity
+- `toolName`
+- `module`
+- `maxRiskLevel`
+- `targetFingerprint` or another deterministic resource fingerprint
+- `sourceApprovalId`
+
 Reuse is allowed only when all are true:
 
 - Same chain/session scope.
+- Same run scope when both sides have a run id.
 - Same requester.
 - Same tool.
 - Same risk family/module.
@@ -206,6 +261,8 @@ Reuse is denied and the release is revoked when any are true:
 - `agent_end`, `session_end`, `subagent_ended`, or `chain_complete` fires.
 
 The plugin runtime and Go control plane must agree on revocation.
+
+If the current system has no actual release rows yet, the `临时放行` page must show an empty state that says no temporary release has been created after approval yet. It must not imply that the user can grant permissions directly from this page.
 
 ## UI Design
 
@@ -251,7 +308,9 @@ The first useful question the page must answer:
 
 Purpose:
 
-- Show active and revoked temporary releases.
+- Show active and revoked temporary releases created after an approval decision.
+- Explain what approval effects are still active, what expired, and why something was revoked.
+- Make clear that this page is not where the user approves requests.
 
 Required fields:
 
@@ -269,6 +328,15 @@ Required fields:
 Copy rule:
 
 - Explain that this is a short-lived release inside the current chain, not durable authorization.
+- Empty state copy must say that no approval has created a temporary release yet.
+- Link or cross-reference `审批管理` only as the place to inspect approval requests and decisions.
+
+Suggested empty state copy:
+
+```text
+暂无临时放行
+审批通过后，如果某个操作只在当前链路、当前工具和相同资源范围内短期放行，会出现在这里。审批请求和处理记录请到审批管理查看。
+```
 
 ### 审批管理
 
@@ -291,6 +359,8 @@ Required fields:
 Boundary:
 
 - Do not duplicate release scope details in the main table. Put release scope in detail.
+- `审批管理` answers "which request was approved or rejected?"
+- `临时放行` answers "what exact follow-up operations are temporarily allowed because of that approval?"
 
 ## L4 Input Preservation
 
@@ -335,6 +405,8 @@ Required behavior:
 - Mobile sidebar must collapse behind a menu button.
 - Page content must start in the first viewport.
 - Tables can use horizontal scroll, but the page header and primary content must be visible without scrolling past the entire nav.
+- At `390x844`, content must begin above `y=160`; it must not be pushed below a `950px` sidebar.
+- Advanced-page metric cards should be compact diagnostic summaries, not hero cards. Target card height is `<= 96px` on desktop and `<= 110px` on mobile unless an existing design token forces a slightly larger value.
 
 ## Testing Strategy
 
@@ -362,5 +434,6 @@ Do not rely on broad Vitest as the only green gate because this repo has known h
 - L4 original input is visible in UI with `未发送给模型` labeling.
 - `多轮链路` displays covered user prompts.
 - `链路授权` is no longer user-facing; the page reads as `临时放行`.
-- Mobile advanced pages show content in the first viewport.
-
+- `临时放行` empty state distinguishes release effects from approval requests.
+- Mobile advanced pages show content in the first viewport, with content starting above `y=160` at `390x844`.
+- Advanced-page metric cards are compact: target height `<= 96px` on desktop and `<= 110px` on mobile.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizePolicyConfig, resolveRiskPolicy } from "../src/runtime/policy-runtime.js";
+import { buildOverridePrompt, normalizePolicyConfig, resolveRiskPolicy } from "../src/runtime/policy-runtime.js";
 import type { RiskAssessment } from "../src/guard/safety-guard.js";
 import { inferBlacklistModules } from "../src/runtime/override-runtime.js";
 
@@ -10,6 +10,14 @@ const BASE_CONFIG = {
 };
 
 describe("Risk Policy Resolver", () => {
+  it("does not default to the deprecated free-text confirmation phrase", () => {
+    const config = normalizePolicyConfig({});
+
+    expect(config.confirmationPhrase).toBeUndefined();
+    expect(config.deprecatedConfirmationPhrase).toBeUndefined();
+    expect(buildOverridePrompt("high-risk action")).not.toContain("确认放行本次操作");
+  });
+
   it("does not allow override for M2:protected_file_access at L4 score=9", () => {
     const assessment: RiskAssessment = {
       level: "L4",

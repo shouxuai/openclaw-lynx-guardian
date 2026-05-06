@@ -922,6 +922,10 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     riskLevel: "L2" | "L3";
     promptText?: string;
     protectedTargetSummary?: string;
+    sessionKey?: string;
+    chainId?: string;
+    runId?: string;
+    targetFingerprint?: string;
     timeoutMs: number;
     grantWindowMs: number;
     pendingApproval?: {
@@ -942,6 +946,21 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
 
       resolved = true;
       params.pendingApproval?.pending?.settle(resolution);
+      const sessionKey = params.sessionKey ?? (normalizeString(params.ctx?.sessionKey) || undefined);
+      const runId = params.runId ?? (normalizeString(params.ctx?.runId) || undefined);
+      const chainId = params.chainId ?? runId ?? sessionKey ?? params.approvalId;
+      const targetFingerprint = params.targetFingerprint ?? buildApprovalRequestFingerprint({
+        sessionKey,
+        channelProfile: params.channelProfile,
+        channelId: params.channelId,
+        accountId: params.accountId,
+        conversationId: params.conversationId,
+        requesterOuId: params.requesterOuId,
+        promptText: params.promptText,
+        toolName: params.toolName,
+        module: params.module,
+        protectedTargetSummary: params.protectedTargetSummary,
+      });
       persistGrantFromApproval({
         decision: resolution,
         approvalId: params.approvalId,
@@ -949,29 +968,25 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
         channelId: params.channelId,
         accountId: params.accountId,
         conversationId: params.conversationId,
+        sessionKey,
+        chainId,
+        runId,
         requesterOuId: params.requesterOuId,
         module: params.module,
         riskLevel: params.riskLevel,
+        toolName: params.toolName,
+        targetFingerprint,
         grantWindowMs: params.grantWindowMs,
         grantControlPlane: grantControlPlane
           ? {
             ...grantControlPlane,
-            chainId: normalizeString(params.ctx?.runId) || normalizeString(params.ctx?.sessionKey) || params.approvalId,
-            sessionKey: normalizeString(params.ctx?.sessionKey) || undefined,
+            chainId,
+            sessionKey,
             requesterId: normalizeString(params.ctx?.userId ?? params.ctx?.senderId) || params.requesterOuId,
             approverOuId: params.approverOuIds[0],
             toolName: params.toolName,
             targetKind: "tool",
-            targetHash: buildApprovalRequestFingerprint({
-              channelProfile: params.channelProfile,
-              accountId: params.accountId,
-              conversationId: params.conversationId,
-              requesterOuId: params.requesterOuId,
-              promptText: params.promptText,
-              toolName: params.toolName,
-              module: params.module,
-              protectedTargetSummary: params.protectedTargetSummary,
-            }),
+            targetHash: targetFingerprint,
           }
           : undefined,
       });

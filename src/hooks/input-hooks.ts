@@ -1055,6 +1055,10 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             sessionKey,
             runId: normalizeString(ctx.runId) || undefined,
             promptText,
+            modelInputText: denyPrependContext,
+            blockedBeforeModel: true,
+            modelInputPolicy: shouldInjectForcedDenyContext ? "removed" : "blocked",
+            uiInputPolicy: "preserved",
             summary: blockReason,
             contentExcerpt: promptText,
             contentKind: "text",
@@ -1069,6 +1073,9 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
               managedLynxCheckPreauthorized,
               legacyRiskLevel: policyEvaluation.legacyRiskLevel,
               forcedDenyContext: shouldInjectForcedDenyContext,
+              blockedBeforeModel: true,
+              modelInputPolicy: shouldInjectForcedDenyContext ? "removed" : "blocked",
+              uiInputPolicy: "preserved",
               ...(isDirectAgentPromptLevelFallback
                 ? {
                   physicalHardStopVerified: false,
@@ -1110,6 +1117,10 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
               sessionKey,
               runId: normalizeString(ctx.runId) || undefined,
               promptText,
+              modelInputText: userFacingBlockReason,
+              blockedBeforeModel: true,
+              modelInputPolicy: "removed",
+              uiInputPolicy: "preserved",
               summary: blockReason,
               contentExcerpt: promptText,
               contentKind: "text",
@@ -1124,6 +1135,9 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
                 managedLynxCheckPreauthorized,
                 approvedAgentStartOverride: Boolean(approvedAgentStartOverride),
                 overrideAllowed: true,
+                blockedBeforeModel: true,
+                modelInputPolicy: "removed",
+                uiInputPolicy: "preserved",
               },
             });
             savePendingOverrideFull(ctx, {
@@ -1150,6 +1164,10 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
             sessionKey,
             runId: normalizeString(ctx.runId) || undefined,
             promptText,
+            modelInputText: userFacingBlockReason,
+            blockedBeforeModel: true,
+            modelInputPolicy: "removed",
+            uiInputPolicy: "preserved",
             summary: blockReason,
             contentExcerpt: promptText,
             contentKind: "text",
@@ -1164,6 +1182,9 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
               managedLynxCheckPreauthorized,
               approvedAgentStartOverride: Boolean(approvedAgentStartOverride),
               overrideAllowed: false,
+              blockedBeforeModel: true,
+              modelInputPolicy: "removed",
+              uiInputPolicy: "preserved",
             },
           });
           return {

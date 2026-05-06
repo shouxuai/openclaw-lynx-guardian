@@ -122,12 +122,18 @@ export type ApprovalGrant = {
   channelId?: string;
   accountId?: string;
   conversationId?: string;
+  sessionKey?: string;
+  chainId?: string;
+  runId?: string;
   requesterOuId?: string;
+  toolName?: string;
+  targetFingerprint?: string;
   module: string;
   maxRiskLevel: ApprovalRiskLevel;
   createdAt: number;
   expiresAt: number;
-  sourceApprovalId: string;
+  sourceApprovalId?: string;
+  revokedReason?: string;
 };
 
 const approvalGrantsBySource = new Map<string, ApprovalGrant[]>();
@@ -137,6 +143,9 @@ function buildApprovalGrantSourceKey(input: {
   channelId?: string;
   accountId?: string;
   conversationId?: string;
+  sessionKey?: string;
+  chainId?: string;
+  runId?: string;
   requesterOuId?: string;
 }): string | undefined {
   const sourceParts = [
@@ -146,7 +155,16 @@ function buildApprovalGrantSourceKey(input: {
     input.conversationId ?? "",
     input.requesterOuId ?? "",
   ];
-  return sourceParts.every((part) => part.length === 0) ? undefined : sourceParts.join("::");
+  if (sourceParts.some((part) => part.length > 0)) {
+    return sourceParts.join("::");
+  }
+  if (input.sessionKey) {
+    return ["session", input.sessionKey].join("::");
+  }
+  if (input.chainId) {
+    return ["chain", input.chainId].join("::");
+  }
+  return input.runId ? ["run", input.runId].join("::") : undefined;
 }
 
 function pruneApprovalGrants(now: number = Date.now()): void {
@@ -160,6 +178,54 @@ function pruneApprovalGrants(now: number = Date.now()): void {
   }
 }
 
+function normalizeGrantScopeValue(value?: string): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeGrantToolName(value?: string): string {
+  return normalizeGrantScopeValue(value).toLowerCase();
+}
+
+function scopeValueMatches(left?: string, right?: string, normalize = normalizeGrantScopeValue): boolean {
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  if (!normalizedLeft && !normalizedRight) {
+    return true;
+  }
+  return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+}
+
+function buildApprovalGrantReplacementKey(grant: ApprovalGrant): string {
+  return [
+    normalizeGrantScopeValue(grant.module),
+    normalizeGrantScopeValue(grant.sessionKey),
+    normalizeGrantScopeValue(grant.chainId),
+    normalizeGrantScopeValue(grant.runId),
+    normalizeGrantScopeValue(grant.requesterOuId),
+    normalizeGrantToolName(grant.toolName),
+    normalizeGrantScopeValue(grant.targetFingerprint),
+  ].join("::");
+}
+
+function approvalGrantScopeMatches(
+  grant: ApprovalGrant,
+  input: {
+    sessionKey?: string;
+    chainId?: string;
+    runId?: string;
+    requesterOuId?: string;
+    toolName?: string;
+    targetFingerprint?: string;
+  },
+): boolean {
+  return scopeValueMatches(grant.sessionKey, input.sessionKey)
+    && scopeValueMatches(grant.chainId, input.chainId)
+    && scopeValueMatches(grant.runId, input.runId)
+    && scopeValueMatches(grant.requesterOuId, input.requesterOuId)
+    && scopeValueMatches(grant.toolName, input.toolName, normalizeGrantToolName)
+    && scopeValueMatches(grant.targetFingerprint, input.targetFingerprint);
+}
+
 export function saveApprovalGrant(grant: ApprovalGrant): void {
   pruneApprovalGrants();
   const sourceKey = buildApprovalGrantSourceKey(grant);
@@ -168,8 +234,9 @@ export function saveApprovalGrant(grant: ApprovalGrant): void {
   }
 
   const current = approvalGrantsBySource.get(sourceKey) ?? [];
+  const replacementKey = buildApprovalGrantReplacementKey(grant);
   approvalGrantsBySource.set(sourceKey, [
-    ...current.filter((entry) => entry.module !== grant.module),
+    ...current.filter((entry) => buildApprovalGrantReplacementKey(entry) !== replacementKey),
     { ...grant },
   ]);
 }
@@ -179,7 +246,12 @@ export function matchApprovalGrant(input: {
   channelId?: string;
   accountId?: string;
   conversationId?: string;
+  sessionKey?: string;
+  chainId?: string;
+  runId?: string;
   requesterOuId?: string;
+  toolName?: string;
+  targetFingerprint?: string;
   module: string;
   riskLevel: ApprovalRiskLevel;
 }): ApprovalGrant | undefined {
@@ -192,8 +264,43 @@ export function matchApprovalGrant(input: {
   return (approvalGrantsBySource.get(sourceKey) ?? []).find(
     (grant) =>
       grant.module === input.module
+      && approvalGrantScopeMatches(grant, input)
       && APPROVAL_RISK_ORDER[grant.maxRiskLevel] >= APPROVAL_RISK_ORDER[input.riskLevel],
   );
+}
+
+export function revokeApprovalGrantsForLifecycle(input: {
+  sessionKey?: string;
+  chainId?: string;
+  runId?: string;
+  reason: string;
+}): number {
+  const sessionKey = normalizeGrantScopeValue(input.sessionKey);
+  const chainId = normalizeGrantScopeValue(input.chainId);
+  const runId = normalizeGrantScopeValue(input.runId);
+  if (!sessionKey && !chainId && !runId) {
+    return 0;
+  }
+
+  let revoked = 0;
+  for (const [sourceKey, grants] of approvalGrantsBySource) {
+    const active = grants.filter((grant) => {
+      const sameSession = sessionKey.length > 0 && normalizeGrantScopeValue(grant.sessionKey) === sessionKey;
+      const sameChain = chainId.length > 0 && normalizeGrantScopeValue(grant.chainId) === chainId;
+      const sameRun = runId.length > 0 && normalizeGrantScopeValue(grant.runId) === runId;
+      if (sameSession || sameChain || sameRun) {
+        revoked += 1;
+        return false;
+      }
+      return true;
+    });
+    if (active.length === 0) {
+      approvalGrantsBySource.delete(sourceKey);
+    } else {
+      approvalGrantsBySource.set(sourceKey, active);
+    }
+  }
+  return revoked;
 }
 
 export function clearApprovalGrants(): void {
@@ -960,9 +1067,14 @@ export function persistGrantFromApproval(params: {
   channelId?: string;
   accountId?: string;
   conversationId?: string;
+  sessionKey?: string;
+  chainId?: string;
+  runId?: string;
   requesterOuId?: string;
   module: string;
   riskLevel: ApprovalRiskLevel;
+  toolName?: string;
+  targetFingerprint?: string;
   grantWindowMs: number;
   grantControlPlane?: GrantControlPlaneSync;
 }): Promise<void> | void {
@@ -977,14 +1089,24 @@ export function persistGrantFromApproval(params: {
       params.channelId ?? "",
       params.accountId ?? "",
       params.conversationId ?? "",
+      params.sessionKey ?? "",
+      params.chainId ?? "",
+      params.runId ?? "",
       params.requesterOuId ?? "",
       params.module,
+      params.toolName ?? "",
+      params.targetFingerprint ?? "",
     ].join("::"),
     channelProfile: params.channelProfile,
     channelId: params.channelId,
     accountId: params.accountId,
     conversationId: params.conversationId,
+    sessionKey: params.sessionKey,
+    chainId: params.chainId,
+    runId: params.runId,
     requesterOuId: params.requesterOuId,
+    toolName: params.toolName,
+    targetFingerprint: params.targetFingerprint,
     module: params.module,
     maxRiskLevel: params.riskLevel,
     createdAt: now,
@@ -1002,10 +1124,16 @@ async function syncGrantToControlPlane(params: {
   approvalId: string;
   channelProfile?: ChannelProfile;
   channelId?: string;
+  accountId?: string;
   conversationId?: string;
+  sessionKey?: string;
+  chainId?: string;
+  runId?: string;
   requesterOuId?: string;
   module: string;
   riskLevel: ApprovalRiskLevel;
+  toolName?: string;
+  targetFingerprint?: string;
   grantWindowMs: number;
   grantControlPlane?: GrantControlPlaneSync;
 }): Promise<void> {

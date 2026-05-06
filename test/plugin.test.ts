@@ -588,7 +588,7 @@ describe('Plugin Setup', () => {
     expect(result).toBeTruthy();
     expect((result as any)?.requireApproval).toBeUndefined();
     expect(String((result as any)?.prependContext ?? (result as any)?.blockReason ?? '')).toMatch(
-      /Input risk is L3|Blocked by Lynx Guardian/,
+      /Input risk is L3|Blocked by Lynx Guardian|bypass approval or confirmation/,
     );
     expect(JSON.stringify(result ?? {})).not.toContain('确认放行本次操作');
     expect(JSON.stringify(result ?? {})).not.toContain('同意后重试');
@@ -2815,7 +2815,7 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should require native approval for blacklist-backed exec risk and reuse same-run grant only within the module', async () => {
+  it('should route blacklist-backed exec risk to OpenClaw native exec approval without Lynx requireApproval', async () => {
     vi.stubEnv('OPENCLAW_VERSION', '2026.3.28');
     mockApi.config = {
       localConsole: {
@@ -2917,14 +2917,7 @@ describe('Plugin Setup', () => {
       channelId: 'webchat',
       runId: 'run-api-tool-approval',
     });
-    expect(first).toMatchObject({
-      requireApproval: {
-        title: expect.stringContaining('Lynx Guardian'),
-        timeoutBehavior: 'deny',
-      },
-    });
-    expect(typeof first?.requireApproval?.onResolution).toBe('function');
-    await first.requireApproval.onResolution?.('allow-once');
+    expect(first).toBeUndefined();
 
     const second = await toolHandler(
       {
@@ -2952,10 +2945,7 @@ describe('Plugin Setup', () => {
         runId: 'run-api-tool-approval',
       },
     );
-    expect(third).toMatchObject({
-      block: true,
-      blockReason: expect.stringContaining('SSH remote login control'),
-    });
+    expect(third).toBeUndefined();
 
     expect(api.checkTool).not.toHaveBeenCalled();
     guardSpy.mockRestore();

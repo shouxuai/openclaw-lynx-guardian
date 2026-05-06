@@ -57,6 +57,7 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
     saveFeishuLocalApprovalGrant,
     saveFeishuLocalApprovalReplay,
     saveFeishuRunContinuation,
+    revokeApprovalGrantsForLifecycle,
     buildToolApprovalRequest,
     toApprovalRiskLevel,
     buildApprovalRequestFingerprint,
@@ -238,6 +239,15 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
   api.on("agent_end", async (event, ctx) => {
     try {
       log.info(JSON.stringify(ctx));
+      const revokedGrants = revokeApprovalGrantsForLifecycle?.({
+        sessionKey: normalizeString(ctx?.sessionKey) || undefined,
+        chainId: normalizeString((event as any)?.chainId ?? (ctx as any)?.chainId) || undefined,
+        runId: normalizeString((event as any)?.runId ?? (ctx as any)?.runId) || undefined,
+        reason: "agent_end",
+      }) ?? 0;
+      if (revokedGrants > 0) {
+        log.info(`[lynx-guardian] Revoked ${revokedGrants} in-memory approval grant(s) on agent_end`);
+      }
 
       if (!event.messages || event.messages.length === 0) return;
       const localConsoleOccurredAtMs = Date.now();

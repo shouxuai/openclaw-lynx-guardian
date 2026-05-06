@@ -78,7 +78,11 @@ export function GrantsPage() {
         }
         startTransition(() => {
           setItems([]);
-          setError(loadError instanceof Error ? loadError.message : "链路授权记录加载失败");
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : "临时放行记录加载失败",
+          );
           setLoading(false);
         });
       }
@@ -106,43 +110,56 @@ export function GrantsPage() {
 
   const activeCount = items.filter((item) => !item.revokedAt).length;
   const revokedCount = items.length - activeCount;
+  const showEmptyExplanation = !loading && !error && items.length === 0;
   const statusDescription = error
-    ? `链路授权记录加载失败：${error}`
+    ? `临时放行记录加载失败：${error}`
     : loading
-      ? "正在加载链路授权记录"
-      : "展示审批通过后在当前链路内临时生效的授权、适用范围和撤销原因。";
+      ? "正在加载临时放行记录"
+      : "展示审批通过后在当前链路内短期生效的放行范围、失效时间和撤销原因。";
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="链路授权"
+        title="临时放行"
         description={statusDescription}
-        eyebrow="短期链路授权"
+        eyebrow="审批后的短期放行效果"
       />
 
       <section className="metric-grid metric-grid--compact">
         <article className="metric-card">
-          <p className="metric-card__label">有效授权</p>
-          <strong className="metric-card__value">{formatInteger(activeCount)}</strong>
+          <p className="metric-card__label">有效放行</p>
+          <strong className="metric-card__value">
+            {formatInteger(activeCount)}
+          </strong>
           <p className="metric-card__note">当前链路范围</p>
         </article>
         <article className="metric-card">
           <p className="metric-card__label">已撤销</p>
-          <strong className="metric-card__value">{formatInteger(revokedCount)}</strong>
+          <strong className="metric-card__value">
+            {formatInteger(revokedCount)}
+          </strong>
           <p className="metric-card__note">过期、升级或上下文变化</p>
         </article>
       </section>
 
       <section className="filter-panel">
-        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+        <form
+          className="audit-filter-form audit-filter-form--compact"
+          onSubmit={handleSubmit}
+        >
           <label className="filter-field filter-field--search">
             <span>关键词</span>
             <Input
               allowClear
               aria-label="关键词"
-              placeholder="搜索授权、审批、链路或工具"
+              placeholder="搜索放行、审批、链路或工具"
               value={draftFilters.q}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+              onChange={(event) =>
+                setDraftFilters((current) => ({
+                  ...current,
+                  q: event.target.value,
+                }))
+              }
             />
           </label>
           <label className="filter-field">
@@ -152,12 +169,21 @@ export function GrantsPage() {
               aria-label="申请人"
               placeholder="输入用户或 OU ID"
               value={draftFilters.requesterId}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, requesterId: event.target.value }))}
+              onChange={(event) =>
+                setDraftFilters((current) => ({
+                  ...current,
+                  requesterId: event.target.value,
+                }))
+              }
             />
           </label>
           <div className="audit-filter-form__actions">
-            <Button htmlType="submit" type="primary">应用筛选</Button>
-            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
+            <Button htmlType="submit" type="primary">
+              应用筛选
+            </Button>
+            <Button htmlType="button" onClick={handleReset}>
+              重置条件
+            </Button>
           </div>
         </form>
       </section>
@@ -165,19 +191,72 @@ export function GrantsPage() {
       <section className="table-panel">
         <div className="table-panel__header">
           <div>
-            <h2 className="panel__title">链路授权列表</h2>
-            <p className="panel__subtitle">保留当前链路内的临时授权状态与责任人，资源范围、目标哈希和撤销原因进入详情。</p>
+            <h2 className="panel__title">临时放行列表</h2>
+            <p className="panel__subtitle">
+              这里展示审批通过后产生的短期放行效果；审批请求和处理记录请到审批管理查看。
+            </p>
           </div>
         </div>
+        {showEmptyExplanation ? (
+          <div className="empty-explanation">
+            <strong>暂无临时放行</strong>
+            <p>
+              审批通过后，如果某个操作只在当前链路、当前工具和相同资源范围内短期放行，会出现在这里。审批请求和处理记录请到审批管理查看。
+            </p>
+          </div>
+        ) : null}
         <DataTable
+          emptyDescription="暂无临时放行"
           columns={[
-            { key: "grant", label: "授权", maxWidth: 300, minWidth: 220, width: 260 },
-            { key: "requester", label: "申请人", maxWidth: 200, minWidth: 150, width: 170 },
-            { key: "approver", label: "审批人", maxWidth: 200, minWidth: 150, width: 170 },
-            { key: "tool", label: "工具", maxWidth: 180, minWidth: 130, width: 150 },
-            { key: "status", label: "状态", maxWidth: 140, minWidth: 110, width: 120 },
-            { key: "expires", label: "过期时间", maxWidth: 190, minWidth: 150, width: 170 },
-            { key: "detail", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
+            {
+              key: "grant",
+              label: "放行",
+              maxWidth: 300,
+              minWidth: 220,
+              width: 260,
+            },
+            {
+              key: "requester",
+              label: "申请人",
+              maxWidth: 200,
+              minWidth: 150,
+              width: 170,
+            },
+            {
+              key: "approver",
+              label: "审批人",
+              maxWidth: 200,
+              minWidth: 150,
+              width: 170,
+            },
+            {
+              key: "tool",
+              label: "工具",
+              maxWidth: 180,
+              minWidth: 130,
+              width: 150,
+            },
+            {
+              key: "status",
+              label: "状态",
+              maxWidth: 140,
+              minWidth: 110,
+              width: 120,
+            },
+            {
+              key: "expires",
+              label: "过期时间",
+              maxWidth: 190,
+              minWidth: 150,
+              width: 170,
+            },
+            {
+              key: "detail",
+              label: "操作",
+              maxWidth: 140,
+              minWidth: 104,
+              width: 116,
+            },
           ]}
           error={error}
           loading={loading}
@@ -202,7 +281,7 @@ export function GrantsPage() {
             expires: formatIsoTime(item.expiresAt),
             detail: (
               <button
-                aria-label={`查看 ${item.grantId} 授权详情`}
+                aria-label={`查看 ${item.grantId} 放行详情`}
                 className="btn btn--compact"
                 type="button"
                 onClick={() => setSelectedGrant(item)}
@@ -217,27 +296,58 @@ export function GrantsPage() {
       <ModalDialog
         closeLabel="关闭详情"
         open={Boolean(selectedGrant)}
-        title="授权详情"
-        subtitle={selectedGrant?.grantId ?? "查看链路授权的适用范围和撤销上下文。"}
+        title="放行详情"
+        subtitle={
+          selectedGrant?.grantId ?? "查看临时放行的适用范围和撤销上下文。"
+        }
         onClose={() => setSelectedGrant(null)}
       >
         <dl className="detail-panel__grid">
           {[
-            { label: "授权 ID", value: selectedGrant?.grantId ?? "暂无" },
+            { label: "放行 ID", value: selectedGrant?.grantId ?? "暂无" },
             { label: "审批 ID", value: selectedGrant?.approvalId ?? "暂无" },
             { label: "链路", value: selectedGrant?.chainId ?? "暂无" },
             { label: "会话", value: selectedGrant?.sessionKey ?? "暂无" },
-            { label: "申请人", value: selectedGrant?.requesterOuId || selectedGrant?.requesterId || "暂无" },
-            { label: "审批人", value: selectedGrant?.approverOuId || selectedGrant?.approverId || "暂无" },
+            {
+              label: "申请人",
+              value:
+                selectedGrant?.requesterOuId ||
+                selectedGrant?.requesterId ||
+                "暂无",
+            },
+            {
+              label: "审批人",
+              value:
+                selectedGrant?.approverOuId ||
+                selectedGrant?.approverId ||
+                "暂无",
+            },
             { label: "风险族", value: selectedGrant?.riskFamily ?? "暂无" },
             { label: "工具", value: selectedGrant?.toolName ?? "暂无" },
             { label: "目标类型", value: selectedGrant?.targetKind ?? "暂无" },
             { label: "目标哈希", value: selectedGrant?.targetHash ?? "暂无" },
-            { label: "授权范围", value: selectedGrant ? formatScope(selectedGrant.resourceScope) : "暂无" },
-            { label: "创建时间", value: formatIsoTime(selectedGrant?.createdAt) },
-            { label: "过期时间", value: formatIsoTime(selectedGrant?.expiresAt) },
-            { label: "撤销时间", value: formatIsoTime(selectedGrant?.revokedAt) },
-            { label: "撤销原因", value: selectedGrant?.revokedReason || "暂无" },
+            {
+              label: "放行范围",
+              value: selectedGrant
+                ? formatScope(selectedGrant.resourceScope)
+                : "暂无",
+            },
+            {
+              label: "创建时间",
+              value: formatIsoTime(selectedGrant?.createdAt),
+            },
+            {
+              label: "过期时间",
+              value: formatIsoTime(selectedGrant?.expiresAt),
+            },
+            {
+              label: "撤销时间",
+              value: formatIsoTime(selectedGrant?.revokedAt),
+            },
+            {
+              label: "撤销原因",
+              value: selectedGrant?.revokedReason || "暂无",
+            },
           ].map((field) => (
             <div key={field.label} className="detail-panel__field">
               <dt>{field.label}</dt>

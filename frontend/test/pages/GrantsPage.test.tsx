@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GrantsPage } from "../../src/pages/GrantsPage";
@@ -55,20 +61,29 @@ describe("GrantsPage", () => {
   it("uses filters and moves scope/revocation detail out of the table", async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse({ items: [createGrant()] }))
-      .mockResolvedValueOnce(createJsonResponse({ items: [createGrant("grant-filtered")] }));
+      .mockResolvedValueOnce(
+        createJsonResponse({ items: [createGrant("grant-filtered")] }),
+      );
 
     render(<GrantsPage />);
 
-    expect(await screen.findByRole("heading", { name: "链路授权" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "临时放行" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("链路授权")).not.toBeInTheDocument();
     await screen.findByText("grant-1");
     expect(screen.getByLabelText("关键词")).toBeInTheDocument();
     expect(screen.getByLabelText("申请人")).toBeInTheDocument();
     expect(screen.queryByText("Grant ID")).not.toBeInTheDocument();
-    expect(screen.queryByText("授权范围")).not.toBeInTheDocument();
+    expect(screen.queryByText("放行范围")).not.toBeInTheDocument();
     expect(screen.queryByText("撤销原因")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "查看 grant-1 授权详情" }));
-    expect(await screen.findByRole("dialog", { name: "授权详情" })).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看 grant-1 放行详情" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "放行详情" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("path:C:/Users/example/.env")).toBeInTheDocument();
     expect(screen.getByText("manual revoke")).toBeInTheDocument();
 
@@ -83,6 +98,25 @@ describe("GrantsPage", () => {
 
     await screen.findByText("grant-filtered");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/grants?q=filtered&requesterId=ou-requester");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "/lynx/grants?q=filtered&requesterId=ou-requester",
+    );
+  });
+
+  it("explains an empty temporary release list as an approval effect", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse({ items: [] }));
+
+    render(<GrantsPage />);
+
+    expect(
+      await screen.findByRole("heading", { name: "临时放行" }),
+    ).toBeInTheDocument();
+    expect((await screen.findAllByText("暂无临时放行")).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getAllByText(/审批通过后/).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/审批请求和处理记录请到审批管理查看/).length,
+    ).toBeGreaterThan(0);
   });
 });

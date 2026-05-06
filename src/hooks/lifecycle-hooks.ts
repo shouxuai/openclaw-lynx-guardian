@@ -50,6 +50,7 @@ export function registerLifecycleHooks(api: OpenClawPluginApi, runtime: LynxHook
     saveFeishuLocalApprovalGrant,
     saveFeishuLocalApprovalReplay,
     saveFeishuRunContinuation,
+    revokeApprovalGrantsForLifecycle,
     buildToolApprovalRequest,
     toApprovalRiskLevel,
     buildApprovalRequestFingerprint,
@@ -224,6 +225,19 @@ export function registerLifecycleHooks(api: OpenClawPluginApi, runtime: LynxHook
     tryResolveFeishuLocalToolApprovalReply,
     logGuardPolicyTrace,
   } = runtime;
+
+  const revokeLifecycleApprovalGrants = (reason: string, event: any, ctx: any) => {
+    const revoked = revokeApprovalGrantsForLifecycle?.({
+      sessionKey: normalizeString(ctx?.sessionKey) || undefined,
+      chainId: normalizeString(event?.chainId ?? ctx?.chainId) || undefined,
+      runId: normalizeString(event?.runId ?? ctx?.runId) || undefined,
+      reason,
+    }) ?? 0;
+    if (revoked > 0) {
+      log.info(`[lynx-guardian] Revoked ${revoked} in-memory approval grant(s) on ${reason}`);
+    }
+  };
+
   api.on("gateway_start", async (event, ctx) => {
     try {
       ensureResources();
@@ -288,6 +302,7 @@ export function registerLifecycleHooks(api: OpenClawPluginApi, runtime: LynxHook
 
   api.on("session_end", async (event, ctx) => {
     appendLifecycleProbe("session_end", event, ctx);
+    revokeLifecycleApprovalGrants("session_end", event, ctx);
     clearRecentActiveDeliveryTargetForContext(ctx);
     localConsoleHooks?.sessionEnd({
       occurredAtMs: Date.now(),
@@ -305,5 +320,9 @@ export function registerLifecycleHooks(api: OpenClawPluginApi, runtime: LynxHook
       },
       summary: "Session end hook observed.",
     });
+  });
+
+  (api.on as any)("subagent_ended", async (event: any, ctx: any) => {
+    revokeLifecycleApprovalGrants("subagent_ended", event, ctx);
   });
 }

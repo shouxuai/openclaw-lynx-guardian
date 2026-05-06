@@ -1,7 +1,11 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
 import { Button, Input } from "antd";
 
-import { listChains, type ChainListQuery, type ChainSummary } from "../api/chains";
+import {
+  listChains,
+  type ChainListQuery,
+  type ChainSummary,
+} from "../api/chains";
 import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
@@ -26,6 +30,32 @@ function buildChainQuery(filters: ChainFilters): ChainListQuery {
 
 function joinSignals(values: string[]): string {
   return values.length > 0 ? values.join("；") : "暂无";
+}
+
+function formatPromptMeta(
+  prompt: ChainSummary["coveredPrompts"][number],
+): string {
+  return (
+    [prompt.riskLevel, prompt.status, prompt.runId]
+      .filter(Boolean)
+      .join(" · ") || "暂无元数据"
+  );
+}
+
+function formatPromptPreview(
+  prompts: ChainSummary["coveredPrompts"],
+): string {
+  if (prompts.length === 0) {
+    return "覆盖的输入词：暂无";
+  }
+  const preview = prompts
+    .slice(0, 2)
+    .map((prompt) => prompt.userPromptExcerpt)
+    .filter(Boolean)
+    .join("；");
+  const suffix =
+    prompts.length > 2 ? ` 等 ${formatInteger(prompts.length)} 条` : "";
+  return `覆盖的输入词：${preview}${suffix}`;
 }
 
 export function ChainsPage() {
@@ -62,7 +92,9 @@ export function ChainsPage() {
         }
         startTransition(() => {
           setItems([]);
-          setError(loadError instanceof Error ? loadError.message : "链路记录加载失败");
+          setError(
+            loadError instanceof Error ? loadError.message : "链路记录加载失败",
+          );
           setLoading(false);
         });
       }
@@ -105,13 +137,18 @@ export function ChainsPage() {
       <section className="metric-grid metric-grid--compact">
         <article className="metric-card">
           <p className="metric-card__label">链路数量</p>
-          <strong className="metric-card__value">{formatInteger(items.length)}</strong>
+          <strong className="metric-card__value">
+            {formatInteger(items.length)}
+          </strong>
           <p className="metric-card__note">来自链路状态摘要</p>
         </article>
       </section>
 
       <section className="filter-panel">
-        <form className="audit-filter-form audit-filter-form--compact" onSubmit={handleSubmit}>
+        <form
+          className="audit-filter-form audit-filter-form--compact"
+          onSubmit={handleSubmit}
+        >
           <label className="filter-field filter-field--search">
             <span>关键词</span>
             <Input
@@ -119,7 +156,12 @@ export function ChainsPage() {
               aria-label="关键词"
               placeholder="搜索链路、会话、工具或审批"
               value={draftFilters.q}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, q: event.target.value }))}
+              onChange={(event) =>
+                setDraftFilters((current) => ({
+                  ...current,
+                  q: event.target.value,
+                }))
+              }
             />
           </label>
           <label className="filter-field">
@@ -129,12 +171,21 @@ export function ChainsPage() {
               aria-label="渠道"
               placeholder="例如 webchat / feishu"
               value={draftFilters.channelProfile}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, channelProfile: event.target.value }))}
+              onChange={(event) =>
+                setDraftFilters((current) => ({
+                  ...current,
+                  channelProfile: event.target.value,
+                }))
+              }
             />
           </label>
           <div className="audit-filter-form__actions">
-            <Button htmlType="submit" type="primary">应用筛选</Button>
-            <Button htmlType="button" onClick={handleReset}>重置条件</Button>
+            <Button htmlType="submit" type="primary">
+              应用筛选
+            </Button>
+            <Button htmlType="button" onClick={handleReset}>
+              重置条件
+            </Button>
           </div>
         </form>
       </section>
@@ -143,16 +194,48 @@ export function ChainsPage() {
         <div className="table-panel__header">
           <div>
             <h2 className="panel__title">链路列表</h2>
-            <p className="panel__subtitle">表格展示可判断走向的摘要，taint、链路授权与审批证据进入详情。</p>
+            <p className="panel__subtitle">
+              表格展示可判断走向的摘要，taint、临时放行与审批证据进入详情。
+            </p>
           </div>
         </div>
         <DataTable
           columns={[
-            { key: "chain", label: "链路", maxWidth: 300, minWidth: 220, width: 260 },
-            { key: "signals", label: "风险线索", maxWidth: 320, minWidth: 220, width: 280 },
-            { key: "tools", label: "工具", maxWidth: 220, minWidth: 160, width: 190 },
-            { key: "review", label: "人工动作", maxWidth: 220, minWidth: 160, width: 190 },
-            { key: "detail", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
+            {
+              key: "chain",
+              label: "链路",
+              maxWidth: 300,
+              minWidth: 220,
+              width: 260,
+            },
+            {
+              key: "signals",
+              label: "风险线索",
+              maxWidth: 320,
+              minWidth: 220,
+              width: 280,
+            },
+            {
+              key: "tools",
+              label: "工具",
+              maxWidth: 220,
+              minWidth: 160,
+              width: 190,
+            },
+            {
+              key: "review",
+              label: "人工动作",
+              maxWidth: 220,
+              minWidth: 160,
+              width: 190,
+            },
+            {
+              key: "detail",
+              label: "操作",
+              maxWidth: 140,
+              minWidth: 104,
+              width: 116,
+            },
           ]}
           error={error}
           loading={loading}
@@ -163,15 +246,25 @@ export function ChainsPage() {
               <div className="row-stack">
                 <strong>{item.chainId}</strong>
                 <span>{item.sessionKey}</span>
+                <span className="chain-prompt-preview">
+                  {formatPromptPreview(item.coveredPrompts)}
+                </span>
               </div>
             ),
-            signals: joinSignals([...item.recentSensitive, ...item.recentIdentity, ...item.recentEvasions]),
+            signals: joinSignals([
+              ...item.recentSensitive,
+              ...item.recentIdentity,
+              ...item.recentEvasions,
+            ]),
             tools: joinSignals(item.recentTools),
-            review: [
-              item.pendingApproval ? "待审批" : undefined,
-              item.activeGrantId ? "有授权" : undefined,
-              item.recentDenials.length > 0 ? "近期拒绝" : undefined,
-            ].filter(Boolean).join("；") || "暂无",
+            review:
+              [
+                item.pendingApproval ? "待审批" : undefined,
+                item.activeGrantId ? "有放行" : undefined,
+                item.recentDenials.length > 0 ? "近期拒绝" : undefined,
+              ]
+                .filter(Boolean)
+                .join("；") || "暂无",
             detail: (
               <button
                 aria-label={`查看 ${item.chainId} 链路详情`}
@@ -197,15 +290,62 @@ export function ChainsPage() {
           {[
             { label: "链路 ID", value: selectedChain?.chainId ?? "暂无" },
             { label: "会话", value: selectedChain?.sessionKey ?? "暂无" },
-            { label: "身份信号", value: selectedChain ? joinSignals(selectedChain.recentIdentity) : "暂无" },
-            { label: "敏感请求", value: selectedChain ? joinSignals(selectedChain.recentSensitive) : "暂无" },
-            { label: "近期拒绝", value: selectedChain ? joinSignals(selectedChain.recentDenials) : "暂无" },
-            { label: "近期审批", value: selectedChain ? joinSignals(selectedChain.recentApprovals) : "暂无" },
-            { label: "工具", value: selectedChain ? joinSignals(selectedChain.recentTools) : "暂无" },
-            { label: "Taint 读取", value: selectedChain ? joinSignals(selectedChain.recentTaintReads) : "暂无" },
-            { label: "规避信号", value: selectedChain ? joinSignals(selectedChain.recentEvasions) : "暂无" },
-            { label: "当前授权", value: selectedChain?.activeGrantId || "暂无" },
-            { label: "待审批", value: selectedChain?.pendingApproval || "暂无" },
+            {
+              label: "覆盖输入数",
+              value: selectedChain
+                ? formatInteger(selectedChain.promptCount)
+                : "暂无",
+            },
+            {
+              label: "身份信号",
+              value: selectedChain
+                ? joinSignals(selectedChain.recentIdentity)
+                : "暂无",
+            },
+            {
+              label: "敏感请求",
+              value: selectedChain
+                ? joinSignals(selectedChain.recentSensitive)
+                : "暂无",
+            },
+            {
+              label: "近期拒绝",
+              value: selectedChain
+                ? joinSignals(selectedChain.recentDenials)
+                : "暂无",
+            },
+            {
+              label: "近期审批",
+              value: selectedChain
+                ? joinSignals(selectedChain.recentApprovals)
+                : "暂无",
+            },
+            {
+              label: "工具",
+              value: selectedChain
+                ? joinSignals(selectedChain.recentTools)
+                : "暂无",
+            },
+            {
+              label: "Taint 读取",
+              value: selectedChain
+                ? joinSignals(selectedChain.recentTaintReads)
+                : "暂无",
+            },
+            {
+              label: "规避信号",
+              value: selectedChain
+                ? joinSignals(selectedChain.recentEvasions)
+                : "暂无",
+            },
+            {
+              label: "当前放行",
+              value: selectedChain?.activeGrantId || "暂无",
+            },
+            {
+              label: "待审批",
+              value: selectedChain?.pendingApproval || "暂无",
+            },
           ].map((field) => (
             <div key={field.label} className="detail-panel__field">
               <dt>{field.label}</dt>
@@ -213,6 +353,28 @@ export function ChainsPage() {
             </div>
           ))}
         </dl>
+        <section className="detail-panel__section">
+          <h3 className="detail-panel__sectionTitle">覆盖的输入词</h3>
+          {selectedChain && selectedChain.coveredPrompts.length > 0 ? (
+            <ol className="prompt-coverage-list">
+              {selectedChain.coveredPrompts.map((prompt) => (
+                <li
+                  className="prompt-coverage-list__item"
+                  key={`${prompt.qaRecordId}-${prompt.startedAtMs ?? 0}`}
+                >
+                  <p className="prompt-coverage-list__text">
+                    {prompt.userPromptExcerpt}
+                  </p>
+                  <span className="prompt-coverage-list__meta">
+                    {formatPromptMeta(prompt)}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="muted-text">暂无覆盖输入词</p>
+          )}
+        </section>
       </ModalDialog>
     </div>
   );

@@ -44,6 +44,15 @@ function NavIcon({ id }: { id: string }) {
           <path d="M4 16h2" />
         </svg>
       );
+    case "raw-events":
+      return (
+        <svg {...commonProps}>
+          <path d="M5 5h14v14H5z" />
+          <path d="M8 9h8" />
+          <path d="M8 13h5" />
+          <path d="M8 17h7" />
+        </svg>
+      );
     case "decisions":
       return (
         <svg {...commonProps}>
@@ -157,6 +166,7 @@ function SidebarChevron() {
 
 interface SidebarNavProps {
   collapsed: boolean;
+  onNavigate?: () => void;
   onToggleCollapsed: () => void;
 }
 
@@ -180,7 +190,11 @@ function SidebarCollapseIcon({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-export function SidebarNav({ collapsed, onToggleCollapsed }: SidebarNavProps) {
+export function SidebarNav({
+  collapsed,
+  onNavigate,
+  onToggleCollapsed,
+}: SidebarNavProps) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(PRIMARY_NAV_GROUPS.map((group) => [group.id, true])),
   );
@@ -190,7 +204,9 @@ export function SidebarNav({ collapsed, onToggleCollapsed }: SidebarNavProps) {
     <aside className="sidebar" data-collapsed={collapsed ? "true" : "false"}>
       <div className="sidebar__brand">
         <h1 className="sidebar__title">{collapsed ? "OC" : "OpenClaw"}</h1>
-        {!collapsed ? <p className="sidebar__eyebrow">GUARDIAN CONSOLE</p> : null}
+        {!collapsed ? (
+          <p className="sidebar__eyebrow">GUARDIAN CONSOLE</p>
+        ) : null}
       </div>
 
       <nav aria-label="主导航" className="sidebar__nav">
@@ -223,9 +239,12 @@ export function SidebarNav({ collapsed, onToggleCollapsed }: SidebarNavProps) {
                   aria-label={collapsed ? item.label : undefined}
                   key={item.id}
                   className={({ isActive }) =>
-                    isActive ? "sidebar__link sidebar__link--active" : "sidebar__link"
+                    isActive
+                      ? "sidebar__link sidebar__link--active"
+                      : "sidebar__link"
                   }
                   end={item.path === "/"}
+                  onClick={onNavigate}
                   to={item.path}
                 >
                   <NavIcon id={item.id} />

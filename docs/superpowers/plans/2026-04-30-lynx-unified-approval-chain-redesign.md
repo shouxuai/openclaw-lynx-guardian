@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace duplicate approval prompts with one system approval surface per risky operation, make temporary release lifecycle-safe, and make advanced chain pages explain which prompts and operations they cover.
+**Goal:** First make `多轮链路` and `临时放行` understandable and usable in the current browser runtime, then remove duplicate approval prompts and make temporary release lifecycle-safe.
 
-**Architecture:** Lynx owns risk classification, hard-deny boundaries, temporary release scope, and local-console audit data. OpenClaw native exec approval remains the authority for executing commands; non-exec L3 tools use system plugin/generic approval. OpenClaw core needs one small approval-context extension before Lynx risk text can appear inside the native exec approval card.
+**Architecture:** Lynx owns risk classification, hard-deny boundaries, temporary release scope, and local-console audit data. The local-console backend must expose covered prompts for chains so the frontend does not infer them from `问答记录`. OpenClaw native exec approval remains the authority for executing commands; non-exec L3 tools use system plugin/generic approval. OpenClaw core still needs an explicit approval-context extension before Lynx risk text can appear inside the native exec approval card.
 
 **Tech Stack:** TypeScript plugin runtime, Go local-console backend, React + Vite frontend, SQLite, focused Vitest, focused Go contract tests, Playwright/Chrome screenshot checks for rendered webview verification.
 
@@ -69,6 +69,7 @@ Frontend:
 - Modify: `frontend/test/pages/ChainsPage.test.tsx`
 - Modify: `frontend/test/pages/GrantsPage.test.tsx`
 - Modify: `frontend/test/app/App.test.tsx`
+- Modify: `frontend/test/app/nav-config.test.ts`
 
 OpenClaw core gated by user approval:
 
@@ -77,12 +78,38 @@ OpenClaw core gated by user approval:
 - Modify: `D:\all-works\openclaw\src\agents\pi-tool-definition-adapter.ts`
 - Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-types.ts`
 - Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-runtime.ts`
+- Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-host-shared.ts`
 - Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-host-gateway.ts`
+- Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-approval-request.ts`
+- Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-approval-followup.ts`
 - Test: `D:\all-works\openclaw\src\plugins\hooks.before-tool-call.test.ts`
 - Test: `D:\all-works\openclaw\src\agents\pi-tools.before-tool-call.e2e.test.ts`
 - Test: `D:\all-works\openclaw\src\agents\bash-tools.exec-host-shared.test.ts`
+- Test: `D:\all-works\openclaw\src\agents\bash-tools.exec-approval-followup.test.ts`
 
 ---
+
+## Latest Code Checkpoint And Revised Execution Order
+
+The latest 2026-05-01 code/browser check changed the implementation priority:
+
+- `多轮链路` and `临时放行` pages compile and render, so the immediate bug is not a page crash. The immediate product failure is comprehension and mobile layout.
+- At mobile `390x844`, the sidebar is about `950px` tall and pushes page content below the first viewport.
+- Current metric cards are still too large for advanced diagnostic pages: about `274x136` on desktop and `358x136` on mobile.
+- `/lynx/chains` lacks `coveredPrompts`; this blocks the user from seeing which input prompts a chain covers.
+- `/lynx/grants` can be empty while `/lynx/approvals` has approval rows, so `临时放行` must be presented as the effect after approval, not as the approval queue.
+- Latest local OpenClaw code still lacks `approvalContext`; plugin-only implementation cannot make Lynx text appear inside the native exec card yet.
+- Latest local OpenClaw reference during this update was `D:\all-works\openclaw` branch `release/2026.4.20` at `6c54231bbd`; keep this as a re-check point, not a frozen assumption.
+- Current Lynx plugin code still has risky paths returning plugin `requireApproval`; the `resolveToolApprovalSurface` split is not implemented yet.
+
+Execute in this order, even though the historical phase numbers below remain for traceability:
+
+1. **Phase A: Page/data/layout clarity first**: implement Phase 5 and Phase 6 before approval-routing work.
+2. **Phase B: Temporary release scope and lifecycle**: implement Phase 3 after the pages can explain what a release is.
+3. **Phase C: Popup de-dup and routing**: implement Phase 1 and Phase 7 after the release model is scoped.
+4. **Phase D: OpenClaw core approval context**: implement Phase 2 only after explicit user approval to edit `D:\all-works\openclaw`.
+
+Do not modify `问答记录` as part of Phase A. Use backend chain data and existing page APIs instead.
 
 ## Phase 0: Pre-Flight
 
@@ -101,12 +128,8 @@ git status --short
 Expected known dirty files before this plan:
 
 ```text
- M server/backend/lynx-server-linux-x64
- M server/backend/lynx-server-win32-x64.exe
- M src/guard/safety-guard.ts
- M src/hooks/input-hooks.ts
- M test/approval-channel-alignment.test.ts
- M test/safety-guard.test.ts
+Record the actual output. Do not rely on an older dirty-file list.
+If the output is empty, treat the docs/plan update as starting from a clean baseline.
 ```
 
 - [ ] **Step 2: Confirm the new Superpowers docs read as UTF-8**
@@ -122,9 +145,40 @@ Expected:
 - Chinese text is readable.
 - The plan states that OpenClaw core changes are gated by explicit user approval.
 
+- [ ] **Step 3: Capture current page API baseline**
+
+Run against the current Vite/runtime target:
+
+```powershell
+Invoke-RestMethod -UseBasicParsing http://127.0.0.1:4173/lynx/chains -TimeoutSec 5 | ConvertTo-Json -Depth 5
+Invoke-RestMethod -UseBasicParsing http://127.0.0.1:4173/lynx/grants -TimeoutSec 5 | ConvertTo-Json -Depth 5
+Invoke-RestMethod -UseBasicParsing http://127.0.0.1:4173/lynx/approvals -TimeoutSec 5 | ConvertTo-Json -Depth 5
+```
+
+Expected before implementation:
+
+- Chains do not include `coveredPrompts`.
+- Grants may be an empty array.
+- Approvals may contain approval records, proving the pages represent different concepts.
+
+- [ ] **Step 4: Capture browser layout baseline**
+
+Use Playwright or the repo's current webapp-testing path to measure:
+
+- `/webview/chains` desktop and mobile
+- `/webview/grants` desktop and mobile
+
+Expected before implementation:
+
+- Desktop and mobile pages render without console/page errors.
+- At mobile `390x844`, page content is pushed below the first viewport by the sidebar.
+- Metric cards are around `274x136` desktop and `358x136` mobile.
+
 ---
 
 ## Phase 1: Approval Surface Routing In Lynx
+
+Execute this after Phase A and Phase B. Latest code still has no `resolveToolApprovalSurface` helper, and risky tool paths still return plugin-side `requireApproval` in `src/hooks/tool-hooks.ts`. The plugin-only goal is to stop duplicate Lynx approval for exec where native exec approval exists; it cannot put Lynx text into the native exec approval card until Phase 2 lands in OpenClaw core.
 
 ### Task 1.1: Add A Small Approval Surface Classifier
 
@@ -386,7 +440,7 @@ Expected:
 
 ## Phase 2: OpenClaw Core Approval Context Extension
 
-This phase is gated. Do not edit `D:\all-works\openclaw` until the user explicitly authorizes OpenClaw core changes.
+This phase is gated. Do not edit `D:\all-works\openclaw` until the user explicitly authorizes OpenClaw core changes. The 2026-05-01 latest-code check found no `approvalContext` in `PluginHookBeforeToolCallResult`, so this is still future core work, not a plugin-only implementation step.
 
 ### Task 2.1: Add A Hook Approval Context Field In OpenClaw Core
 
@@ -459,9 +513,13 @@ Expected:
 - Modify: `D:\all-works\openclaw\src\agents\pi-tool-definition-adapter.ts`
 - Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-types.ts`
 - Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-runtime.ts`
+- Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-host-shared.ts`
 - Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-host-gateway.ts`
+- Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-approval-request.ts`
+- Modify: `D:\all-works\openclaw\src\agents\bash-tools.exec-approval-followup.ts`
 - Test: `D:\all-works\openclaw\src\agents\pi-tools.before-tool-call.e2e.test.ts`
 - Test: `D:\all-works\openclaw\src\agents\bash-tools.exec-host-shared.test.ts`
+- Test: `D:\all-works\openclaw\src\agents\bash-tools.exec-approval-followup.test.ts`
 
 - [ ] **Step 1: Add failing tests**
 
@@ -481,7 +539,7 @@ Add one exec approval pending message test:
 ```ts
 expect(text).toContain("[Lynx Guardian]");
 expect(text).toContain("L3");
-expect(text).toContain("Reply with: /approve");
+expect(text).not.toContain("/approve");
 ```
 
 - [ ] **Step 2: Extend `HookOutcome`**
@@ -508,14 +566,24 @@ function formatApprovalContextWarning(ctx?: PluginApprovalContext): string {
 }
 ```
 
-Append the formatted text to the existing `warnings` array before `buildExecApprovalPendingToolResult(...)` creates the approval-pending payload.
+Append the formatted text to the existing exec approval card warning area before `buildExecApprovalPendingToolResult(...)` creates the approval-pending payload. Do not make the assistant emit a separate `/approve ... allow-once` instruction after the user already saw a system approval UI.
 
-- [ ] **Step 4: Run focused OpenClaw tests**
+- [ ] **Step 4: Suppress manual approval text after a visible system approval UI**
+
+The latest OpenClaw code still has `/approve` text in `buildApprovalPendingMessage(...)`. Keep a manual fallback only when no visible system approval UI can be used. When the initiating surface is the visible system exec approval UI, the approval-pending payload should not emit:
+
+```text
+Reply with: /approve ...
+```
+
+Add or update tests in `bash-tools.exec-host-shared.test.ts` and `bash-tools.exec-approval-followup.test.ts` so clicking/using the system approval surface does not produce a second text instruction.
+
+- [ ] **Step 5: Run focused OpenClaw tests**
 
 Run from `D:\all-works\openclaw`:
 
 ```powershell
-npx vitest run src/agents/pi-tools.before-tool-call.e2e.test.ts src/agents/bash-tools.exec-host-shared.test.ts --no-color
+npx vitest run src/agents/pi-tools.before-tool-call.e2e.test.ts src/agents/bash-tools.exec-host-shared.test.ts src/agents/bash-tools.exec-approval-followup.test.ts --no-color
 ```
 
 Expected:
@@ -589,6 +657,7 @@ Add tests that verify:
 expect(matchApprovalGrant({
   chainId: "chain-1",
   sessionKey: "session-1",
+  runId: "run-1",
   requesterOuId: "ou-a",
   toolName: "exec",
   module: "M2:protected_file_access",
@@ -599,6 +668,7 @@ expect(matchApprovalGrant({
 expect(matchApprovalGrant({
   chainId: "chain-1",
   sessionKey: "session-1",
+  runId: "run-1",
   requesterOuId: "ou-a",
   toolName: "exec",
   module: "M2:protected_file_access",
@@ -615,8 +685,10 @@ Add fields:
 chainId?: string;
 sessionKey?: string;
 runId?: string;
+requesterOuId?: string;
 toolName?: string;
 targetFingerprint?: string;
+sourceApprovalId?: string;
 revokedReason?: string;
 ```
 
@@ -625,6 +697,7 @@ revokedReason?: string;
 Implement matching rules:
 
 - session key must match when both sides have it
+- run id must match when both sides have it
 - chain id must match when both sides have it
 - requester id must match
 - module must match
@@ -709,9 +782,16 @@ export function revokeApprovalGrantsForLifecycle(input: {
 }
 ```
 
-- [ ] **Step 3: Call helper from lifecycle hooks**
+- [ ] **Step 3: Call helper from lifecycle and output hooks**
 
-In `session_end` and `agent_end` handlers, call the helper with available `sessionKey`, `runId`, and chain/session metadata.
+Call the helper when any of these lifecycle events appear:
+
+- `agent_end`
+- `session_end`
+- `subagent_ended`
+- `chain_complete`
+
+Use available `sessionKey`, `runId`, `chainId`, and chain/session metadata. If the hook payload lacks one field, still revoke by the fields that are present instead of relying only on expiry.
 
 - [ ] **Step 4: Verify focused tests**
 
@@ -908,15 +988,27 @@ Expected:
 
 ## Phase 6: Frontend Advanced Pages
 
-### Task 6.1: Make 多轮链路 Explain Covered Prompts
+### Task 6.1: Make 多轮链路 Explain Covered Prompts End-To-End
 
 **Files:**
 
+- Modify: `backend/internal/api/dto.go`
+- Modify: `backend/internal/repo/chains.go`
+- Modify: `backend/internal/routes/chains.go`
+- Create: `backend/test/chains_prompt_coverage_contract_test.go`
 - Modify: `frontend/src/api/chains.ts`
 - Modify: `frontend/src/pages/ChainsPage.tsx`
 - Modify: `frontend/test/pages/ChainsPage.test.tsx`
 
-- [ ] **Step 1: Add failing frontend test**
+Prerequisite:
+
+- Complete Task 5.1 first, or execute its backend substeps here before the frontend work. `coveredPrompts` must come from `/lynx/chains` and not from the `问答记录` UI.
+
+- [ ] **Step 1: Add or run the failing backend contract test**
+
+Use Task 5.1's `TestChainPromptCoverage` contract. It must fail before backend fields are implemented and pass after `coveredPrompts` and `promptCount` are available.
+
+- [ ] **Step 2: Add failing frontend test**
 
 In `ChainsPage.test.tsx`, mock chain detail with:
 
@@ -936,7 +1028,7 @@ expect(screen.getByText("first prompt")).toBeInTheDocument();
 expect(screen.getByText("second prompt")).toBeInTheDocument();
 ```
 
-- [ ] **Step 2: Run failing test**
+- [ ] **Step 3: Run failing frontend test**
 
 Run:
 
@@ -948,15 +1040,16 @@ Expected:
 
 - Fails until the page renders covered prompts.
 
-- [ ] **Step 3: Update API type and page detail**
+- [ ] **Step 4: Update API type and page detail**
 
-Add `coveredPrompts` and `promptCount` to the chain DTO and render a detail panel section titled `覆盖的输入词`.
+Add `coveredPrompts` and `promptCount` to the frontend chain DTO and render a detail panel section titled `覆盖的输入词`.
 
-- [ ] **Step 4: Run frontend test**
+- [ ] **Step 5: Run backend and frontend tests**
 
 Run:
 
 ```powershell
+Push-Location backend; go test -mod=vendor ./test -run TestChainPromptCoverage -count=1; Pop-Location
 npx vitest run frontend/test/pages/ChainsPage.test.tsx --no-color
 ```
 
@@ -974,6 +1067,7 @@ Expected:
 - Modify: `frontend/src/components/layout/TopBar.tsx`
 - Modify: `frontend/test/pages/GrantsPage.test.tsx`
 - Modify: `frontend/test/app/App.test.tsx`
+- Modify: `frontend/test/app/nav-config.test.ts`
 
 - [ ] **Step 1: Add failing naming tests**
 
@@ -982,6 +1076,8 @@ Assert:
 ```ts
 expect(screen.getByText("临时放行")).toBeInTheDocument();
 expect(screen.queryByText("链路授权")).not.toBeInTheDocument();
+expect(screen.getByText("暂无临时放行")).toBeInTheDocument();
+expect(screen.getByText(/审批通过后/)).toBeInTheDocument();
 ```
 
 - [ ] **Step 2: Keep route compatibility**
@@ -992,7 +1088,7 @@ Keep `/webview/grants` route for this pass. Change user-facing labels only:
 - page title: `临时放行`
 - table title: `临时放行列表`
 
-- [ ] **Step 3: Update copy**
+- [ ] **Step 3: Update copy and empty state**
 
 Use this page description:
 
@@ -1000,12 +1096,24 @@ Use this page description:
 展示审批通过后在当前链路内短期生效的放行范围、失效时间和撤销原因。
 ```
 
+Use this empty state when `/lynx/grants` returns `[]`:
+
+```text
+暂无临时放行
+审批通过后，如果某个操作只在当前链路、当前工具和相同资源范围内短期放行，会出现在这里。审批请求和处理记录请到审批管理查看。
+```
+
+Keep the distinction visible:
+
+- `审批管理`: request and decision.
+- `临时放行`: short-lived effect created by an approval.
+
 - [ ] **Step 4: Run frontend tests**
 
 Run:
 
 ```powershell
-npx vitest run frontend/test/pages/GrantsPage.test.tsx frontend/test/app/App.test.tsx --no-color
+npx vitest run frontend/test/pages/GrantsPage.test.tsx frontend/test/app/App.test.tsx frontend/test/app/nav-config.test.ts --no-color
 ```
 
 Expected:
@@ -1029,6 +1137,15 @@ Add a test that renders at mobile width and asserts:
 ```ts
 expect(container.querySelector(".console-content")).toBeTruthy();
 expect(container.querySelector(".console-shell")).toHaveAttribute("data-mobile-nav", "closed");
+```
+
+Add a browser verification note or Playwright assertion for the real rendered pages:
+
+```ts
+expect(metrics.contentTop).toBeLessThan(160);
+expect(metrics.sidebarHeight).toBeLessThanOrEqual(844);
+expect(metrics.metricCardHeightDesktop).toBeLessThanOrEqual(96);
+expect(metrics.metricCardHeightMobile).toBeLessThanOrEqual(110);
 ```
 
 - [ ] **Step 2: Add mobile nav state**
@@ -1065,14 +1182,29 @@ In `frontend/src/styles/theme.css`, under `@media (max-width: 900px)`, make:
   grid-column: 1;
   min-height: calc(100vh - 48px);
 }
+
+.metric-card,
+.summary-card {
+  min-height: 0;
+  padding: 12px;
+}
 ```
 
-- [ ] **Step 4: Run app test**
+- [ ] **Step 4: Compact advanced-page metric cards**
+
+Adjust the metric/summary card styles used by `ChainsPage` and `GrantsPage` so the rendered card heights target:
+
+- desktop `<= 96px`
+- mobile `<= 110px`
+
+Do this with restrained padding, smaller internal headings, and stable grid tracks. Do not use viewport-scaled font sizes.
+
+- [ ] **Step 5: Run app and page tests**
 
 Run:
 
 ```powershell
-npx vitest run frontend/test/app/App.test.tsx --no-color
+npx vitest run frontend/test/pages/ChainsPage.test.tsx frontend/test/pages/GrantsPage.test.tsx frontend/test/app/App.test.tsx frontend/test/app/nav-config.test.ts --no-color
 ```
 
 Expected:
@@ -1149,7 +1281,7 @@ Expected:
 Run:
 
 ```powershell
-npx vitest run frontend/test/pages/ChainsPage.test.tsx frontend/test/pages/GrantsPage.test.tsx frontend/test/app/App.test.tsx --no-color
+npx vitest run frontend/test/pages/ChainsPage.test.tsx frontend/test/pages/GrantsPage.test.tsx frontend/test/app/App.test.tsx frontend/test/app/nav-config.test.ts --no-color
 ```
 
 Expected:
@@ -1206,6 +1338,10 @@ StatusCode 200
 Run:
 
 ```powershell
+Invoke-RestMethod -UseBasicParsing http://127.0.0.1:4173/lynx/chains -TimeoutSec 5 | ConvertTo-Json -Depth 8
+Invoke-RestMethod -UseBasicParsing http://127.0.0.1:4173/lynx/grants -TimeoutSec 5 | ConvertTo-Json -Depth 8
+Invoke-RestMethod -UseBasicParsing http://127.0.0.1:4173/lynx/approvals -TimeoutSec 5 | ConvertTo-Json -Depth 8
+
 Invoke-RestMethod -Uri http://127.0.0.1:18789/lynx/chains | ConvertTo-Json -Depth 8
 Invoke-RestMethod -Uri http://127.0.0.1:18789/lynx/grants | ConvertTo-Json -Depth 8
 Invoke-RestMethod -Uri http://127.0.0.1:18789/lynx/approvals | ConvertTo-Json -Depth 8
@@ -1227,7 +1363,8 @@ Use Playwright or the available Chrome CDP fallback to capture:
 
 Expected:
 
-- Mobile content appears in the first viewport.
+- Mobile content appears in the first viewport; at `390x844`, content starts above `y=160`.
+- Advanced metric cards are compact: desktop card height `<= 96px`, mobile card height `<= 110px`.
 - `多轮链路` shows covered prompts.
 - `/webview/grants` user-facing text reads `临时放行`.
 
@@ -1281,4 +1418,3 @@ Expected:
 - [ ] There are no placeholder steps.
 - [ ] Tests are focused before implementation changes.
 - [ ] Runtime proof requires real OpenClaw path before claiming behavior changed.
-

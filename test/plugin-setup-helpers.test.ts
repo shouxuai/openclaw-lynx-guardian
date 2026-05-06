@@ -23,33 +23,33 @@ describe("plugin setup helpers", () => {
     });
   });
 
-  it("adds feishu approval guidance only once", () => {
+  it("does not append duplicate approval command guidance after a native approval surface appears", () => {
     const baseText = [
       "[Lynx Guardian] exec 已进入原生审批窗口。",
       "/approve approval-1 allow-once|deny",
     ].join("\n");
     const withGuidance = appendFeishuNativeApprovalGuidance(baseText);
 
-    expect(withGuidance).toContain("飞书审批提示：");
-    expect(withGuidance).toContain("请在 Feishu 会话回复或webchat中进行审批。");
-    expect(appendFeishuNativeApprovalGuidance(withGuidance)).toBe(withGuidance);
+    expect(withGuidance).toBe(baseText);
+    expect(withGuidance).not.toContain("确认放行本次操作");
   });
 
-  it("appends a separated local log webview note to native approval prompts", () => {
+  it("builds native approval context text without manual approve commands", () => {
     const prompt = buildFeishuNativeToolApprovalReplyPrompt({
       approvalId: "approval-1",
       module: "M3:over_agency",
       riskLevel: "L3",
       toolName: "exec",
       timeoutMs: 30_000,
-      confirmationPhrase: "确认放行本次操作",
     });
 
+    expect(prompt).toContain("[Lynx Guardian]");
+    expect(prompt).toContain("exec");
+    expect(prompt).not.toContain("/approve");
+    expect(prompt).not.toContain("确认放行本次操作");
     expect(prompt).toContain("\n---\n");
     expect(prompt).toContain("[^lynx-log]");
     expect(prompt).toContain("http://127.0.0.1:18789/webview");
-    expect(prompt).toContain("本地日志页面");
-    expect(prompt).toContain("工具调用");
   });
 
   it("summarizes protected targets from file paths, commands, and fallback params", () => {

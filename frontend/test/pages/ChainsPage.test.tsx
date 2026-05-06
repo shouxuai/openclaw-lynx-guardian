@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChainsPage } from "../../src/pages/ChainsPage";
@@ -26,6 +32,23 @@ function createChain(chainId = "chain-1") {
     recentEvasions: ["approval-bypass"],
     activeGrantId: "grant-1",
     pendingApproval: "APR-002",
+    coveredPrompts: [
+      {
+        qaRecordId: "qa-1",
+        userPromptExcerpt: "first prompt",
+        riskLevel: "L2",
+        startedAtMs: 1,
+        status: "completed",
+      },
+      {
+        qaRecordId: "qa-2",
+        userPromptExcerpt: "second prompt",
+        riskLevel: "L3",
+        startedAtMs: 2,
+        status: "completed",
+      },
+    ],
+    promptCount: 2,
   };
 }
 
@@ -42,6 +65,8 @@ function createSparseChain(chainId = "chain-sparse") {
     recentEvasions: null,
     activeGrantId: "",
     pendingApproval: "",
+    coveredPrompts: null,
+    promptCount: 0,
   };
 }
 
@@ -61,21 +86,33 @@ describe("ChainsPage", () => {
   it("uses filters and keeps chain internals in details", async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse({ items: [createChain()] }))
-      .mockResolvedValueOnce(createJsonResponse({ items: [createChain("chain-filtered")] }));
+      .mockResolvedValueOnce(
+        createJsonResponse({ items: [createChain("chain-filtered")] }),
+      );
 
     render(<ChainsPage />);
 
     await screen.findByText("chain-1");
+    expect(
+      screen.getByText("覆盖的输入词：first prompt；second prompt"),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("关键词")).toBeInTheDocument();
     expect(screen.getByLabelText("渠道")).toBeInTheDocument();
     expect(screen.queryByText("Taint")).not.toBeInTheDocument();
     expect(screen.queryByText("Active Grant")).not.toBeInTheDocument();
     expect(screen.queryByText("Pending Approval")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "查看 chain-1 链路详情" }));
-    expect(await screen.findByRole("dialog", { name: "链路详情" })).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看 chain-1 链路详情" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "链路详情" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("secret-read")).toBeInTheDocument();
     expect(screen.getByText("grant-1")).toBeInTheDocument();
+    expect(screen.getByText("覆盖的输入词")).toBeInTheDocument();
+    expect(screen.getByText("first prompt")).toBeInTheDocument();
+    expect(screen.getByText("second prompt")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "关闭详情" }));
     fireEvent.change(screen.getByLabelText("关键词"), {
@@ -88,11 +125,15 @@ describe("ChainsPage", () => {
 
     await screen.findByText("chain-filtered");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/chains?q=filtered&channelProfile=webchat");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "/lynx/chains?q=filtered&channelProfile=webchat",
+    );
   });
 
   it("renders chain summaries when backend returns null signal arrays", async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse({ items: [createSparseChain()] }));
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse({ items: [createSparseChain()] }),
+    );
 
     render(<ChainsPage />);
 

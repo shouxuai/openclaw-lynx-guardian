@@ -92,9 +92,9 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
       },
       {
         id: "grants",
-        label: "链路授权",
+        label: "临时放行",
         path: ROUTE_PATHS.grants,
-        pageTitle: "链路授权",
+        pageTitle: "临时放行",
       },
     ],
   },
@@ -130,4 +130,6 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-export const PRIMARY_NAV_ITEMS: NavItem[] = PRIMARY_NAV_GROUPS.flatMap((group) => group.items);
+export const PRIMARY_NAV_ITEMS: NavItem[] = PRIMARY_NAV_GROUPS.flatMap(
+  (group) => group.items,
+);
