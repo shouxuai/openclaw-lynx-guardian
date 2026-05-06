@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -146,6 +148,35 @@ func TestLynxCheckTaskDeliveryLifecycle(t *testing.T) {
 	assertLynxField(t, detail, "deliveryChannel", "feishu")
 	assertLynxField(t, detail, "deliveryTarget", "chat-1")
 	assertLynxField(t, detail, "deliveryStatus", "sent")
+}
+
+func TestLynxCheckTaskDetailReadsReportMarkdownFromCheckRunArtifact(t *testing.T) {
+	router := setupLynxCheckTaskRouter(t)
+	reportDir := filepath.Join(t.TempDir(), ".openclaw", "lynx", "check-runs")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatalf("mkdir report dir: %v", err)
+	}
+	reportMarkdown := "# OpenClaw 检测报告\n\n## 一、执行摘要\n历史检测报告正文。"
+	reportPath := filepath.Join(reportDir, "artifact-1.report.md")
+	if err := os.WriteFile(reportPath, []byte(reportMarkdown), 0o644); err != nil {
+		t.Fatalf("write report artifact: %v", err)
+	}
+
+	postLynxJSON(t, router, http.MethodPost, "/lynx/internal/v1/tasks/lynx-check/start", map[string]any{
+		"requestId": "artifact-1",
+		"trigger":   "manual",
+		"source":    "lynx_command",
+	})
+	postLynxJSON(t, router, http.MethodPost, "/lynx/internal/v1/tasks/lynx-check/artifact-1/event", map[string]any{
+		"status": "completed",
+		"evidenceBundle": map[string]any{
+			"reportPath": reportPath,
+		},
+	})
+
+	detail := getLynxJSON(t, router, "/lynx/lynx-checks/artifact-1")
+	assertLynxField(t, detail, "reportMarkdown", reportMarkdown)
+	assertLynxField(t, detail, "reportPath", reportPath)
 }
 
 func setupLynxCheckTaskRouter(t *testing.T) *gin.Engine {

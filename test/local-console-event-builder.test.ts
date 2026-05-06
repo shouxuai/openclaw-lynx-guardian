@@ -198,6 +198,7 @@ describe("createLocalConsoleEventBuilder", () => {
 
   it("can attach a completed lynx-check snapshot to agent_end", () => {
     const builder = createLocalConsoleEventBuilder();
+    const reportMarkdown = "# OpenClaw 检测报告\n\n## 一、执行摘要\n完整报告正文。";
 
     const check = findLynxCheck(builder.agentEnd({
       occurredAtMs: 1_776_945_610_000,
@@ -216,6 +217,7 @@ describe("createLocalConsoleEventBuilder", () => {
         sendSucceeded: true,
         transport: "message_sending",
         reportPath: "C:/tmp/report.md",
+        reportMarkdown,
         createdAtMs: 1_776_945_600_000,
         completedAtMs: 1_776_945_610_000,
       },
@@ -224,6 +226,7 @@ describe("createLocalConsoleEventBuilder", () => {
     expect(check.data.status).toBe("completed");
     expect(check.data.sendAttempted).toBe(true);
     expect(check.data.sendSucceeded).toBe(true);
+    expect(check.data.reportMarkdown).toBe(reportMarkdown);
     expect(check.data.completedAtMs).toBe(1_776_945_610_000);
   });
 

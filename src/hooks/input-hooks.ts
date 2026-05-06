@@ -910,6 +910,7 @@ export function registerInputHooks(api: OpenClawPluginApi, runtime: LynxHookRunt
           sendSucceeded: false,
           transport: "precomputed",
           reportPath,
+          reportMarkdown,
           createdAtMs: runIntent.createdAtMs,
         };
 

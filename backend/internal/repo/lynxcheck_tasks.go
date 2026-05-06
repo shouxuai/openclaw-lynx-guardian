@@ -5,11 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 	"github.com/openclaw/lynx-guardian/backend/internal/service"
 )
+
+const maxLynxCheckReportMarkdownBytes = 1_000_000
 
 type LynxCheckTaskListQuery struct {
 	Q          *string
@@ -214,6 +219,10 @@ func scanLynxCheckTask(scanner lynxCheckTaskScanner) (api.LynxCheckTask, error) 
 	if task.EvidenceBundle == nil {
 		task.EvidenceBundle = map[string]any{}
 	}
+	task.ReportPath = firstStringValue("reportPath", task.EvidenceBundle, task.Facts)
+	if task.ReportMarkdown == "" {
+		task.ReportMarkdown = readLynxCheckReportMarkdown(task.ReportPath)
+	}
 	task.PreferredTargetKind = taskPreferredTargetKind(task.Trigger, task.TargetKey)
 	task.ErrorMessage = task.DeliveryError
 	task.Transport = task.DeliveryChannel
@@ -222,6 +231,55 @@ func scanLynxCheckTask(scanner lynxCheckTaskScanner) (api.LynxCheckTask, error) 
 	task.CreatedAtMs = parseRFC3339Millis(task.CreatedAt)
 	task.CompletedAtMs = parseRFC3339Millis(task.CompletedAt)
 	return task, nil
+}
+
+func firstStringValue(key string, maps ...map[string]any) string {
+	for _, item := range maps {
+		value, ok := item[key]
+		if !ok {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if trimmed := strings.TrimSpace(text); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func readLynxCheckReportMarkdown(reportPath string) string {
+	trimmed := strings.TrimSpace(reportPath)
+	if trimmed == "" || !isAllowedLynxCheckReportPath(trimmed) {
+		return ""
+	}
+
+	info, err := os.Stat(trimmed)
+	if err != nil || info.IsDir() || info.Size() <= 0 || info.Size() > maxLynxCheckReportMarkdownBytes {
+		return ""
+	}
+
+	content, err := os.ReadFile(trimmed)
+	if err != nil {
+		return ""
+	}
+	return string(content)
+}
+
+func isAllowedLynxCheckReportPath(reportPath string) bool {
+	cleaned := filepath.Clean(reportPath)
+	if absolute, err := filepath.Abs(cleaned); err == nil {
+		cleaned = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		cleaned = resolved
+	}
+
+	normalized := strings.ToLower(strings.ReplaceAll(filepath.Clean(cleaned), "\\", "/"))
+	return strings.HasSuffix(normalized, ".report.md") &&
+		strings.Contains(normalized, "/.openclaw/lynx/check-runs/")
 }
 
 func appendTimeRange(filter *Filter, field string, fromMs *int64, toMs *int64) {

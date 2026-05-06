@@ -1321,6 +1321,7 @@ export function buildLocalConsoleLynxCheckSnapshot(
   intent: LynxCheckRunIntent,
   result: LynxCheckRunResult,
 ): LynxCheckSnapshotInput {
+  const reportMarkdown = readLynxCheckReportMarkdown(result.reportPath);
   return {
     requestId: intent.requestId,
     source: intent.source,
@@ -1335,6 +1336,7 @@ export function buildLocalConsoleLynxCheckSnapshot(
     sendSucceeded: result.sendSucceeded,
     transport: result.transport,
     reportPath: result.reportPath,
+    reportMarkdown,
     errorMessage: result.errorMessage,
     deliveryAttemptsJson: result.deliveryAttempts?.map((attempt) => ({ ...attempt })),
     createdAtMs: intent.createdAtMs,
@@ -1342,6 +1344,30 @@ export function buildLocalConsoleLynxCheckSnapshot(
       ? result.completedAtMs
       : undefined,
   };
+}
+
+const LYNX_CHECK_REPORT_MARKDOWN_MAX_CHARS = 1_000_000;
+
+function readLynxCheckReportMarkdown(reportPath: string | undefined): string | undefined {
+  const trimmed = reportPath?.trim();
+  if (!trimmed || !isAllowedLynxCheckReportPath(trimmed) || !existsSync(trimmed)) {
+    return undefined;
+  }
+
+  try {
+    const content = readFileSync(trimmed, "utf8");
+    return content.length > LYNX_CHECK_REPORT_MARKDOWN_MAX_CHARS
+      ? content.slice(0, LYNX_CHECK_REPORT_MARKDOWN_MAX_CHARS)
+      : content;
+  } catch {
+    return undefined;
+  }
+}
+
+function isAllowedLynxCheckReportPath(reportPath: string): boolean {
+  const normalized = resolve(reportPath).replace(/\\/g, "/").toLowerCase();
+  return basename(normalized).endsWith(".report.md")
+    && normalized.includes("/.openclaw/lynx/check-runs/");
 }
 
 const DEFAULT_LOCAL_CONSOLE_WEBVIEW_URL = "http://127.0.0.1:18789/webview";

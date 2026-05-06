@@ -88,6 +88,7 @@ export interface LynxCheckSnapshotInput {
   sendSucceeded?: boolean;
   transport?: string;
   reportPath?: string;
+  reportMarkdown?: string;
   errorMessage?: string;
   deliveryAttemptsJson?: Array<Record<string, unknown>>;
   createdAtMs: number;
@@ -578,6 +579,7 @@ function createLynxCheckUpsert(input: LynxCheckSnapshotInput, fallback?: BaseHoo
       sendSucceeded: input.sendSucceeded,
       transport: input.transport,
       reportPath: input.reportPath,
+      reportMarkdown: input.reportMarkdown,
       errorMessage: truncateText(input.errorMessage, STORED_EXCERPT_MAX_CHARS),
       deliveryAttemptsJson: input.deliveryAttemptsJson,
       createdAtMs: input.createdAtMs,
