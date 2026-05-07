@@ -99,6 +99,29 @@ func (r *SecurityEventsRepository) ListForQARecord(qaRecordID string) ([]map[str
 	return out, nil
 }
 
+func (r *SecurityEventsRepository) GetSummary(query SecurityEventListQuery) (map[string]any, error) {
+	events, err := r.buildEvents(query)
+	if err != nil {
+		return nil, err
+	}
+	riskCounts := baseCountMap("L0", "L1", "L2", "L3", "L4")
+	eventKindCounts := baseCountMap("input", "tool", "output", "install", "process")
+	enforcementActionCounts := baseCountMap("allow", "logOnly", "warn", "redact", "requireApproval", "block")
+
+	for _, event := range events {
+		riskCounts[normalizeRiskLevel(event.RiskLevel)]++
+		eventKindCounts[firstNonEmpty(event.EventKind, "unknown")]++
+		enforcementActionCounts[firstNonEmpty(event.EnforcementAction, "allow")]++
+	}
+
+	return map[string]any{
+		"total":                   len(events),
+		"riskCounts":              riskCounts,
+		"eventKindCounts":         eventKindCounts,
+		"enforcementActionCounts": enforcementActionCounts,
+	}, nil
+}
+
 func (r *SecurityEventsRepository) GetByID(eventID string) (map[string]any, error) {
 	events, err := r.buildEvents(SecurityEventListQuery{})
 	if err != nil {

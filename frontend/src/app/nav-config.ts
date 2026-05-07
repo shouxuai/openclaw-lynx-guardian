@@ -92,9 +92,9 @@ export const PRIMARY_NAV_GROUPS: NavGroup[] = [
       },
       {
         id: "grants",
-        label: "临时放行",
+        label: "放行记录",
         path: ROUTE_PATHS.grants,
-        pageTitle: "临时放行",
+        pageTitle: "放行记录",
       },
     ],
   },

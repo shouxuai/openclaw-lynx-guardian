@@ -13,6 +13,8 @@ type QARecordsListQuery struct {
 	SessionKey *string
 	RunID      *string
 	Q          *string
+	FromMs     *int64
+	ToMs       *int64
 	RiskLevel  []string
 	Status     *string
 	PageNum    *int
@@ -59,19 +61,7 @@ func NewQARecordsRepository(db *sql.DB) *QARecordsRepository {
 
 func (r *QARecordsRepository) List(query QARecordsListQuery) (service.PageResponse[map[string]any], error) {
 	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
-	filter := &Filter{}
-	filter.AppendEquals("session_key", query.SessionKey)
-	filter.AppendEquals("run_id", query.RunID)
-	filter.AppendEquals("status", query.Status)
-	filter.AppendRiskLevelIn("risk_level", query.RiskLevel)
-	filter.AppendTextSearch([]string{
-		"qa_record_id",
-		"session_key",
-		"run_id",
-		"agent_id",
-		"user_prompt_excerpt",
-		"final_answer_excerpt",
-	}, query.Q)
+	filter := qaRecordsFilter(query)
 
 	total, err := countRows(r.db, "qa_records", filter)
 	if err != nil {
@@ -103,6 +93,70 @@ func (r *QARecordsRepository) List(query QARecordsListQuery) (service.PageRespon
 	}
 
 	return service.BuildPageResponse(items, total, page), nil
+}
+
+func (r *QARecordsRepository) GetSummary(query QARecordsListQuery) (map[string]any, error) {
+	filter := qaRecordsFilter(query)
+	rows, err := r.db.Query(qaRecordSelect+"\n"+filter.Where(), filter.Params()...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var total int64
+	var toolCallCount int64
+	var approvalCount int64
+	var detectionCount int64
+	var totalTokens int64
+	riskCounts := baseCountMap("L0", "L1", "L2", "L3", "L4")
+	statusCounts := map[string]int64{}
+
+	for rows.Next() {
+		row, err := scanQARecordRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		total++
+		toolCallCount += row.ToolCallCount
+		approvalCount += row.ApprovalCount
+		detectionCount += row.DetectionCount
+		totalTokens += row.TotalTokens
+		riskCounts[normalizeRiskLevel(nullableStringValue(row.RiskLevel))]++
+		if row.Status != "" {
+			statusCounts[row.Status]++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"total":          total,
+		"toolCallCount":  toolCallCount,
+		"approvalCount":  approvalCount,
+		"detectionCount": detectionCount,
+		"totalTokens":    totalTokens,
+		"riskCounts":     riskCounts,
+		"statusCounts":   statusCounts,
+	}, nil
+}
+
+func qaRecordsFilter(query QARecordsListQuery) *Filter {
+	filter := &Filter{}
+	filter.AppendEquals("session_key", query.SessionKey)
+	filter.AppendEquals("run_id", query.RunID)
+	filter.AppendEquals("status", query.Status)
+	filter.AppendRange("started_at", query.FromMs, query.ToMs)
+	filter.AppendRiskLevelIn("risk_level", query.RiskLevel)
+	filter.AppendTextSearch([]string{
+		"qa_record_id",
+		"session_key",
+		"run_id",
+		"agent_id",
+		"user_prompt_excerpt",
+		"final_answer_excerpt",
+	}, query.Q)
+	return filter
 }
 
 func (r *QARecordsRepository) GetDetail(qaRecordID string) (map[string]any, error) {

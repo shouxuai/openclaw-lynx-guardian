@@ -4,12 +4,14 @@ import type {
   QaChainNodeDto,
   QaRecordDetailDto,
   QaRecordListItemDto,
+  QaRecordSummaryDto,
   SecurityEventKind,
   SecurityEventListItemDto,
 } from "@lynx/local-console-shared";
-import { Button, Input, Select } from "antd";
+import { Button, DatePicker, Input, Select } from "antd";
+import type { Dayjs } from "dayjs";
 
-import { getQaRecordDetail, listQaRecords, type QaRecordListQuery } from "../api/qa-records";
+import { getQaRecordDetail, getQaRecordSummary, listQaRecords, type QaRecordListQuery } from "../api/qa-records";
 import { ModalDialog } from "../components/feedback/ModalDialog";
 import { SideDrawer } from "../components/feedback/SideDrawer";
 import { StatusBadge } from "../components/feedback/StatusBadge";
@@ -40,16 +42,37 @@ const SECURITY_EVENT_KIND_LABELS: Record<SecurityEventKind, string> = {
   process: "过程",
 };
 
+const { RangePicker } = DatePicker;
+type DateRangeValue = [Dayjs | null, Dayjs | null] | null;
+
 interface QaRecordFilters {
   q: string;
   riskLevel: string;
   status: string;
+  dateRange: DateRangeValue;
 }
 
 const EMPTY_FILTERS: QaRecordFilters = {
   q: "",
   riskLevel: "",
   status: "",
+  dateRange: null,
+};
+
+const EMPTY_QA_RECORD_SUMMARY: QaRecordSummaryDto = {
+  total: 0,
+  toolCallCount: 0,
+  approvalCount: 0,
+  detectionCount: 0,
+  totalTokens: 0,
+  riskCounts: {
+    L0: 0,
+    L1: 0,
+    L2: 0,
+    L3: 0,
+    L4: 0,
+  },
+  statusCounts: {},
 };
 
 const STATUS_OPTIONS = [
@@ -70,11 +93,21 @@ const LOCAL_CONSOLE_CHARS_PER_TOKEN_ESTIMATE = 4;
 const NON_LATIN_RE = /[\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7AF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/gu;
 const CJK_SURROGATE_HIGH_RE = /[\uD840-\uD87E][\uDC00-\uDFFF]/g;
 
+export function buildQaRecordDateRangeQuery(value: DateRangeValue): Pick<QaRecordListQuery, "fromMs" | "toMs"> {
+  const [fromDate, toDate] = value ?? [];
+
+  return {
+    fromMs: fromDate?.startOf("day").valueOf(),
+    toMs: toDate?.endOf("day").valueOf(),
+  };
+}
+
 function buildQaRecordQuery(filters: QaRecordFilters): Omit<QaRecordListQuery, "pageNum" | "pageSize"> {
   return {
     q: filters.q.trim() || undefined,
     riskLevel: filters.riskLevel ? [filters.riskLevel as NonNullable<QaRecordListQuery["riskLevel"]>[number]] : undefined,
     status: filters.status || undefined,
+    ...buildQaRecordDateRangeQuery(filters.dateRange),
   };
 }
 
@@ -298,6 +331,45 @@ export function QaRecordsPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [auditEventsOpen, setAuditEventsOpen] = useState(false);
+  const [summary, setSummary] = useState<QaRecordSummaryDto>(EMPTY_QA_RECORD_SUMMARY);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadSummary() {
+      startTransition(() => {
+        setSummaryLoading(true);
+      });
+
+      try {
+        const nextSummary = await getQaRecordSummary(appliedQuery);
+        if (!active) {
+          return;
+        }
+        startTransition(() => {
+          setSummary(nextSummary);
+          setSummaryError(null);
+          setSummaryLoading(false);
+        });
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+        startTransition(() => {
+          setSummary(EMPTY_QA_RECORD_SUMMARY);
+          setSummaryError(loadError instanceof Error ? loadError.message : "概览加载失败");
+          setSummaryLoading(false);
+        });
+      }
+    }
+
+    void loadSummary();
+    return () => {
+      active = false;
+    };
+  }, [appliedQuery]);
 
   useEffect(() => {
     if (!selectedRecordId) {
@@ -347,13 +419,12 @@ export function QaRecordsPage() {
     [items, selectedRecordId],
   );
   const displayNodes = detail?.displayChainNodes ?? [];
-  const totalToolCalls = detail?.relatedToolCalls.length ?? selectedRecord?.toolCallCount ?? 0;
-  const totalApprovals = detail?.relatedApprovals.length ?? selectedRecord?.approvalCount ?? 0;
-  const totalSignals = (detail?.relatedEvents.length ?? 0) + (detail?.relatedDetections.length ?? selectedRecord?.detectionCount ?? 0);
   const selectedTokenDisplay = resolveTokenDisplay(selectedRecord, detail);
-  const headerDescription = resolveHeaderDescription(loading, error, detailError);
-  const headerTone = error || detailError ? "danger" : loading ? "info" : "success";
-  const headerLabel = error || detailError ? "请求失败" : loading ? "加载中" : "实时数据";
+  const combinedError = error ?? summaryError;
+  const isLoading = loading || summaryLoading;
+  const headerDescription = resolveHeaderDescription(isLoading, combinedError, detailError);
+  const headerTone = combinedError || detailError ? "danger" : isLoading ? "info" : "success";
+  const headerLabel = combinedError || detailError ? "请求失败" : isLoading ? "加载中" : "实时数据";
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -402,24 +473,24 @@ export function QaRecordsPage() {
 
       <section className="metric-grid metric-grid--compact">
         <article className="metric-card">
-          <p className="metric-card__label">当前页问答</p>
-          <strong className="metric-card__value">{formatInteger(items.length)}</strong>
-          <p className="metric-card__note">按开始时间倒序</p>
+          <p className="metric-card__label">问答总数</p>
+          <strong className="metric-card__value">{formatInteger(summary.total)}</strong>
+          <p className="metric-card__note">当前筛选范围</p>
         </article>
         <article className="metric-card">
           <p className="metric-card__label">工具次数</p>
-          <strong className="metric-card__value">{formatInteger(totalToolCalls)}</strong>
-          <p className="metric-card__note">当前选中问答</p>
+          <strong className="metric-card__value">{formatInteger(summary.toolCallCount)}</strong>
+          <p className="metric-card__note">当前筛选范围</p>
         </article>
         <article className="metric-card">
           <p className="metric-card__label">审批请求</p>
-          <strong className="metric-card__value">{formatInteger(totalApprovals)}</strong>
-          <p className="metric-card__note">当前选中问答</p>
+          <strong className="metric-card__value">{formatInteger(summary.approvalCount)}</strong>
+          <p className="metric-card__note">当前筛选范围</p>
         </article>
         <article className="metric-card">
           <p className="metric-card__label">安全信号</p>
-          <strong className="metric-card__value">{formatInteger(totalSignals)}</strong>
-          <p className="metric-card__note">检测与审计事件</p>
+          <strong className="metric-card__value">{formatInteger(summary.detectionCount)}</strong>
+          <p className="metric-card__note">当前筛选范围</p>
         </article>
       </section>
 
@@ -445,6 +516,17 @@ export function QaRecordsPage() {
               placeholder="全部级别"
               value={draftFilters.riskLevel || undefined}
               onChange={(value) => setDraftFilters((current) => ({ ...current, riskLevel: value ?? "" }))}
+            />
+          </label>
+          <label className="filter-field filter-field--date-range">
+            <span>时间范围</span>
+            <RangePicker
+              allowClear
+              aria-label="时间范围"
+              className="audit-date-range-picker"
+              placeholder={["开始日期", "结束日期"]}
+              value={draftFilters.dateRange}
+              onChange={(dateRange) => setDraftFilters((current) => ({ ...current, dateRange }))}
             />
           </label>
           <label className="filter-field filter-field--search">

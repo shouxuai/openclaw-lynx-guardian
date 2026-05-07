@@ -2,6 +2,7 @@ import type {
   CommonListQuery,
   QaRecordDetailDto,
   QaRecordListResponse,
+  QaRecordSummaryDto,
 } from "@lynx/local-console-shared";
 
 import { buildQueryString, fetchJson } from "./client";
@@ -12,6 +13,10 @@ export interface QaRecordListQuery extends CommonListQuery {
 
 export function listQaRecords(query: QaRecordListQuery = {}): Promise<QaRecordListResponse> {
   return fetchJson<QaRecordListResponse>(`/qa-records${buildQueryString(query)}`);
+}
+
+export function getQaRecordSummary(query: QaRecordListQuery = {}): Promise<QaRecordSummaryDto> {
+  return fetchJson<QaRecordSummaryDto>(`/qa-records/summary${buildQueryString(query)}`);
 }
 
 export function getQaRecordDetail(qaRecordId: string): Promise<QaRecordDetailDto> {

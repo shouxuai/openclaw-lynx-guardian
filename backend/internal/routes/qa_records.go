@@ -15,6 +15,8 @@ func RegisterQARecords(router gin.IRoutes, repository *repo.QARecordsRepository)
 			SessionKey: httpserver.ReadString(values, "sessionKey"),
 			RunID:      httpserver.ReadString(values, "runId"),
 			Q:          httpserver.ReadString(values, "q"),
+			FromMs:     httpserver.ReadInt64(values, "fromMs"),
+			ToMs:       httpserver.ReadInt64(values, "toMs"),
 			RiskLevel:  httpserver.ReadStringSlice(values, "riskLevel"),
 			Status:     httpserver.ReadString(values, "status"),
 			PageNum:    httpserver.ReadInt(values, "pageNum"),
@@ -26,6 +28,24 @@ func RegisterQARecords(router gin.IRoutes, repository *repo.QARecordsRepository)
 			return
 		}
 		c.JSON(http.StatusOK, page)
+	})
+
+	router.GET("/qa-records/summary", func(c *gin.Context) {
+		values := c.Request.URL.Query()
+		result, err := repository.GetSummary(repo.QARecordsListQuery{
+			SessionKey: httpserver.ReadString(values, "sessionKey"),
+			RunID:      httpserver.ReadString(values, "runId"),
+			Q:          httpserver.ReadString(values, "q"),
+			FromMs:     httpserver.ReadInt64(values, "fromMs"),
+			ToMs:       httpserver.ReadInt64(values, "toMs"),
+			RiskLevel:  httpserver.ReadStringSlice(values, "riskLevel"),
+			Status:     httpserver.ReadString(values, "status"),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
 	})
 
 	router.GET("/qa-records/:qaRecordId", func(c *gin.Context) {

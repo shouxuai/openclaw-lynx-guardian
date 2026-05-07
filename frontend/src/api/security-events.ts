@@ -3,6 +3,7 @@ import type {
   SecurityEventDetailDto,
   SecurityEventKind,
   SecurityEventListResponse,
+  SecurityEventSummaryDto,
 } from "@lynx/local-console-shared";
 
 import { buildQueryString, fetchJson } from "./client";
@@ -13,6 +14,10 @@ export interface SecurityEventListQuery extends CommonListQuery {
 
 export function listSecurityEvents(query: SecurityEventListQuery = {}): Promise<SecurityEventListResponse> {
   return fetchJson<SecurityEventListResponse>(`/security-events${buildQueryString(query)}`);
+}
+
+export function getSecurityEventSummary(query: SecurityEventListQuery = {}): Promise<SecurityEventSummaryDto> {
+  return fetchJson<SecurityEventSummaryDto>(`/security-events/summary${buildQueryString(query)}`);
 }
 
 export function getSecurityEventDetail(eventId: string): Promise<SecurityEventDetailDto> {

@@ -81,7 +81,7 @@ export function GrantsPage() {
           setError(
             loadError instanceof Error
               ? loadError.message
-              : "临时放行记录加载失败",
+              : "放行记录加载失败",
           );
           setLoading(false);
         });
@@ -112,29 +112,29 @@ export function GrantsPage() {
   const revokedCount = items.length - activeCount;
   const showEmptyExplanation = !loading && !error && items.length === 0;
   const statusDescription = error
-    ? `临时放行记录加载失败：${error}`
+    ? `放行记录加载失败：${error}`
     : loading
-      ? "正在加载临时放行记录"
-      : "展示审批通过后在当前链路内短期生效的放行范围、失效时间和撤销原因。";
+      ? "正在加载放行记录"
+      : "审批通过后，记录后续同一链路里命中已授权范围并被默认放行的 tool 调用。";
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="临时放行"
+        title="放行记录"
         description={statusDescription}
-        eyebrow="审批后的短期放行效果"
+        eyebrow="审批后的工具放行流水"
       />
 
-      <section className="metric-grid metric-grid--compact">
+      <section className="metric-grid metric-grid--compact metric-grid--narrow">
         <article className="metric-card">
-          <p className="metric-card__label">有效放行</p>
+          <p className="metric-card__label">已放行调用</p>
           <strong className="metric-card__value">
             {formatInteger(activeCount)}
           </strong>
-          <p className="metric-card__note">当前链路范围</p>
+          <p className="metric-card__note">命中授权范围</p>
         </article>
         <article className="metric-card">
-          <p className="metric-card__label">已撤销</p>
+          <p className="metric-card__label">已撤销/失效</p>
           <strong className="metric-card__value">
             {formatInteger(revokedCount)}
           </strong>
@@ -191,22 +191,25 @@ export function GrantsPage() {
       <section className="table-panel">
         <div className="table-panel__header">
           <div>
-            <h2 className="panel__title">临时放行列表</h2>
+            <h2 className="panel__title">放行记录列表</h2>
             <p className="panel__subtitle">
-              这里展示审批通过后产生的短期放行效果；审批请求和处理记录请到审批管理查看。
+              这里记录审批后被默认放行的后续 tool 调用；审批请求和处理记录请到审批管理查看。
             </p>
           </div>
         </div>
         {showEmptyExplanation ? (
           <div className="empty-explanation">
-            <strong>暂无临时放行</strong>
+            <strong>暂无放行记录</strong>
             <p>
-              审批通过后，如果某个操作只在当前链路、当前工具和相同资源范围内短期放行，会出现在这里。审批请求和处理记录请到审批管理查看。
+              审批通过后，后续同一链路里的 tool 调用如果命中已授权范围，会作为放行记录出现在这里。
+            </p>
+            <p>
+              示例：审批 APR-102 通过 read 工具后，后续 read 同一路径会记录为已放行；换成 exec、换路径或链路结束就不会复用。
             </p>
           </div>
         ) : null}
         <DataTable
-          emptyDescription="暂无临时放行"
+          emptyDescription="暂无放行记录"
           columns={[
             {
               key: "grant",
@@ -298,7 +301,7 @@ export function GrantsPage() {
         open={Boolean(selectedGrant)}
         title="放行详情"
         subtitle={
-          selectedGrant?.grantId ?? "查看临时放行的适用范围和撤销上下文。"
+          selectedGrant?.grantId ?? "查看放行记录的适用范围和撤销上下文。"
         }
         onClose={() => setSelectedGrant(null)}
       >

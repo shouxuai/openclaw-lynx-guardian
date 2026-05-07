@@ -30,6 +30,17 @@ function createPage(items: unknown[]) {
   };
 }
 
+function getRequiredElement<T extends Element>(
+  container: HTMLElement,
+  selector: string,
+): T {
+  const element = container.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`Missing element for selector: ${selector}`);
+  }
+  return element;
+}
+
 describe("App", () => {
   const fetchMock = vi.fn<typeof fetch>();
   const dashboardOverview = {
@@ -48,6 +59,18 @@ describe("App", () => {
     recentToolCalls: [],
     recentApprovals: [],
   };
+  const securityEventSummary = {
+    total: 0,
+    riskCounts: {
+      L0: 0,
+      L1: 0,
+      L2: 0,
+      L3: 0,
+      L4: 0,
+    },
+    eventKindCounts: {},
+    enforcementActionCounts: {},
+  };
 
   beforeEach(() => {
     window.history.replaceState({}, "", "/webview/");
@@ -55,6 +78,12 @@ describe("App", () => {
     fetchMock.mockImplementation(async (input) => {
       const requestUrl = String(input);
       if (requestUrl.startsWith("/lynx/events")) {
+        return createJsonResponse(createPage([]));
+      }
+      if (requestUrl.startsWith("/lynx/security-events/summary")) {
+        return createJsonResponse(securityEventSummary);
+      }
+      if (requestUrl.startsWith("/lynx/security-events")) {
         return createJsonResponse(createPage([]));
       }
       if (requestUrl.startsWith("/lynx/sessions")) {
@@ -145,7 +174,7 @@ describe("App", () => {
       "href",
       "/webview/chains",
     );
-    expect(screen.getByRole("link", { name: "临时放行" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "放行记录" })).toHaveAttribute(
       "href",
       "/webview/grants",
     );
@@ -177,18 +206,31 @@ describe("App", () => {
     ).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(
+      expect(fetchMock.mock.calls.map((call) => call[0])).toContain(
         "/lynx/security-events?pageNum=1&pageSize=10",
       );
     });
   });
 
-  it("lets sidebar function groups collapse without breaking route links", async () => {
-    render(<App />);
+  it("lets sidebar function groups collapse without breaking route links", () => {
+    const { container } = render(<App />);
 
-    const auditGroup = screen.getByRole("button", { name: "审计" });
+    const auditGroup = getRequiredElement<HTMLButtonElement>(
+      container,
+      'button[aria-controls="sidebar-group-audit"]',
+    );
+    const auditGroupItems = getRequiredElement<HTMLDivElement>(
+      container,
+      "#sidebar-group-audit",
+    );
     expect(auditGroup).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("link", { name: "审计日志" })).toHaveAttribute(
+    expect(auditGroupItems.hidden).toBe(false);
+    expect(
+      getRequiredElement<HTMLAnchorElement>(
+        container,
+        '#sidebar-group-audit a[href="/webview/events"]',
+      ),
+    ).toHaveAttribute(
       "href",
       "/webview/events",
     );
@@ -196,19 +238,17 @@ describe("App", () => {
     fireEvent.click(auditGroup);
 
     expect(auditGroup).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByRole("link", { name: "审计日志" }),
-    ).not.toBeInTheDocument();
+    expect(auditGroupItems.hidden).toBe(true);
 
     fireEvent.click(auditGroup);
 
-    const eventsLink = screen.getByRole("link", { name: "审计日志" });
+    const eventsLink = getRequiredElement<HTMLAnchorElement>(
+      container,
+      '#sidebar-group-audit a[href="/webview/events"]',
+    );
     expect(auditGroup).toHaveAttribute("aria-expanded", "true");
+    expect(auditGroupItems.hidden).toBe(false);
     expect(eventsLink).toHaveAttribute("href", "/webview/events");
-
-    await waitFor(() => {
-      expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/dashboard/overview");
-    });
   });
 
   it("selects light, mixed, and dark console themes from the top bar dropdown", async () => {

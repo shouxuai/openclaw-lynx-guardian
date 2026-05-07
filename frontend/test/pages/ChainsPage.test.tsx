@@ -141,4 +141,17 @@ describe("ChainsPage", () => {
     expect(screen.getByText("session-sparse")).toBeInTheDocument();
     expect(screen.getAllByText("暂无").length).toBeGreaterThan(0);
   });
+
+  it("explains empty chains as related multi-turn judgment intervals", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse({ items: [] }));
+
+    const { container } = render(<ChainsPage />);
+
+    expect(
+      await screen.findByText("多轮链路统计什么"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/一段任务区间里多次有关联的输入/)).toBeInTheDocument();
+    expect(screen.getByText(/示例：用户先要求读取配置/)).toBeInTheDocument();
+    expect(container.querySelector(".metric-grid--narrow")).toBeInTheDocument();
+  });
 });

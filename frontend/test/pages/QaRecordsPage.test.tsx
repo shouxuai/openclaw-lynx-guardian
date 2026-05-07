@@ -1,4 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { ConfigProvider } from "antd";
+import zhCN from "antd/locale/zh_CN";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QaRecordsPage } from "../../src/pages/QaRecordsPage";
@@ -102,6 +104,37 @@ function createQaDetail(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createQaSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    total: 12,
+    toolCallCount: 21,
+    approvalCount: 3,
+    detectionCount: 5,
+    totalTokens: 1440,
+    riskCounts: {
+      L0: 4,
+      L1: 0,
+      L2: 6,
+      L3: 1,
+      L4: 1,
+    },
+    statusCounts: {
+      completed: 9,
+      running: 1,
+      failed: 2,
+    },
+    ...overrides,
+  };
+}
+
+function renderQaRecordsPage() {
+  return render(
+    <ConfigProvider locale={zhCN}>
+      <QaRecordsPage />
+    </ConfigProvider>,
+  );
+}
+
 describe("QaRecordsPage", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -111,6 +144,18 @@ describe("QaRecordsPage", () => {
       const url = String(input);
       if (url === "/lynx/qa-records/qa-1") {
         return createJsonResponse(createQaDetail());
+      }
+      if (url === "/lynx/qa-records/summary") {
+        return createJsonResponse(createQaSummary());
+      }
+      if (url === "/lynx/qa-records/summary?q=danger") {
+        return createJsonResponse(createQaSummary({
+          total: 4,
+          toolCallCount: 8,
+          approvalCount: 2,
+          detectionCount: 3,
+          totalTokens: 340,
+        }));
       }
       if (url.includes("q=danger")) {
         return createJsonResponse({
@@ -138,10 +183,23 @@ describe("QaRecordsPage", () => {
   });
 
   it("renders QA records with a standalone time column", async () => {
-    render(<QaRecordsPage />);
+    renderQaRecordsPage();
 
     expect(screen.getByText("问答记录")).toBeInTheDocument();
     expect(await screen.findByText("qa-1")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+        "/lynx/qa-records?pageNum=1&pageSize=20",
+        "/lynx/qa-records/summary",
+      ]));
+    });
+    const totalCard = screen.getByText("问答总数").closest(".metric-card");
+    expect(totalCard).not.toBeNull();
+    expect(within(totalCard!).getByText("12")).toBeInTheDocument();
+    const toolCard = screen.getByText("工具次数").closest(".metric-card");
+    expect(toolCard).not.toBeNull();
+    expect(within(toolCard!).getByText("21")).toBeInTheDocument();
+    expect(screen.getByText("时间范围")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "时间" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "问答 ID" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "用户输入" })).toBeInTheDocument();
@@ -149,7 +207,7 @@ describe("QaRecordsPage", () => {
   });
 
   it("shows the display chain by default when QA detail loads", async () => {
-    render(<QaRecordsPage />);
+    renderQaRecordsPage();
 
     await screen.findByText("qa-1");
     fireEvent.click(screen.getByRole("row", { name: /qa-1.*请运行测试/ }));
@@ -164,7 +222,7 @@ describe("QaRecordsPage", () => {
   });
 
   it("expands a clicked node inside that node card and does not render the old bottom detail panel", async () => {
-    render(<QaRecordsPage />);
+    renderQaRecordsPage();
 
     await screen.findByText("qa-1");
     fireEvent.click(screen.getByRole("row", { name: /qa-1.*请运行测试/ }));
@@ -181,7 +239,7 @@ describe("QaRecordsPage", () => {
   });
 
   it("shows related raw audit events in a secondary dialog", async () => {
-    render(<QaRecordsPage />);
+    renderQaRecordsPage();
 
     await screen.findByText("qa-1");
     fireEvent.click(screen.getByRole("row", { name: /qa-1.*请运行测试/ }));
@@ -195,7 +253,7 @@ describe("QaRecordsPage", () => {
   });
 
   it("applies QA filters", async () => {
-    render(<QaRecordsPage />);
+    renderQaRecordsPage();
 
     await screen.findByText("qa-1");
     fireEvent.change(screen.getByLabelText("关键词"), {
@@ -205,7 +263,13 @@ describe("QaRecordsPage", () => {
 
     await screen.findByText("qa-filtered");
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("q=danger"))).toBe(true);
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+        "/lynx/qa-records/summary?q=danger",
+        "/lynx/qa-records?q=danger&pageNum=1&pageSize=20",
+      ]));
     });
+    const totalCard = screen.getByText("问答总数").closest(".metric-card");
+    expect(totalCard).not.toBeNull();
+    expect(within(totalCard!).getByText("4")).toBeInTheDocument();
   });
 });

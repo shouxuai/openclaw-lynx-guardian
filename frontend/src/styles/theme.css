@@ -3184,3 +3184,13 @@ button.list-item:focus-visible {
     padding: 22px;
   }
 }
+
+.metric-grid--narrow {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 240px));
+}
+
+@media (max-width: 640px) {
+  .metric-grid--narrow {
+    grid-template-columns: 1fr;
+  }
+}

@@ -68,9 +68,10 @@ describe("GrantsPage", () => {
     render(<GrantsPage />);
 
     expect(
-      await screen.findByRole("heading", { name: "临时放行" }),
+      await screen.findByRole("heading", { name: "放行记录" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("链路授权")).not.toBeInTheDocument();
+    expect(screen.queryByText("临时放行")).not.toBeInTheDocument();
     await screen.findByText("grant-1");
     expect(screen.getByLabelText("关键词")).toBeInTheDocument();
     expect(screen.getByLabelText("申请人")).toBeInTheDocument();
@@ -103,20 +104,30 @@ describe("GrantsPage", () => {
     );
   });
 
-  it("explains an empty temporary release list as an approval effect", async () => {
+  it("explains empty release records as follow-up tool calls after approval", async () => {
     fetchMock.mockResolvedValueOnce(createJsonResponse({ items: [] }));
 
-    render(<GrantsPage />);
+    const { container } = render(<GrantsPage />);
 
     expect(
-      await screen.findByRole("heading", { name: "临时放行" }),
+      await screen.findByRole("heading", { name: "放行记录" }),
     ).toBeInTheDocument();
-    expect((await screen.findAllByText("暂无临时放行")).length).toBeGreaterThan(
+    expect(screen.getByText("审批后的工具放行流水")).toBeInTheDocument();
+    expect(container.querySelector(".metric-grid--narrow")).toBeInTheDocument();
+    expect((await screen.findAllByText("暂无放行记录")).length).toBeGreaterThan(
       0,
     );
-    expect(screen.getAllByText(/审批通过后/).length).toBeGreaterThan(0);
     expect(
-      screen.getAllByText(/审批请求和处理记录请到审批管理查看/).length,
-    ).toBeGreaterThan(0);
+      screen.getByText(/审批通过后，后续同一链路里的 tool 调用如果命中已授权范围/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/示例：审批 APR-102 通过 read 工具后/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/后续 read 同一路径会记录为已放行/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/换成 exec、换路径或链路结束就不会复用/),
+    ).toBeInTheDocument();
   });
 });

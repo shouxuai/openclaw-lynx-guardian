@@ -1,6 +1,7 @@
 package backend_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 )
@@ -143,6 +144,51 @@ func TestSecurityEventsTimeIsTopLevelField(t *testing.T) {
 	}
 }
 
+func TestSecurityEventsSummaryAggregatesFilteredRangeBeyondCurrentPage(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	inRangeQA := securityQARecordFixture("qa-security-summary-in")
+	setSecurityQARecordTimes(inRangeQA, parityBaseTimeMs-5000, parityBaseTimeMs-4500)
+	inRangeTool := securityToolCallFixture("qa-security-summary-in", "tool-security-summary-in", "exec", "L4", "block")
+	setSecurityToolCallTimes(inRangeTool, parityBaseTimeMs-4800, parityBaseTimeMs-4700)
+	inRangeDecision := securityAuditEventFixture("event-security-summary-tool", "qa-security-summary-in", "tool-security-summary-in", "tool", "before_tool_call", "tool_call_evaluated", "L4", "block")
+	inRangeDecision["occurredAtMs"] = parityBaseTimeMs - 4800
+
+	outOfRangeQA := securityQARecordFixture("qa-security-summary-out")
+	setSecurityQARecordTimes(outOfRangeQA, parityBaseTimeMs-10000, parityBaseTimeMs-9500)
+
+	seed := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", fixtureBatchWithItems("security-summary-range", []any{
+		inRangeQA,
+		inRangeTool,
+		inRangeDecision,
+		outOfRangeQA,
+	}), true)
+	decodeObjectStatus(t, seed, http.StatusOK)
+
+	query := fmt.Sprintf("?fromMs=%d&toMs=%d", parityBaseTimeMs-6000, parityBaseTimeMs-4000)
+	list := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, "/lynx/security-events"+query+"&pageNum=1&pageSize=1", nil, false), http.StatusOK)
+	expectNumber(t, list, "total", 3)
+	itemsRaw, ok := list["items"].([]any)
+	if !ok || len(itemsRaw) != 1 {
+		t.Fatalf("expected paged list to return one row, got %#v", list["items"])
+	}
+
+	summary := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, "/lynx/security-events/summary"+query, nil, false), http.StatusOK)
+	expectNumber(t, summary, "total", 3)
+	assertCountBucket(t, summary, "riskCounts", "L0", 2)
+	assertCountBucket(t, summary, "riskCounts", "L4", 1)
+	assertCountBucket(t, summary, "eventKindCounts", "input", 1)
+	assertCountBucket(t, summary, "eventKindCounts", "tool", 1)
+	assertCountBucket(t, summary, "eventKindCounts", "output", 1)
+	assertCountBucket(t, summary, "enforcementActionCounts", "allow", 2)
+	assertCountBucket(t, summary, "enforcementActionCounts", "block", 1)
+}
+
 func securityQARecordFixture(qaRecordID string) map[string]any {
 	return map[string]any{
 		"kind":         "qaRecordUpsert",
@@ -169,6 +215,13 @@ func securityQARecordFixture(qaRecordID string) map[string]any {
 			"linkOrigin":         "runtime",
 		},
 	}
+}
+
+func setSecurityQARecordTimes(item map[string]any, startedAtMs int64, completedAtMs int64) {
+	item["occurredAtMs"] = startedAtMs
+	data := item["data"].(map[string]any)
+	data["startedAtMs"] = startedAtMs
+	data["completedAtMs"] = completedAtMs
 }
 
 func securityToolCallFixture(qaRecordID, toolCallID, toolName, riskLevel, enforcementAction string) map[string]any {
@@ -204,6 +257,13 @@ func securityToolCallFixture(qaRecordID, toolCallID, toolName, riskLevel, enforc
 		"occurredAtMs": parityBaseTimeMs - 2200,
 		"data":         data,
 	}
+}
+
+func setSecurityToolCallTimes(item map[string]any, startedAtMs int64, finishedAtMs int64) {
+	item["occurredAtMs"] = startedAtMs
+	data := item["data"].(map[string]any)
+	data["startedAtMs"] = startedAtMs
+	data["finishedAtMs"] = finishedAtMs
 }
 
 func securityAuditEventFixture(eventID, qaRecordID, toolCallID, category, hookName, eventType, riskLevel, enforcementAction string) map[string]any {
@@ -295,4 +355,13 @@ func securityEventItems(t *testing.T, payload map[string]any) []map[string]any {
 		items = append(items, item)
 	}
 	return items
+}
+
+func assertCountBucket(t *testing.T, payload map[string]any, bucketKey string, itemKey string, want int) {
+	t.Helper()
+	raw, ok := payload[bucketKey].(map[string]any)
+	if !ok {
+		t.Fatalf("expected %s object, got %#v", bucketKey, payload[bucketKey])
+	}
+	expectNumber(t, raw, itemKey, want)
 }

@@ -124,7 +124,8 @@ export function ChainsPage() {
     ? `链路记录加载失败：${error}`
     : loading
       ? "正在加载多轮链路"
-      : "高级诊断视图，用于查看会话链路中的身份、敏感请求、工具、taint 和审批上下文。";
+      : "把同一任务里的相关判断合并成一个风险上下文，方便回看审批和放行覆盖了哪些对话。";
+  const showMeaningExplanation = !loading && !error;
 
   return (
     <div className="page-stack">
@@ -134,7 +135,7 @@ export function ChainsPage() {
         eyebrow="链路诊断"
       />
 
-      <section className="metric-grid metric-grid--compact">
+      <section className="metric-grid metric-grid--compact metric-grid--narrow">
         <article className="metric-card">
           <p className="metric-card__label">链路数量</p>
           <strong className="metric-card__value">
@@ -195,10 +196,21 @@ export function ChainsPage() {
           <div>
             <h2 className="panel__title">链路列表</h2>
             <p className="panel__subtitle">
-              表格展示可判断走向的摘要，taint、临时放行与审批证据进入详情。
+              表格展示可判断走向的摘要，taint、放行记录与审批证据进入详情。
             </p>
           </div>
         </div>
+        {showMeaningExplanation ? (
+          <div className="empty-explanation">
+            <strong>多轮链路统计什么</strong>
+            <p>
+              多轮链路统计一段任务区间里多次有关联的输入、判断、工具调用、审批和放行，用来回答哪些对话被当成同一个风险上下文一起看。
+            </p>
+            <p>
+              示例：用户先要求读取配置，随后改成读取同一路径，再触发审批或放行；这些有关联判断会进入同一条多轮链路。
+            </p>
+          </div>
+        ) : null}
         <DataTable
           columns={[
             {

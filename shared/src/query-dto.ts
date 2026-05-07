@@ -142,6 +142,13 @@ export interface SecurityEventDetailDto extends SecurityEventListItemDto {
 
 export type SecurityEventListResponse = PageResponse<SecurityEventListItemDto>;
 
+export interface SecurityEventSummaryDto {
+  total: number;
+  riskCounts: Partial<Record<RiskLevel, number>>;
+  eventKindCounts: Partial<Record<SecurityEventKind, number>>;
+  enforcementActionCounts: Partial<Record<EnforcementAction, number>>;
+}
+
 export interface ToolCallListItemDto {
   toolCallId: string;
   qaRecordId?: string;
@@ -355,6 +362,16 @@ export interface QaRecordListItemDto {
 }
 
 export type QaRecordListResponse = PageResponse<QaRecordListItemDto>;
+
+export interface QaRecordSummaryDto {
+  total: number;
+  toolCallCount: number;
+  approvalCount: number;
+  detectionCount: number;
+  totalTokens: number;
+  riskCounts: Partial<Record<RiskLevel, number>>;
+  statusCounts: Record<string, number>;
+}
 
 export type QaChainNodeType =
   | "userPrompt"

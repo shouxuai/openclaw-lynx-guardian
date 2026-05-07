@@ -81,8 +81,12 @@ describe("theme styles", () => {
 
   it("caps token trend bars so sparse charts do not become full-width columns", async () => {
     const css = await readThemeCss();
+    const plotRule = extractCssRule(css, ".token-trend-plot");
 
-    expect(css).toMatch(/\.token-trend-plot\s*{[\s\S]*grid-template-columns: repeat\(var\(--token-trend-slot-count, 7\), minmax\(0, 1fr\)\);/);
+    expect(plotRule).toContain("grid-template-columns:");
+    expect(plotRule).toContain("repeat(");
+    expect(plotRule).toContain("var(--token-trend-slot-count, 7)");
+    expect(plotRule).toContain("minmax(0, 1fr)");
     expect(css).toMatch(/\.token-trend-body\s*{[\s\S]*grid-template-columns: 56px minmax\(0, 1fr\);/);
     expect(css).toMatch(/\.token-trend-y-axis\s*{[\s\S]*justify-content: space-between;/);
     expect(css).toMatch(/\.token-trend-bar\s*{[\s\S]*width: min\(40px, 100%\);[\s\S]*max-width: 40px;/);

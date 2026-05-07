@@ -1,15 +1,17 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type {
   RiskLevel,
   SecurityEventDetailDto,
   SecurityEventKind,
   SecurityEventListItemDto,
+  SecurityEventSummaryDto,
 } from "@lynx/local-console-shared";
 import { Button, DatePicker, Input, Select } from "antd";
 import type { Dayjs } from "dayjs";
 
 import {
   getSecurityEventDetail,
+  getSecurityEventSummary,
   listSecurityEvents,
   type SecurityEventListQuery,
 } from "../api/security-events";
@@ -41,6 +43,33 @@ const EMPTY_FILTERS: EventFilters = {
   eventKind: "",
   dateRange: null,
 };
+
+const EMPTY_SECURITY_EVENT_SUMMARY: SecurityEventSummaryDto = {
+  total: 0,
+  riskCounts: {
+    L0: 0,
+    L1: 0,
+    L2: 0,
+    L3: 0,
+    L4: 0,
+  },
+  eventKindCounts: {},
+  enforcementActionCounts: {},
+};
+
+function normalizeSecurityEventSummary(
+  summary: Partial<SecurityEventSummaryDto> | null | undefined,
+): SecurityEventSummaryDto {
+  return {
+    total: typeof summary?.total === "number" ? summary.total : 0,
+    riskCounts: {
+      ...EMPTY_SECURITY_EVENT_SUMMARY.riskCounts,
+      ...(summary?.riskCounts ?? {}),
+    },
+    eventKindCounts: summary?.eventKindCounts ?? {},
+    enforcementActionCounts: summary?.enforcementActionCounts ?? {},
+  };
+}
 
 const RISK_OPTIONS: Array<{ label: string; value: RiskLevel }> = [
   { label: "L0 基础", value: "L0" },
@@ -142,6 +171,9 @@ export function EventsPage() {
   const [selectedDetail, setSelectedDetail] = useState<SecurityEventDetailDto | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<SecurityEventSummaryDto>(EMPTY_SECURITY_EVENT_SUMMARY);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   function clearDetailState(): void {
     setSelectedDetail(null);
@@ -161,23 +193,42 @@ export function EventsPage() {
     refreshKey,
   });
 
-  const pageSummary = useMemo(() => {
-    const riskCounts = Object.fromEntries(
-      RISK_SUMMARY_CARDS.map((card) => [
-        card.riskLevel,
-        items.filter((event) => event.riskLevel === card.riskLevel).length,
-      ]),
-    ) as Record<RiskLevel, number>;
+  useEffect(() => {
+    let active = true;
 
-    return {
-      total: items.length,
-      riskCounts,
+    async function loadSummary(): Promise<void> {
+      setSummaryLoading(true);
+      try {
+        const nextSummary = await getSecurityEventSummary(appliedQuery);
+        if (!active) {
+          return;
+        }
+        setSummary(normalizeSecurityEventSummary(nextSummary));
+        setSummaryError(null);
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+        setSummary(EMPTY_SECURITY_EVENT_SUMMARY);
+        setSummaryError(loadError instanceof Error ? loadError.message : "概览加载失败");
+      } finally {
+        if (active) {
+          setSummaryLoading(false);
+        }
+      }
+    }
+
+    void loadSummary();
+    return () => {
+      active = false;
     };
-  }, [items]);
+  }, [appliedQuery, refreshKey]);
 
-  const statusText = error
-    ? `安全事件加载失败：${error}`
-    : loading
+  const combinedError = error ?? summaryError;
+  const isLoading = loading || summaryLoading;
+  const statusText = combinedError
+    ? `安全事件加载失败：${combinedError}`
+    : isLoading
       ? "正在加载安全事件"
       : "按用户能感知的输入检查、工具调用检查、输出检查、安装和任务过程展示安全事件。";
 
@@ -233,11 +284,11 @@ export function EventsPage() {
         )}
       />
 
-      <section className="audit-summary-grid" aria-label="当前页安全事件概览">
+      <section className="audit-summary-grid" aria-label="当前筛选安全事件概览">
         <article className="overview-card overview-card--total">
           <div>
-            <p className="overview-card__label">当前页</p>
-            <strong className="overview-card__value">{formatInteger(pageSummary.total)}</strong>
+            <p className="overview-card__label">当前筛选</p>
+            <strong className="overview-card__value">{formatInteger(summary.total)}</strong>
           </div>
           <p className="overview-card__note">安全事件</p>
         </article>
@@ -246,7 +297,7 @@ export function EventsPage() {
             <div>
               <p className="overview-card__label">{card.label}</p>
               <strong className="overview-card__value">
-                {formatInteger(pageSummary.riskCounts[card.riskLevel])}
+                {formatInteger(summary.riskCounts[card.riskLevel] ?? 0)}
               </strong>
             </div>
             <p className="overview-card__note">{card.note}</p>

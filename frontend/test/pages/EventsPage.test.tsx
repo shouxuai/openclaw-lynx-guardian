@@ -74,6 +74,35 @@ function createPage(items: unknown[], pageNum = 1, pageSize = 10, total = items.
   };
 }
 
+function createSecurityEventSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    total: 42,
+    riskCounts: {
+      L0: 10,
+      L1: 0,
+      L2: 0,
+      L3: 7,
+      L4: 5,
+    },
+    eventKindCounts: {
+      input: 10,
+      tool: 20,
+      output: 8,
+      install: 2,
+      process: 2,
+    },
+    enforcementActionCounts: {
+      allow: 30,
+      logOnly: 0,
+      warn: 7,
+      redact: 0,
+      requireApproval: 0,
+      block: 5,
+    },
+    ...overrides,
+  };
+}
+
 function renderEventsPage() {
   return render(
     <ConfigProvider locale={zhCN}>
@@ -102,45 +131,65 @@ describe("EventsPage", () => {
   });
 
   it("renders user-visible security events by default with a standalone time column", async () => {
-    fetchMock
-      .mockResolvedValueOnce(createJsonResponse(createPage([
-        createSecurityEvent(),
-        createSecurityEvent({
-          eventId: "security:output:qa-2",
-          eventKind: "output",
-          title: "输出检查",
-          objectLabel: "回答内容",
-          contentExcerpt: "回答内容",
-          riskLevel: "L3",
-          enforcementAction: "warn",
-          rawAuditEventIds: ["event-3"],
-          rawAuditCount: 1,
-        }),
-        createSecurityEvent({
-          eventId: "security:input:qa-1",
-          eventKind: "input",
-          title: "输入检查",
-          objectLabel: "请检查当前项目",
-          contentExcerpt: "请检查当前项目",
-          riskLevel: "L0",
-          enforcementAction: "allow",
-          rawAuditEventIds: [],
-          rawAuditCount: 0,
-        }),
-      ])))
-      .mockResolvedValueOnce(createJsonResponse(createSecurityEventDetail()));
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/lynx/security-events/summary") {
+        return createJsonResponse(createSecurityEventSummary());
+      }
+      if (url === "/lynx/security-events/security%3Atool%3Atool-1") {
+        return createJsonResponse(createSecurityEventDetail());
+      }
+      if (url === "/lynx/security-events?pageNum=1&pageSize=10") {
+        return createJsonResponse(createPage([
+          createSecurityEvent(),
+          createSecurityEvent({
+            eventId: "security:output:qa-2",
+            eventKind: "output",
+            title: "输出检查",
+            objectLabel: "回答内容",
+            contentExcerpt: "回答内容",
+            riskLevel: "L3",
+            enforcementAction: "warn",
+            rawAuditEventIds: ["event-3"],
+            rawAuditCount: 1,
+          }),
+          createSecurityEvent({
+            eventId: "security:input:qa-1",
+            eventKind: "input",
+            title: "输入检查",
+            objectLabel: "请检查当前项目",
+            contentExcerpt: "请检查当前项目",
+            riskLevel: "L0",
+            enforcementAction: "allow",
+            rawAuditEventIds: [],
+            rawAuditCount: 0,
+          }),
+        ], 1, 10, 42));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
 
     renderEventsPage();
 
     await screen.findByText("security:tool:tool-1");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/security-events?pageNum=1&pageSize=10");
-    const summary = screen.getByLabelText("当前页安全事件概览");
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+        "/lynx/security-events?pageNum=1&pageSize=10",
+        "/lynx/security-events/summary",
+      ]));
+    });
+    const summary = screen.getByLabelText("当前筛选安全事件概览");
+    expect(within(summary).getByText("42")).toBeInTheDocument();
+    const l4Card = within(summary).getByText("L4").closest("article");
+    expect(l4Card).not.toBeNull();
+    expect(within(l4Card!).getByText("5")).toBeInTheDocument();
     expect(within(summary).getByText("L0")).toBeInTheDocument();
     expect(within(summary).getByText("L1")).toBeInTheDocument();
     expect(within(summary).getByText("L2")).toBeInTheDocument();
     expect(within(summary).getByText("L3")).toBeInTheDocument();
     expect(within(summary).getByText("L4")).toBeInTheDocument();
     expect(within(summary).queryByText("L3 / L4")).not.toBeInTheDocument();
+    expect(within(summary).queryByText("当前页")).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "时间" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "事件类型" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "过程" })).toBeInTheDocument();
@@ -158,15 +207,31 @@ describe("EventsPage", () => {
     const dialog = await screen.findByRole("dialog", { name: "工具调用检查" });
     expect(within(dialog).getByText("原始证据")).toBeInTheDocument();
     expect(within(dialog).getByText("event-1")).toBeInTheDocument();
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/security-events/security%3Atool%3Atool-1");
+    expect(fetchMock.mock.calls.map((call) => call[0])).toContain("/lynx/security-events/security%3Atool%3Atool-1");
   });
 
   it("links to raw audit evidence count and supports security-event filters", async () => {
-    fetchMock
-      .mockResolvedValueOnce(createJsonResponse(createPage([createSecurityEvent()], 1, 10, 1)))
-      .mockResolvedValueOnce(createJsonResponse(createPage([
-        createSecurityEvent({ eventId: "security:output:qa-2", eventKind: "output", title: "输出检查" }),
-      ], 1, 10, 1)));
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/lynx/security-events/summary") {
+        return createJsonResponse(createSecurityEventSummary({ total: 1 }));
+      }
+      if (url === "/lynx/security-events?pageNum=1&pageSize=10") {
+        return createJsonResponse(createPage([createSecurityEvent()], 1, 10, 1));
+      }
+      if (url === "/lynx/security-events/summary?q=exec&riskLevel=L4&eventKind=output") {
+        return createJsonResponse(createSecurityEventSummary({
+          total: 9,
+          riskCounts: { L0: 0, L1: 0, L2: 0, L3: 0, L4: 9 },
+        }));
+      }
+      if (url === "/lynx/security-events?q=exec&riskLevel=L4&eventKind=output&pageNum=1&pageSize=10") {
+        return createJsonResponse(createPage([
+          createSecurityEvent({ eventId: "security:output:qa-2", eventKind: "output", title: "输出检查" }),
+        ], 1, 10, 9));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
 
     renderEventsPage();
 
@@ -180,11 +245,35 @@ describe("EventsPage", () => {
 
     await screen.findByText("security:output:qa-2");
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+        "/lynx/security-events/summary?q=exec&riskLevel=L4&eventKind=output",
+        "/lynx/security-events?q=exec&riskLevel=L4&eventKind=output&pageNum=1&pageSize=10",
+      ]));
     });
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "/lynx/security-events?q=exec&riskLevel=L4&eventKind=output&pageNum=1&pageSize=10",
-    );
+    const summary = screen.getByLabelText("当前筛选安全事件概览");
+    expect(within(summary).getAllByText("9").length).toBeGreaterThan(0);
+  });
+
+  it("keeps rendering when the summary payload omits count maps", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/lynx/security-events/summary") {
+        return createJsonResponse({ total: 3 });
+      }
+      if (url === "/lynx/security-events?pageNum=1&pageSize=10") {
+        return createJsonResponse(createPage([], 1, 10, 3));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    renderEventsPage();
+
+    const summary = await screen.findByLabelText("当前筛选安全事件概览");
+    expect(within(summary).getByText("3")).toBeInTheDocument();
+    const l0Card = within(summary).getByText("L0").closest("article");
+    expect(l0Card).not.toBeNull();
+    expect(within(l0Card!).getByText("0")).toBeInTheDocument();
+    expect((await screen.findAllByText("暂无安全事件")).length).toBeGreaterThan(0);
   });
 
   it("converts the component-library date range into list query bounds", () => {

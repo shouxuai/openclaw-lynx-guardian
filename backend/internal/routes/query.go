@@ -79,6 +79,24 @@ func RegisterSecurityEvents(router gin.IRoutes, repository *repo.SecurityEventsR
 		c.JSON(200, page)
 	})
 
+	router.GET("/security-events/summary", func(c *gin.Context) {
+		values := c.Request.URL.Query()
+		result, err := repository.GetSummary(repo.SecurityEventListQuery{
+			Q:          httpserver.ReadString(values, "q"),
+			FromMs:     httpserver.ReadInt64(values, "fromMs"),
+			ToMs:       httpserver.ReadInt64(values, "toMs"),
+			SessionKey: httpserver.ReadString(values, "sessionKey"),
+			RunID:      httpserver.ReadString(values, "runId"),
+			RiskLevel:  httpserver.ReadStringSlice(values, "riskLevel"),
+			EventKind:  httpserver.ReadString(values, "eventKind"),
+		})
+		if err != nil {
+			c.JSON(500, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		c.JSON(200, result)
+	})
+
 	router.GET("/security-events/:eventId", func(c *gin.Context) {
 		item, err := repository.GetByID(c.Param("eventId"))
 		if err != nil {

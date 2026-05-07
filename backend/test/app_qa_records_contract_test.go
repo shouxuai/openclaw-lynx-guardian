@@ -1,6 +1,7 @@
 package backend_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 )
@@ -93,6 +94,53 @@ func TestQaRecordRoutesApplyListFilters(t *testing.T) {
 	expectString(t, listItem, "riskLevel", "L2")
 }
 
+func TestQaRecordsSummaryAndListApplySameTimeRangeBeyondCurrentPage(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	first := qaRecordFixture("qa-summary-first")
+	setQARecordTimes(first, parityBaseTimeMs-5000, parityBaseTimeMs-4900)
+	setQARecordCounts(first, "completed", "L2", 2, 1, 1, 50)
+
+	second := qaRecordFixture("qa-summary-second")
+	setQARecordTimes(second, parityBaseTimeMs-4500, parityBaseTimeMs-4400)
+	setQARecordCounts(second, "failed", "L4", 3, 2, 4, 80)
+
+	outOfRange := qaRecordFixture("qa-summary-out")
+	setQARecordTimes(outOfRange, parityBaseTimeMs-10000, parityBaseTimeMs-9900)
+	setQARecordCounts(outOfRange, "completed", "L0", 99, 99, 99, 999)
+
+	seed := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", fixtureBatchWithItems("qa-summary-range", []any{
+		first,
+		second,
+		outOfRange,
+	}), true)
+	decodeObjectStatus(t, seed, http.StatusOK)
+
+	query := fmt.Sprintf("?fromMs=%d&toMs=%d", parityBaseTimeMs-6000, parityBaseTimeMs-4000)
+	list := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, "/lynx/qa-records"+query+"&pageNum=1&pageSize=1", nil, false), http.StatusOK)
+	expectNumber(t, list, "total", 2)
+	itemsRaw, ok := list["items"].([]any)
+	if !ok || len(itemsRaw) != 1 {
+		t.Fatalf("expected paged list to return one row, got %#v", list["items"])
+	}
+
+	summary := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, "/lynx/qa-records/summary"+query, nil, false), http.StatusOK)
+	expectNumber(t, summary, "total", 2)
+	expectNumber(t, summary, "toolCallCount", 5)
+	expectNumber(t, summary, "approvalCount", 3)
+	expectNumber(t, summary, "detectionCount", 5)
+	expectNumber(t, summary, "totalTokens", 130)
+	assertCountBucket(t, summary, "riskCounts", "L2", 1)
+	assertCountBucket(t, summary, "riskCounts", "L4", 1)
+	assertCountBucket(t, summary, "statusCounts", "completed", 1)
+	assertCountBucket(t, summary, "statusCounts", "failed", 1)
+}
+
 func TestQaRecordKindSpecificIngestEndpointAcceptsQaRecordUpserts(t *testing.T) {
 	handler, closer := buildParityHandler(t)
 	t.Cleanup(func() {
@@ -183,6 +231,23 @@ func qaRecordFixture(qaRecordID string) map[string]any {
 			"payloadJson":        map[string]any{"source": "test"},
 		},
 	}
+}
+
+func setQARecordTimes(item map[string]any, startedAtMs int64, completedAtMs int64) {
+	item["occurredAtMs"] = startedAtMs
+	data := item["data"].(map[string]any)
+	data["startedAtMs"] = startedAtMs
+	data["completedAtMs"] = completedAtMs
+}
+
+func setQARecordCounts(item map[string]any, status string, riskLevel string, toolCalls int, approvals int, detections int, tokens int) {
+	data := item["data"].(map[string]any)
+	data["status"] = status
+	data["riskLevel"] = riskLevel
+	data["toolCallCount"] = toolCalls
+	data["approvalCount"] = approvals
+	data["detectionCount"] = detections
+	data["totalTokens"] = tokens
 }
 
 func qaAuditEventFixture(qaRecordID string) map[string]any {

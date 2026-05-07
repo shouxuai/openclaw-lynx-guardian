@@ -12,7 +12,8 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync, renameSync, rmSync } from "fs";
-import { join, basename, resolve, normalize } from "path";
+import { fileURLToPath } from "url";
+import { join, basename, resolve, normalize, dirname } from "path";
 import { homedir } from "os";
 import { SKILL_HASH_ALGORITHM, computeSkillHash, computeFileHash } from "./skill-hash.js";
 import { LYNX_RESOURCE_CONFIG } from "../runtime/resource-config.js";
@@ -233,6 +234,7 @@ export interface SkillRiskAssessment {
 export interface SkillIntegrityResult {
   skillName: string;
   path: string;
+  source?: string;
   valid: boolean;
   currentHash: string;
   expectedHash?: string;
@@ -258,6 +260,12 @@ interface SkillInventoryControlPlaneConfig {
   getToken?: () => string;
   logger?: Pick<Console, "warn"> & Partial<Pick<Console, "debug">>;
   fetchImpl?: typeof fetch;
+  retryDelaysMs?: number[];
+}
+
+export interface SkillInventoryRoot {
+  path: string;
+  source: string;
 }
 
 // ── Blacklist Cache (local + remote merge with TTL) ─────────────────
@@ -270,6 +278,7 @@ interface BlacklistCache {
 const BLACKLIST_TTL_MS = 60 * 60 * 1000; // 1 hour
 let blacklistCache: BlacklistCache | null = null;
 let inventoryControlPlaneConfig: SkillInventoryControlPlaneConfig | null = null;
+const DEFAULT_SKILL_INVENTORY_RETRY_DELAYS_MS = [250, 500, 1000, 3000];
 
 function getBlacklistDiskPath(): string {
   return join(homedir(), LYNX_RESOURCE_CONFIG.CACHE_DIR, "skill-blacklist-cache.json");
@@ -683,67 +692,152 @@ function buildRiskMessage(
  */
 export function verifyAllInstalledSkills(
   registry?: TrustedSkillEntry[],
+  roots?: SkillInventoryRoot[],
 ): SkillIntegrityResult[] {
-  const skillsDir = join(homedir(), ".openclaw", "skills");
-  if (!existsSync(skillsDir)) return [];
-
-  const results: SkillIntegrityResult[] = [];
   const trusted = registry ?? TRUSTED_SKILL_REGISTRY;
-
-  try {
-    const entries = readdirSync(skillsDir);
-
-    for (const entry of entries) {
-      const skillPath = join(skillsDir, entry);
-      if (!statSync(skillPath).isDirectory()) continue;
-
-      try {
-        const currentHash = computeSkillHash(skillPath);
-        const trustedEntry = trusted.find((t) => t.name === entry);
-
-        if (!trustedEntry || !trustedEntry.hash || trustedEntry.hash === "") {
-          // New Skill or no baseline hash — record for TOFU
-          results.push({
-            skillName: entry,
-            path: skillPath,
-            valid: true,
-            currentHash,
-            reason: "No baseline hash (first seen)",
-          });
-        } else if (trustedEntry.hash === currentHash) {
-          results.push({
-            skillName: entry,
-            path: skillPath,
-            valid: true,
-            currentHash,
-            expectedHash: trustedEntry.hash,
-          });
-        } else {
-          results.push({
-            skillName: entry,
-            path: skillPath,
-            valid: false,
-            currentHash,
-            expectedHash: trustedEntry.hash,
-            reason: `Hash mismatch: expected ${trustedEntry.hash.slice(0, 12)}..., got ${currentHash.slice(0, 12)}...`,
-          });
-        }
-      } catch (err: any) {
-        results.push({
-          skillName: entry,
-          path: skillPath,
-          valid: false,
-          currentHash: "",
-          reason: `Hash computation failed: ${err.message}`,
-        });
-      }
-    }
-  } catch {
-    // Skills directory not readable
-  }
+  const results = verifyInstalledSkillsFromRoots(roots ?? defaultSkillInventoryRoots(), trusted);
 
   publishSkillInventory(results);
   return results;
+}
+
+export function verifyInstalledSkillsFromRoots(
+  roots: SkillInventoryRoot[],
+  registry: TrustedSkillEntry[] = TRUSTED_SKILL_REGISTRY,
+): SkillIntegrityResult[] {
+  const results: SkillIntegrityResult[] = [];
+  const seenSkillNames = new Set<string>();
+
+  for (const root of roots) {
+    for (const skillPath of collectSkillDirectories(root.path)) {
+      const skillName = basename(skillPath);
+      if (!skillName || seenSkillNames.has(skillName)) {
+        continue;
+      }
+      seenSkillNames.add(skillName);
+      results.push(verifySingleSkill(skillName, skillPath, root.source, registry));
+    }
+  }
+
+  return results;
+}
+
+function verifySingleSkill(
+  skillName: string,
+  skillPath: string,
+  source: string,
+  registry: TrustedSkillEntry[],
+): SkillIntegrityResult {
+  try {
+    const currentHash = computeSkillHash(skillPath);
+    const trustedEntry = registry.find((t) => t.name === skillName);
+
+    if (!trustedEntry || !trustedEntry.hash || trustedEntry.hash === "") {
+      // New Skill or no baseline hash — record for TOFU.
+      return {
+        skillName,
+        path: skillPath,
+        source,
+        valid: true,
+        currentHash,
+        reason: "No baseline hash (first seen)",
+      };
+    }
+    if (trustedEntry.hash === currentHash) {
+      return {
+        skillName,
+        path: skillPath,
+        source,
+        valid: true,
+        currentHash,
+        expectedHash: trustedEntry.hash,
+      };
+    }
+    return {
+      skillName,
+      path: skillPath,
+      source,
+      valid: false,
+      currentHash,
+      expectedHash: trustedEntry.hash,
+      reason: `Hash mismatch: expected ${trustedEntry.hash.slice(0, 12)}..., got ${currentHash.slice(0, 12)}...`,
+    };
+  } catch (err: any) {
+    return {
+      skillName,
+      path: skillPath,
+      source,
+      valid: false,
+      currentHash: "",
+      reason: `Hash computation failed: ${err.message}`,
+    };
+  }
+}
+
+function collectSkillDirectories(rootPath: string): string[] {
+  if (!rootPath || !existsSync(rootPath)) {
+    return [];
+  }
+
+  const root = resolve(rootPath);
+  const found: string[] = [];
+  const stack = [root];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    if (entries.some((entry) => entry.isFile() && entry.name.toLowerCase() === "skill.md")) {
+      found.push(current);
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || shouldSkipSkillInventoryDirectory(entry.name)) {
+        continue;
+      }
+      stack.push(join(current, entry.name));
+    }
+  }
+
+  return found.sort();
+}
+
+function shouldSkipSkillInventoryDirectory(name: string): boolean {
+  return name.startsWith(".") || name === "node_modules" || name === "dist";
+}
+
+function defaultSkillInventoryRoots(): SkillInventoryRoot[] {
+  const homeSkillsRoot = join(homedir(), ".openclaw", "skills");
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  return uniqueSkillInventoryRoots([
+    { path: homeSkillsRoot, source: "local" },
+    { path: join(moduleDir, "skills"), source: "bundled" },
+    { path: join(moduleDir, "..", "skills"), source: "bundled" },
+    { path: join(moduleDir, "..", "..", "skills"), source: "bundled" },
+  ]);
+}
+
+function uniqueSkillInventoryRoots(roots: SkillInventoryRoot[]): SkillInventoryRoot[] {
+  const seen = new Set<string>();
+  const unique: SkillInventoryRoot[] = [];
+  for (const root of roots) {
+    const key = resolve(root.path).toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(root);
+  }
+  return unique;
 }
 
 function publishSkillInventory(results: SkillIntegrityResult[]): void {
@@ -761,15 +855,45 @@ function publishSkillInventory(results: SkillIntegrityResult[]): void {
     return;
   }
 
-  void client.syncSkillInventory({ items }).then(() => {
-    inventoryControlPlaneConfig?.logger?.debug?.(
-      `[lynx-guardian] Skill inventory sync queued ${items.length} item(s).`,
-    );
-  }).catch((error) => {
-    inventoryControlPlaneConfig?.logger?.warn?.(
-      `[lynx-guardian] Skill inventory sync failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  });
+  void syncSkillInventoryWithRetry(client, items, inventoryControlPlaneConfig);
+}
+
+async function syncSkillInventoryWithRetry(
+  client: GoControlPlaneClient,
+  items: SkillInventoryRecord[],
+  config: SkillInventoryControlPlaneConfig,
+): Promise<void> {
+  const retryDelaysMs = (config.retryDelaysMs ?? DEFAULT_SKILL_INVENTORY_RETRY_DELAYS_MS)
+    .map((value) => Math.max(0, Math.trunc(value)));
+  let attempt = 0;
+
+  while (true) {
+    try {
+      await client.syncSkillInventory({ items });
+      config.logger?.debug?.(
+        `[lynx-guardian] Skill inventory sync queued ${items.length} item(s).`,
+      );
+      return;
+    } catch (error) {
+      const retryDelayMs = retryDelaysMs[attempt];
+      if (retryDelayMs === undefined) {
+        config.logger?.warn?.(
+          `[lynx-guardian] Skill inventory sync failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
+
+      config.logger?.warn?.(
+        `[lynx-guardian] Skill inventory sync retrying ${items.length} item(s) in ${retryDelayMs}ms`,
+      );
+      attempt += 1;
+      await delayMs(retryDelayMs);
+    }
+  }
+}
+
+function delayMs(durationMs: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, durationMs));
 }
 
 function skillResultToInventoryRecord(result: SkillIntegrityResult): SkillInventoryRecord {
@@ -780,7 +904,7 @@ function skillResultToInventoryRecord(result: SkillIntegrityResult): SkillInvent
   return {
     skillId: result.skillName,
     name: result.skillName,
-    source: "local",
+    source: result.source ?? "local",
     installPath: result.path,
     manifestPath: existsSync(manifestPath) ? manifestPath : "",
     hashAlgorithm: SKILL_HASH_ALGORITHM,
