@@ -342,6 +342,24 @@ export interface TokenTrendDto {
   points: TokenTrendPointDto[];
 }
 
+export interface TokenHeatmapTotalDto {
+  hour: number;
+  totalTokens: number;
+}
+
+export interface TokenHeatmapWeekdayTotalDto {
+  weekday: number;
+  label: string;
+  totalTokens: number;
+}
+
+export interface TokenHeatmapDto {
+  timeZone: string;
+  totalTokens: number;
+  hourTotals: TokenHeatmapTotalDto[];
+  weekdayTotals: TokenHeatmapWeekdayTotalDto[];
+}
+
 export interface QaRecordListItemDto {
   qaRecordId: string;
   sessionKey?: string;
@@ -427,6 +445,7 @@ export interface DashboardOverviewDto {
   eventTrend: TimeSeriesPointDto[];
   tokenTrend: TimeSeriesPointDto[];
   recentSecurityEvents: SecurityEventListItemDto[];
+  recentQaRecords: QaRecordListItemDto[];
   recentToolCalls: ToolCallListItemDto[];
   recentApprovals: ApprovalListItemDto[];
 }

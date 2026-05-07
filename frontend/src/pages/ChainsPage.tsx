@@ -1,5 +1,5 @@
-import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { Button, Input } from "antd";
+import { useState, type FormEvent } from "react";
+import { Button, Card, Input, Typography } from "antd";
 
 import {
   listChains,
@@ -9,6 +9,8 @@ import {
 import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
+import { TablePagination } from "../components/tables/TablePagination";
+import { usePagedListResource } from "../hooks/usePagedListResource";
 import { formatInteger } from "../utils/format";
 
 interface ChainFilters {
@@ -21,7 +23,7 @@ const EMPTY_FILTERS: ChainFilters = {
   q: "",
 };
 
-function buildChainQuery(filters: ChainFilters): ChainListQuery {
+function buildChainQuery(filters: ChainFilters): Omit<ChainListQuery, "pageNum" | "pageSize"> {
   return {
     q: filters.q.trim() || undefined,
     channelProfile: filters.channelProfile.trim() || undefined,
@@ -59,64 +61,29 @@ function formatPromptPreview(
 }
 
 export function ChainsPage() {
-  const [items, setItems] = useState<ChainSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [draftFilters, setDraftFilters] = useState<ChainFilters>(EMPTY_FILTERS);
-  const [appliedQuery, setAppliedQuery] = useState<ChainListQuery>({});
-  const [reloadKey, setReloadKey] = useState(0);
+  const [appliedQuery, setAppliedQuery] = useState<Omit<ChainListQuery, "pageNum" | "pageSize">>({});
   const [selectedChain, setSelectedChain] = useState<ChainSummary | null>(null);
-
-  useEffect(() => {
-    const abortController = new AbortController();
-
-    async function loadChains() {
-      startTransition(() => {
-        setError(null);
-        setLoading(true);
-      });
-
-      try {
-        const nextItems = await listChains(appliedQuery);
-        if (abortController.signal.aborted) {
-          return;
-        }
-        startTransition(() => {
-          setItems(nextItems);
-          setError(null);
-          setLoading(false);
-        });
-      } catch (loadError) {
-        if (abortController.signal.aborted) {
-          return;
-        }
-        startTransition(() => {
-          setItems([]);
-          setError(
-            loadError instanceof Error ? loadError.message : "链路记录加载失败",
-          );
-          setLoading(false);
-        });
-      }
-    }
-
-    void loadChains();
-    return () => abortController.abort();
-  }, [appliedQuery, reloadKey]);
-
-  function retryList(): void {
-    setReloadKey((current) => current + 1);
-  }
+  const { items, loading, error, paginationProps, resetPaging, retry, total } = usePagedListResource<
+    ChainSummary,
+    ChainListQuery
+  >({
+    loadPage: listChains,
+    onPageBoundaryChange: () => setSelectedChain(null),
+    query: appliedQuery,
+  });
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     setSelectedChain(null);
+    resetPaging();
     setAppliedQuery(buildChainQuery(draftFilters));
   }
 
   function handleReset(): void {
     setDraftFilters(EMPTY_FILTERS);
     setSelectedChain(null);
+    resetPaging();
     setAppliedQuery({});
   }
 
@@ -124,8 +91,7 @@ export function ChainsPage() {
     ? `链路记录加载失败：${error}`
     : loading
       ? "正在加载多轮链路"
-      : "把同一任务里的相关判断合并成一个风险上下文，方便回看审批和放行覆盖了哪些对话。";
-  const showMeaningExplanation = !loading && !error;
+      : undefined;
 
   return (
     <div className="page-stack">
@@ -139,9 +105,9 @@ export function ChainsPage() {
         <article className="metric-card">
           <p className="metric-card__label">链路数量</p>
           <strong className="metric-card__value">
-            {formatInteger(items.length)}
+            {formatInteger(total)}
           </strong>
-          <p className="metric-card__note">来自链路状态摘要</p>
+          <p className="metric-card__note">匹配当前筛选条件</p>
         </article>
       </section>
 
@@ -191,26 +157,19 @@ export function ChainsPage() {
         </form>
       </section>
 
+      <Card className="table-explanation-card" size="small" title="多轮链路说明">
+        <Typography.Paragraph>
+          多轮链路统计一段任务区间里多次有关联的输入、判断、工具调用、审批和放行，用来回答哪些对话被当成同一个风险上下文一起看。
+        </Typography.Paragraph>
+        <Typography.Paragraph>
+          示例：用户先要求读取配置，随后改成读取同一路径，再触发审批或放行；这些有关联判断会进入同一条多轮链路。taint、放行记录与审批证据进入详情。
+        </Typography.Paragraph>
+      </Card>
+
       <section className="table-panel">
         <div className="table-panel__header">
-          <div>
-            <h2 className="panel__title">链路列表</h2>
-            <p className="panel__subtitle">
-              表格展示可判断走向的摘要，taint、放行记录与审批证据进入详情。
-            </p>
-          </div>
+          <h2 className="panel__title">链路列表</h2>
         </div>
-        {showMeaningExplanation ? (
-          <div className="empty-explanation">
-            <strong>多轮链路统计什么</strong>
-            <p>
-              多轮链路统计一段任务区间里多次有关联的输入、判断、工具调用、审批和放行，用来回答哪些对话被当成同一个风险上下文一起看。
-            </p>
-            <p>
-              示例：用户先要求读取配置，随后改成读取同一路径，再触发审批或放行；这些有关联判断会进入同一条多轮链路。
-            </p>
-          </div>
-        ) : null}
         <DataTable
           columns={[
             {
@@ -251,7 +210,7 @@ export function ChainsPage() {
           ]}
           error={error}
           loading={loading}
-          onRetry={retryList}
+          onRetry={retry}
           rows={items.map((item) => ({
             id: item.chainId,
             chain: (
@@ -289,104 +248,105 @@ export function ChainsPage() {
             ),
           }))}
         />
+        <TablePagination {...paginationProps} ariaLabel="链路列表分页" />
       </section>
 
       <ModalDialog
         closeLabel="关闭详情"
         open={Boolean(selectedChain)}
+        size="wide"
         title="链路详情"
         subtitle={selectedChain?.chainId ?? "查看链路中的完整上下文信号。"}
         onClose={() => setSelectedChain(null)}
       >
-        <dl className="detail-panel__grid">
-          {[
-            { label: "链路 ID", value: selectedChain?.chainId ?? "暂无" },
-            { label: "会话", value: selectedChain?.sessionKey ?? "暂无" },
-            {
-              label: "覆盖输入数",
-              value: selectedChain
-                ? formatInteger(selectedChain.promptCount)
-                : "暂无",
-            },
-            {
-              label: "身份信号",
-              value: selectedChain
-                ? joinSignals(selectedChain.recentIdentity)
-                : "暂无",
-            },
-            {
-              label: "敏感请求",
-              value: selectedChain
-                ? joinSignals(selectedChain.recentSensitive)
-                : "暂无",
-            },
-            {
-              label: "近期拒绝",
-              value: selectedChain
-                ? joinSignals(selectedChain.recentDenials)
-                : "暂无",
-            },
-            {
-              label: "近期审批",
-              value: selectedChain
-                ? joinSignals(selectedChain.recentApprovals)
-                : "暂无",
-            },
-            {
-              label: "工具",
-              value: selectedChain
-                ? joinSignals(selectedChain.recentTools)
-                : "暂无",
-            },
-            {
-              label: "Taint 读取",
-              value: selectedChain
-                ? joinSignals(selectedChain.recentTaintReads)
-                : "暂无",
-            },
-            {
-              label: "规避信号",
-              value: selectedChain
-                ? joinSignals(selectedChain.recentEvasions)
-                : "暂无",
-            },
-            {
-              label: "当前放行",
-              value: selectedChain?.activeGrantId || "暂无",
-            },
-            {
-              label: "待审批",
-              value: selectedChain?.pendingApproval || "暂无",
-            },
-          ].map((field) => (
-            <div key={field.label} className="detail-panel__field">
-              <dt>{field.label}</dt>
-              <dd>{field.value}</dd>
-            </div>
-          ))}
-        </dl>
-        <section className="detail-panel__section">
-          <h3 className="detail-panel__sectionTitle">覆盖的输入词</h3>
-          {selectedChain && selectedChain.coveredPrompts.length > 0 ? (
-            <ol className="prompt-coverage-list">
-              {selectedChain.coveredPrompts.map((prompt) => (
-                <li
-                  className="prompt-coverage-list__item"
-                  key={`${prompt.qaRecordId}-${prompt.startedAtMs ?? 0}`}
-                >
-                  <p className="prompt-coverage-list__text">
-                    {prompt.userPromptExcerpt}
-                  </p>
-                  <span className="prompt-coverage-list__meta">
-                    {formatPromptMeta(prompt)}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="muted-text">暂无覆盖输入词</p>
-          )}
-        </section>
+        {selectedChain ? (
+          <div className="audit-detail-dialog">
+            <section className="audit-detail-dialog__hero">
+              <div className="audit-detail-dialog__heroText">
+                <p className="audit-detail-dialog__eyebrow">链路概览</p>
+                <p className="audit-detail-dialog__heroSubtitle">
+                  {formatPromptPreview(selectedChain.coveredPrompts)}
+                </p>
+              </div>
+              <div className="audit-detail-dialog__chips" aria-label="链路概览标签">
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">链路</span>
+                  <span className="audit-detail-dialog__chipValue">{selectedChain.chainId}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">会话</span>
+                  <span className="audit-detail-dialog__chipValue">{selectedChain.sessionKey || "暂无"}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">覆盖输入</span>
+                  <span className="audit-detail-dialog__chipValue">{formatInteger(selectedChain.promptCount)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">当前放行</span>
+                  <span className="audit-detail-dialog__chipValue">{selectedChain.activeGrantId || "暂无"}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">待审批</span>
+                  <span className="audit-detail-dialog__chipValue">{selectedChain.pendingApproval || "暂无"}</span>
+                </span>
+              </div>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h3 className="panel__title">链路信号</h3>
+                  <p className="panel__subtitle">同一上下文内累计的身份、敏感目标、审批和工具调用信号。</p>
+                </div>
+              </div>
+              <dl className="detail-panel__grid audit-detail-dialog__summary-grid">
+                {[
+                  { label: "身份信号", value: joinSignals(selectedChain.recentIdentity) },
+                  { label: "敏感请求", value: joinSignals(selectedChain.recentSensitive) },
+                  { label: "近期拒绝", value: joinSignals(selectedChain.recentDenials) },
+                  { label: "近期审批", value: joinSignals(selectedChain.recentApprovals) },
+                  { label: "工具", value: joinSignals(selectedChain.recentTools) },
+                  { label: "Taint 读取", value: joinSignals(selectedChain.recentTaintReads) },
+                  { label: "规避信号", value: joinSignals(selectedChain.recentEvasions) },
+                  { label: "会话键", value: selectedChain.sessionKey || "暂无" },
+                ].map((field) => (
+                  <div key={field.label} className="detail-panel__field">
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h3 className="panel__title">覆盖输入词</h3>
+                  <p className="panel__subtitle">这条链路实际覆盖到的问答输入片段。</p>
+                </div>
+              </div>
+              {selectedChain.coveredPrompts.length > 0 ? (
+                <ol className="prompt-coverage-list">
+                  {selectedChain.coveredPrompts.map((prompt) => (
+                    <li
+                      className="prompt-coverage-list__item"
+                      key={`${prompt.qaRecordId}-${prompt.startedAtMs ?? 0}`}
+                    >
+                      <p className="prompt-coverage-list__text">
+                        {prompt.userPromptExcerpt}
+                      </p>
+                      <span className="prompt-coverage-list__meta">
+                        {formatPromptMeta(prompt)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="muted-text">暂无覆盖输入词</p>
+              )}
+            </section>
+          </div>
+        ) : null}
       </ModalDialog>
     </div>
   );

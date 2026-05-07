@@ -110,6 +110,10 @@ describe("ToolCallsPage", () => {
 
     expect(await screen.findByRole("dialog", { name: "工具调用详情" })).toBeInTheDocument();
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/tool-calls/TOOL-001");
+    expect(screen.getByText("工具调用概览")).toBeInTheDocument();
+    expect(screen.getByText("调用上下文")).toBeInTheDocument();
+    expect(screen.getByText("参数与结果")).toBeInTheDocument();
+    expect(screen.getByText("控制面证据")).toBeInTheDocument();
     expect(screen.getByText("关联问答记录")).toBeInTheDocument();
     expect(screen.getAllByText("qa-1").length).toBeGreaterThan(0);
     expect(screen.getByText("powershell Get-Content secret.txt")).toBeInTheDocument();

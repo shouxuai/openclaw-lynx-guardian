@@ -1,3 +1,29 @@
+function normalizeTokenValue(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.round(value);
+}
+
+export function formatCompactTokens(value: number): string {
+  const safeValue = normalizeTokenValue(value);
+
+  if (safeValue >= 1_000_000) {
+    return `${(safeValue / 1_000_000).toFixed(1)}M`;
+  }
+
+  if (safeValue >= 999_950) {
+    return "1.0M";
+  }
+
+  if (safeValue >= 1_000) {
+    return `${(safeValue / 1_000).toFixed(1)}K`;
+  }
+
+  return String(safeValue);
+}
+
 export function formatInteger(value: number): string {
   return new Intl.NumberFormat("zh-CN").format(value);
 }

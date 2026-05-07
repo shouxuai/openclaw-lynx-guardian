@@ -5,12 +5,24 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
+	"github.com/openclaw/lynx-guardian/backend/internal/service"
 )
 
 type GrantRepository struct {
 	db *sql.DB
+}
+
+type GrantListQuery struct {
+	Q           *string
+	ChainID     *string
+	RequesterID *string
+	Revoked     *bool
+	PageNum     *int
+	PageSize    *int
+	Limit       *int
 }
 
 func NewGrantRepository(db *sql.DB) *GrantRepository {
@@ -106,30 +118,82 @@ func (r *GrantRepository) RevokeActiveByChain(ctx context.Context, chainID strin
 	return err
 }
 
-func (r *GrantRepository) List(ctx context.Context) ([]api.Grant, error) {
+func (r *GrantRepository) List(ctx context.Context, query GrantListQuery) (service.PageResponse[api.Grant], error) {
+	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
+	filter := grantListFilter(query)
+
+	total, err := countRowsContext(ctx, r.db, "approval_grants", filter)
+	if err != nil {
+		return service.PageResponse[api.Grant]{}, err
+	}
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT grant_id, approval_id, chain_id, session_key, channel_profile,
 		       channel_id, conversation_id, requester_id, requester_ou_id,
 		       approver_id, approver_ou_id, risk_family, tool_name, target_kind,
 		       target_hash, resource_scope_json, created_at, expires_at,
 		       COALESCE(revoked_at, ''), revoked_reason
-		FROM approval_grants
+		FROM approval_grants `+filter.Where()+`
 		ORDER BY created_at DESC, grant_id DESC
-		LIMIT 100`)
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
+	)
 	if err != nil {
-		return nil, err
+		return service.PageResponse[api.Grant]{}, err
 	}
 	defer rows.Close()
 
-	out := make([]api.Grant, 0)
+	out := make([]api.Grant, 0, page.PageSize)
 	for rows.Next() {
 		grant, err := scanGrant(rows)
 		if err != nil {
-			return nil, err
+			return service.PageResponse[api.Grant]{}, err
 		}
 		out = append(out, grant)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return service.PageResponse[api.Grant]{}, err
+	}
+	return service.BuildPageResponse(out, total, page), nil
+}
+
+func grantListFilter(query GrantListQuery) *Filter {
+	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"grant_id",
+		"approval_id",
+		"chain_id",
+		"session_key",
+		"channel_profile",
+		"channel_id",
+		"conversation_id",
+		"requester_id",
+		"requester_ou_id",
+		"approver_id",
+		"approver_ou_id",
+		"risk_family",
+		"tool_name",
+		"target_kind",
+		"target_hash",
+		"resource_scope_json",
+		"revoked_reason",
+	}, query.Q)
+	filter.AppendEquals("chain_id", query.ChainID)
+	if query.RequesterID != nil {
+		requesterID := strings.TrimSpace(*query.RequesterID)
+		if requesterID != "" {
+			filter.clauses = append(filter.clauses, "(requester_id = ? OR requester_ou_id = ?)")
+			filter.params = append(filter.params, requesterID, requesterID)
+		}
+	}
+	if query.Revoked != nil {
+		if *query.Revoked {
+			filter.clauses = append(filter.clauses, "revoked_at IS NOT NULL")
+		} else {
+			filter.clauses = append(filter.clauses, "revoked_at IS NULL")
+		}
+	}
+	return filter
 }
 
 func (r *GrantRepository) findOne(ctx context.Context, query string, args ...any) (*api.Grant, error) {

@@ -8,6 +8,7 @@ import type {
 } from "@lynx/local-console-shared";
 import { Button, DatePicker, Input, Select } from "antd";
 import type { Dayjs } from "dayjs";
+import { Link } from "react-router-dom";
 
 import {
   getSecurityEventDetail,
@@ -15,6 +16,7 @@ import {
   listSecurityEvents,
   type SecurityEventListQuery,
 } from "../api/security-events";
+import { ROUTE_PATHS } from "../app/route-paths";
 import { ModalDialog } from "../components/feedback/ModalDialog";
 import { PageHeader } from "../components/layout/PageHeader";
 import { DataTable } from "../components/tables/DataTable";
@@ -273,14 +275,19 @@ export function EventsPage() {
         description={statusText}
         eyebrow="SECURITY EVENTS"
         actions={(
-          <Button
-            className="console-action-button"
-            htmlType="button"
-            type="primary"
-            onClick={() => setRefreshKey((value) => value + 1)}
-          >
-            立即刷新
-          </Button>
+          <>
+            <Link className="btn console-action-link" to={ROUTE_PATHS.rawEvents}>
+              原始审计流水
+            </Link>
+            <Button
+              className="console-action-button"
+              htmlType="button"
+              type="primary"
+              onClick={() => setRefreshKey((value) => value + 1)}
+            >
+              立即刷新
+            </Button>
+          </>
         )}
       />
 
@@ -417,58 +424,117 @@ export function EventsPage() {
       <ModalDialog
         closeLabel="关闭详情"
         open={isDetailDialogOpen}
+        size="wide"
         title={selectedDetail?.title ?? "事件详情"}
         subtitle={detailError ? `详情加载失败：${detailError}` : selectedDetail?.eventId ?? "查看事件聚合与原始证据"}
         onClose={handleCloseDetail}
       >
-        <dl className="detail-panel__grid audit-detail-dialog__grid">
-          {[
-            { label: "事件类型", value: selectedDetail ? formatEventKind(selectedDetail.eventKind) : "暂无" },
-            { label: "过程", value: selectedDetail ? formatProcessKind(selectedDetail.processKind) : "暂无" },
-            { label: "风险等级", value: selectedDetail ? renderRiskBadge(selectedDetail.riskLevel) : "暂无" },
-            { label: "策略判定", value: selectedDetail ? renderPolicyDecisionBadge(selectedDetail.policyDecision, selectedDetail.enforcementAction) : "暂无" },
-            { label: "处置动作", value: selectedDetail ? renderActionBadge(selectedDetail.enforcementAction) : "暂无" },
-            { label: "关联问答", value: formatQaRecordId(selectedDetail?.qaRecordId) },
-            { label: "对象/内容", value: selectedDetail ? resolveObjectText(selectedDetail) : "暂无" },
-            { label: "发生时间", value: selectedDetail ? formatTimestamp(selectedDetail.occurredAtMs) : "暂无" },
-            {
-              label: "Detail JSON",
-              value: <pre className="code-panel">{formatDetailJson(selectedDetail?.detailJson)}</pre>,
-            },
-          ].map((field) => (
-            <div key={field.label} className="detail-panel__field">
-              <dt>{field.label}</dt>
-              <dd>{field.value}</dd>
-            </div>
-          ))}
-        </dl>
+        {selectedDetail ? (
+          <div className="audit-detail-dialog">
+            <section className="audit-detail-dialog__hero">
+              <div className="audit-detail-dialog__heroText">
+                <p className="audit-detail-dialog__eyebrow">事件概览</p>
+                <p className="audit-detail-dialog__heroSubtitle">
+                  {resolveObjectText(selectedDetail)}
+                </p>
+              </div>
+              <div className="audit-detail-dialog__chips" aria-label="事件概览标签">
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">事件类型</span>
+                  <span className="audit-detail-dialog__chipValue">{formatEventKind(selectedDetail.eventKind)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">过程</span>
+                  <span className="audit-detail-dialog__chipValue">{formatProcessKind(selectedDetail.processKind)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">风险等级</span>
+                  <span className="audit-detail-dialog__chipValue">{renderRiskBadge(selectedDetail.riskLevel)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">策略判定</span>
+                  <span className="audit-detail-dialog__chipValue">
+                    {renderPolicyDecisionBadge(selectedDetail.policyDecision, selectedDetail.enforcementAction)}
+                  </span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">处置动作</span>
+                  <span className="audit-detail-dialog__chipValue">{renderActionBadge(selectedDetail.enforcementAction)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">关联问答</span>
+                  <span className="audit-detail-dialog__chipValue">{formatQaRecordId(selectedDetail.qaRecordId)}</span>
+                </span>
+              </div>
+            </section>
 
-        <section className="detail-panel">
-          <div className="panel__header">
-            <div>
-              <h2 className="panel__title">原始证据</h2>
-              <p className="panel__subtitle">支撑该安全事件的 hook 级审计流水</p>
-            </div>
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h2 className="panel__title">基础信息</h2>
+                  <p className="panel__subtitle">事件类型、过程、对象、时间和决策上下文。</p>
+                </div>
+              </div>
+              <dl className="detail-panel__grid audit-detail-dialog__summary-grid">
+                {[
+                  { label: "事件类型", value: formatEventKind(selectedDetail.eventKind) },
+                  { label: "过程", value: formatProcessKind(selectedDetail.processKind) },
+                  { label: "风险等级", value: renderRiskBadge(selectedDetail.riskLevel) },
+                  {
+                    label: "策略判定",
+                    value: renderPolicyDecisionBadge(selectedDetail.policyDecision, selectedDetail.enforcementAction),
+                  },
+                  { label: "处置动作", value: renderActionBadge(selectedDetail.enforcementAction) },
+                  { label: "关联问答", value: formatQaRecordId(selectedDetail.qaRecordId) },
+                  { label: "对象/内容", value: resolveObjectText(selectedDetail) },
+                  { label: "发生时间", value: formatTimestamp(selectedDetail.occurredAtMs) },
+                ].map((field) => (
+                  <div key={field.label} className="detail-panel__field">
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h2 className="panel__title">Detail JSON</h2>
+                  <p className="panel__subtitle">原始结构化详情。</p>
+                </div>
+              </div>
+              <pre className="code-panel audit-detail-dialog__json">{formatDetailJson(selectedDetail.detailJson)}</pre>
+            </section>
+
+            <section className="detail-panel audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h2 className="panel__title">原始证据</h2>
+                  <p className="panel__subtitle">支撑该安全事件的 hook 级审计流水。</p>
+                </div>
+              </div>
+              <DataTable
+                columns={[
+                  { key: "time", label: "时间" },
+                  { key: "event", label: "事件" },
+                  { key: "hook", label: "Hook" },
+                  { key: "category", label: "分类" },
+                  { key: "risk", label: "风险" },
+                ]}
+                emptyDescription="暂无原始证据"
+                rows={selectedDetail.rawAuditEvents.map((event) => ({
+                  id: event.eventId,
+                  time: formatTimestamp(event.occurredAtMs),
+                  event: event.eventId,
+                  hook: event.hookName,
+                  category: event.category,
+                  risk: renderRiskBadge(event.riskLevel),
+                }))}
+              />
+            </section>
           </div>
-          <DataTable
-            columns={[
-              { key: "time", label: "时间" },
-              { key: "event", label: "事件" },
-              { key: "hook", label: "Hook" },
-              { key: "category", label: "分类" },
-              { key: "risk", label: "风险" },
-            ]}
-            emptyDescription="暂无原始证据"
-            rows={(selectedDetail?.rawAuditEvents ?? []).map((event) => ({
-              id: event.eventId,
-              time: formatTimestamp(event.occurredAtMs),
-              event: event.eventId,
-              hook: event.hookName,
-              category: event.category,
-              risk: renderRiskBadge(event.riskLevel),
-            }))}
-          />
-        </section>
+        ) : null}
       </ModalDialog>
     </div>
   );

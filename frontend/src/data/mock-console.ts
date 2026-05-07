@@ -5,6 +5,7 @@ import type {
   LynxCheckDetailDto,
   SecurityEventListItemDto,
   SessionDetailDto,
+  TokenHeatmapDto,
   TokenSummaryDto,
   TokenTrendDto,
   TokenUsageListItemDto,
@@ -478,6 +479,22 @@ export const mockTokenTrend: TokenTrendDto = {
   ],
 };
 
+const WEEKDAY_LABELS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+export const mockTokenHeatmap: TokenHeatmapDto = {
+  timeZone: "local",
+  totalTokens: mockTokenSummary.totalTokens,
+  hourTotals: Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    totalTokens: hour === 9 ? 420 : hour === 10 ? 1_160 : hour === 11 ? 2_250 : 0,
+  })),
+  weekdayTotals: WEEKDAY_LABELS.map((label, weekday) => ({
+    weekday,
+    label,
+    totalTokens: weekday === 3 ? 2_250 : weekday === 4 ? 1_160 : weekday === 5 ? 640 : 0,
+  })),
+};
+
 function mockSecurityEventFromAudit(event: AuditEventDetailDto): SecurityEventListItemDto {
   const eventKind = event.toolCallId
     ? "tool"
@@ -548,6 +565,59 @@ export const mockDashboard: DashboardOverviewDto = {
     value: point.totalTokens,
   })),
   recentSecurityEvents: mockEvents.map(mockSecurityEventFromAudit).slice(0, 5),
+  recentQaRecords: [
+    {
+      qaRecordId: "qa-demo-001",
+      sessionKey: "feishu:guard-room",
+      runId: "run-demo-001",
+      userPromptExcerpt: "检查这个仓库最近的安全审计结果",
+      finalAnswerExcerpt: "已汇总工具调用、审批和风险事件。",
+      status: "completed",
+      riskLevel: "L2",
+      riskScore: 6,
+      toolCallCount: 3,
+      approvalCount: 1,
+      detectionCount: 2,
+      totalTokens: 1840,
+      startedAtMs: BASE_TIME - 12 * 60_000,
+      completedAtMs: BASE_TIME - 10 * 60_000,
+      linkOrigin: "runtime",
+    },
+    {
+      qaRecordId: "qa-demo-002",
+      sessionKey: "webchat:local",
+      runId: "run-demo-002",
+      userPromptExcerpt: "运行一次 /lynx-check 并展示报告正文",
+      finalAnswerExcerpt: "已生成检查报告并记录发送状态。",
+      status: "completed",
+      riskLevel: "L1",
+      riskScore: 2,
+      toolCallCount: 2,
+      approvalCount: 0,
+      detectionCount: 1,
+      totalTokens: 1260,
+      startedAtMs: BASE_TIME - 45 * 60_000,
+      completedAtMs: BASE_TIME - 42 * 60_000,
+      linkOrigin: "runtime",
+    },
+    {
+      qaRecordId: "qa-demo-003",
+      sessionKey: "feishu:ops",
+      runId: "run-demo-003",
+      userPromptExcerpt: "为什么这个危险命令被拦截",
+      finalAnswerExcerpt: "命令命中高危执行策略，已阻断并记录证据。",
+      status: "blocked",
+      riskLevel: "L4",
+      riskScore: 9,
+      toolCallCount: 1,
+      approvalCount: 0,
+      detectionCount: 3,
+      totalTokens: 980,
+      startedAtMs: BASE_TIME - 80 * 60_000,
+      completedAtMs: BASE_TIME - 79 * 60_000,
+      linkOrigin: "runtime",
+    },
+  ],
   recentToolCalls: mockToolCalls,
   recentApprovals: mockApprovals,
 };

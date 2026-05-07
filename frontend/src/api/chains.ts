@@ -1,4 +1,4 @@
-import type { CommonListQuery } from "@lynx/local-console-shared";
+import type { CommonListQuery, PageResponse } from "@lynx/local-console-shared";
 
 import { buildQueryString, fetchJson } from "./client";
 
@@ -32,7 +32,7 @@ export interface ChainListQuery extends CommonListQuery {
   conversationId?: string;
 }
 
-type ChainListPayload = ChainSummary[] | { items: ChainSummary[] };
+type ChainListPayload = ChainSummary[] | Partial<PageResponse<ChainSummary>>;
 
 function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
@@ -84,18 +84,41 @@ function normalizeChainSummary(item: ChainSummary): ChainSummary {
   };
 }
 
-function normalizeChainList(payload: ChainListPayload): ChainSummary[] {
-  const items = Array.isArray(payload) ? payload : payload.items;
-  return items.map(normalizeChainSummary);
+function normalizeChainList(
+  payload: ChainListPayload,
+  query: ChainListQuery,
+): PageResponse<ChainSummary> {
+  const rawItems = Array.isArray(payload) ? payload : payload.items ?? [];
+  const items = rawItems.map(normalizeChainSummary);
+  if (Array.isArray(payload)) {
+    const pageSize = query.pageSize ?? payload.length;
+    return {
+      items,
+      pageNum: query.pageNum ?? 1,
+      pageSize,
+      total: payload.length,
+      totalPages: payload.length === 0 ? 0 : Math.ceil(payload.length / pageSize),
+    };
+  }
+
+  const pageSize = payload.pageSize ?? query.pageSize ?? items.length;
+  const total = payload.total ?? items.length;
+  return {
+    items,
+    pageNum: payload.pageNum ?? query.pageNum ?? 1,
+    pageSize,
+    total,
+    totalPages: payload.totalPages ?? (total === 0 ? 0 : Math.ceil(total / pageSize)),
+  };
 }
 
 export async function listChains(
   query: ChainListQuery = {},
-): Promise<ChainSummary[]> {
+): Promise<PageResponse<ChainSummary>> {
   const payload = await fetchJson<ChainListPayload>(
     `/chains${buildQueryString(query)}`,
   );
-  return normalizeChainList(payload);
+  return normalizeChainList(payload, query);
 }
 
 export function getChain(chainId: string): Promise<ChainSummary> {

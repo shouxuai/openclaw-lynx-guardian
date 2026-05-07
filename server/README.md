@@ -14,6 +14,8 @@ cd backend
 The backend will serve the frontend from `../frontend/dist` automatically when this layout is preserved.
 No Node production dependencies are required for the backend.
 
+This package is built as a multi-platform release bundle and normally includes the Linux, Windows, and macOS backend executables for the supported targets.
+
 Useful runtime environment variables:
 
 - `LYNX_LOCAL_CONSOLE_PORT`
@@ -22,4 +24,4 @@ Useful runtime environment variables:
 - `LYNX_LOCAL_CONSOLE_DB_PATH`
 - `LYNX_LOCAL_CONSOLE_FRONTEND_DIST_PATH`
 
-The package normally includes `lynx-server-linux-x64` for the OpenClaw Docker gateway and a current-host binary for local use.
+The runtime selects the matching `lynx-server-<platform>-<arch>` executable automatically.

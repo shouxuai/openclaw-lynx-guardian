@@ -66,7 +66,13 @@ func RegisterSkills(
 	public.GET("/skills", func(c *gin.Context) {
 		values := c.Request.URL.Query()
 		page, err := repository.List(c.Request.Context(), repo.SkillListQuery{
-			Limit: httpserver.ReadInt(values, "limit"),
+			Q:          httpserver.ReadString(values, "q"),
+			TrustState: httpserver.ReadString(values, "trustState"),
+			Source:     httpserver.ReadString(values, "source"),
+			SourceKind: httpserver.ReadString(values, "sourceKind"),
+			PageNum:    httpserver.ReadInt(values, "pageNum"),
+			PageSize:   httpserver.ReadInt(values, "pageSize"),
+			Limit:      httpserver.ReadInt(values, "limit"),
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})

@@ -73,6 +73,103 @@ func TestQaRecordsMigrationCreatesPrimaryTableAndLinkColumns(t *testing.T) {
 			t.Fatalf("%s missing report_markdown column", table)
 		}
 	}
+	if !migrationContractHasColumn(t, database, "token_usage", "source_origin") {
+		t.Fatalf("token_usage missing source_origin column")
+	}
+	if !migrationContractHasIndex(t, database, "idx_token_usage_origin_occurred_at") {
+		t.Fatalf("token_usage missing idx_token_usage_origin_occurred_at index")
+	}
+}
+
+func TestTokenUsageMigrationAddsSourceOriginAndBackfillsDefault(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	_, err = database.Exec(`
+		CREATE TABLE token_usage (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			usage_event_id TEXT NOT NULL UNIQUE,
+			session_key TEXT,
+			run_id TEXT,
+			agent_id TEXT,
+			provider TEXT NOT NULL,
+			model TEXT NOT NULL,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			assistant_text_count INTEGER NOT NULL DEFAULT 0,
+			is_estimated INTEGER NOT NULL DEFAULT 0,
+			occurred_at INTEGER NOT NULL,
+			ingested_at INTEGER NOT NULL,
+			payload_json TEXT
+		);
+		INSERT INTO token_usage (
+			usage_event_id,
+			session_key,
+			run_id,
+			agent_id,
+			provider,
+			model,
+			input_tokens,
+			output_tokens,
+			cache_read_tokens,
+			cache_write_tokens,
+			total_tokens,
+			assistant_text_count,
+			is_estimated,
+			occurred_at,
+			ingested_at,
+			payload_json
+		) VALUES (
+			'usage-1',
+			'session-1',
+			'run-1',
+			'agent-1',
+			'openai',
+			'gpt-4.1',
+			1,
+			2,
+			3,
+			4,
+			5,
+			6,
+			0,
+			100,
+			200,
+			'{}'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("seed legacy token_usage table: %v", err)
+	}
+
+	if err := db.Migrate(database); err != nil {
+		t.Fatalf("migrate legacy db: %v", err)
+	}
+
+	if !migrationContractHasColumn(t, database, "token_usage", "source_origin") {
+		t.Fatalf("token_usage missing source_origin column after migration")
+	}
+
+	var sourceOrigin string
+	if err := database.QueryRow(
+		`SELECT source_origin FROM token_usage WHERE usage_event_id = ?`,
+		"usage-1",
+	).Scan(&sourceOrigin); err != nil {
+		t.Fatalf("query migrated source_origin: %v", err)
+	}
+	if sourceOrigin != "hook" {
+		t.Fatalf("unexpected source_origin %q", sourceOrigin)
+	}
+
+	if !migrationContractHasIndex(t, database, "idx_token_usage_origin_occurred_at") {
+		t.Fatalf("token_usage missing idx_token_usage_origin_occurred_at index after migration")
+	}
 }
 
 func openMigrationContractDB(t *testing.T) *sql.DB {
@@ -115,4 +212,18 @@ func migrationContractHasColumn(t *testing.T, database *sql.DB, table string, co
 		t.Fatalf("iterate column info: %v", err)
 	}
 	return false
+}
+
+func migrationContractHasIndex(t *testing.T, database *sql.DB, indexName string) bool {
+	t.Helper()
+
+	var name string
+	err := database.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`,
+		indexName,
+	).Scan(&name)
+	if err != nil {
+		return false
+	}
+	return name == indexName
 }

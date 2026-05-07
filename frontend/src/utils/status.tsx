@@ -41,6 +41,7 @@ const STATE_LABELS: Record<string, string> = {
   completed: "已完成",
   success: "成功",
   pending: "待处理",
+  expired: "已过期",
   running: "运行中",
   paused: "已暂停",
   failed: "失败",
@@ -288,6 +289,8 @@ export function renderStateBadge(value: string | undefined) {
     ? "success"
     : value === "pending" || value === "running" || value === "paused"
       ? "info"
+      : value === "expired"
+        ? "warning"
       : value === "failed" || value === "blocked"
         ? "danger"
         : "neutral";

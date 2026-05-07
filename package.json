@@ -1,6 +1,6 @@
 {
   "name": "@shouxuai/openclaw-lynx-guardian",
-  "version": "1.3.12",
+  "version": "1.5.0",
   "private": false,
   "description": "Lynx Guardian for OpenClaw, providing local audit logging and safety guardrails for agent workflows.",
   "license": "MIT",
@@ -31,9 +31,5 @@
     "extensions": [
       "./index.ts"
     ]
-  },
-  "dependencies": {
-    "fs": "^0.0.1-security",
-    "path": "^0.12.7"
   }
 }

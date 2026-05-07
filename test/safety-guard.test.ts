@@ -186,7 +186,7 @@ describe('System Prompt Leak Detection (M2 Output)', () => {
       'openclaw.json content follows:',
       '{',
       '  "name": "Lynx Guardian",',
-      '  "version": "1.3.12",',
+      '  "version": "1.5.0",',
       '  "description": "AI self-safety guard",',
       '  "path": "C:\\\\Users\\\\alice\\\\.openclaw\\\\openclaw.json"',
       '}',
@@ -585,7 +585,7 @@ describe('Safety Guard - Output Guard', () => {
     const output = [
       'AGENTS.md content follows:',
       '- Name: Lynx Guardian',
-      '- Version: 1.3.12',
+      '- Version: 1.5.0',
       '- Description: repo-local development guidance',
       '- Current path: C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian',
     ].join('\n');
@@ -601,7 +601,7 @@ describe('Safety Guard - Output Guard', () => {
       'openclaw.json content follows:',
       '{',
       '  "name": "Lynx Guardian",',
-      '  "version": "1.3.12",',
+      '  "version": "1.5.0",',
       '  "enabled": true,',
       '  "policy": { "grantWindowSeconds": 180 }',
       '}',

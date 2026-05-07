@@ -5,6 +5,7 @@ export interface ModalDialogProps {
   closeOnBackdropClick?: boolean;
   closeLabel?: string;
   open: boolean;
+  size?: "normal" | "wide";
   subtitle?: ReactNode;
   title: string;
   onClose: () => void;
@@ -15,6 +16,7 @@ export function ModalDialog({
   closeOnBackdropClick = false,
   closeLabel = "关闭",
   open,
+  size = "normal",
   subtitle,
   title,
   onClose,
@@ -61,7 +63,7 @@ export function ModalDialog({
         aria-describedby={subtitle ? subtitleId : undefined}
         aria-labelledby={titleId}
         aria-modal="true"
-        className="modal-dialog"
+        className={`modal-dialog modal-dialog--${size}`}
         role="dialog"
       >
         <div className="modal-dialog__header">

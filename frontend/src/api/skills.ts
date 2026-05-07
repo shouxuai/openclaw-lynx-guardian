@@ -1,4 +1,4 @@
-import type { CommonListQuery } from "@lynx/local-console-shared";
+import type { CommonListQuery, PageResponse } from "@lynx/local-console-shared";
 
 import { buildQueryString, fetchJson } from "./client";
 
@@ -30,14 +30,19 @@ export interface SkillDetail extends SkillInventoryItem {
   findings: SkillFinding[];
 }
 
-export interface SkillListResponse {
-  items: SkillDetail[];
-  nextCursor?: string;
+export interface SkillSourceBreakdownItem {
+  sourceKind: string;
+  count: number;
+}
+
+export interface SkillListResponse extends PageResponse<SkillDetail> {
+  sourceBreakdown?: SkillSourceBreakdownItem[];
 }
 
 export interface SkillListQuery extends CommonListQuery {
   trustState?: string;
   source?: string;
+  sourceKind?: string;
 }
 
 export function listSkills(query: SkillListQuery = {}): Promise<SkillListResponse> {

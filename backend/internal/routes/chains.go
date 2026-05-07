@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 	"github.com/openclaw/lynx-guardian/backend/internal/chain"
+	"github.com/openclaw/lynx-guardian/backend/internal/httpserver"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
 )
 
@@ -30,7 +31,17 @@ func RegisterChains(
 	})
 
 	public.GET("/chains", func(c *gin.Context) {
-		chains, err := repository.List(c.Request.Context())
+		values := c.Request.URL.Query()
+		chains, err := repository.List(c.Request.Context(), repo.ChainListQuery{
+			Q:              httpserver.ReadString(values, "q"),
+			ChannelProfile: httpserver.ReadString(values, "channelProfile"),
+			ConversationID: httpserver.ReadString(values, "conversationId"),
+			SessionKey:     httpserver.ReadString(values, "sessionKey"),
+			RequesterID:    httpserver.ReadString(values, "requesterId"),
+			PageNum:        httpserver.ReadInt(values, "pageNum"),
+			PageSize:       httpserver.ReadInt(values, "pageSize"),
+			Limit:          httpserver.ReadInt(values, "limit"),
+		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
 			return

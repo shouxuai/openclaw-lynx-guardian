@@ -70,6 +70,16 @@ function createSparseChain(chainId = "chain-sparse") {
   };
 }
 
+function createPage(items: unknown[], pageNum = 1, pageSize = 20, total = items.length) {
+  return {
+    items,
+    total,
+    pageNum,
+    pageSize,
+    totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+  };
+}
+
 describe("ChainsPage", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -83,16 +93,26 @@ describe("ChainsPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses filters and keeps chain internals in details", async () => {
+  it("uses filters, pagination and keeps chain internals in audit-style details", async () => {
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse({ items: [createChain()] }))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createChain()], 1, 20, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createChain("chain-page-2")], 2, 20, 41)))
       .mockResolvedValueOnce(
-        createJsonResponse({ items: [createChain("chain-filtered")] }),
+        createJsonResponse(createPage([createChain("chain-filtered")], 1, 20, 1)),
       );
 
-    render(<ChainsPage />);
+    const { container } = render(<ChainsPage />);
 
     await screen.findByText("chain-1");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/chains?pageNum=1&pageSize=20");
+    expect(screen.getByTitle("2")).toBeInTheDocument();
+    expect(screen.getByText("多轮链路说明")).toBeInTheDocument();
+    expect(screen.getByText(/多轮链路统计一段任务区间/)).toBeInTheDocument();
+    expect(screen.getByText(/示例：用户先要求读取配置/)).toBeInTheDocument();
+    expect(container.querySelector(".table-explanation-card.ant-card")).not.toBeNull();
+    expect(container.querySelector(".table-panel .table-explanation-card")).toBeNull();
+    expect(container.querySelector(".table-panel__header .panel__subtitle")).toBeNull();
+    expect(Number.parseInt(container.querySelector("table")?.style.minWidth ?? "0", 10)).toBeLessThanOrEqual(1136);
     expect(
       screen.getByText("覆盖的输入词：first prompt；second prompt"),
     ).toBeInTheDocument();
@@ -108,13 +128,20 @@ describe("ChainsPage", () => {
     expect(
       await screen.findByRole("dialog", { name: "链路详情" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("链路概览")).toBeInTheDocument();
+    expect(screen.getByText("链路信号")).toBeInTheDocument();
+    expect(screen.getByText("覆盖输入词")).toBeInTheDocument();
     expect(screen.getByText("secret-read")).toBeInTheDocument();
     expect(screen.getByText("grant-1")).toBeInTheDocument();
-    expect(screen.getByText("覆盖的输入词")).toBeInTheDocument();
     expect(screen.getByText("first prompt")).toBeInTheDocument();
     expect(screen.getByText("second prompt")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "关闭详情" }));
+    fireEvent.click(screen.getByTitle("2"));
+
+    await screen.findByText("chain-page-2");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/chains?pageNum=2&pageSize=20");
+
     fireEvent.change(screen.getByLabelText("关键词"), {
       target: { value: "filtered" },
     });
@@ -124,9 +151,9 @@ describe("ChainsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
 
     await screen.findByText("chain-filtered");
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "/lynx/chains?q=filtered&channelProfile=webchat",
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      "/lynx/chains?q=filtered&channelProfile=webchat&pageNum=1&pageSize=20",
     );
   });
 
@@ -142,16 +169,20 @@ describe("ChainsPage", () => {
     expect(screen.getAllByText("暂无").length).toBeGreaterThan(0);
   });
 
-  it("explains empty chains as related multi-turn judgment intervals", async () => {
+  it("uses an Ant explanation card and keeps the empty chain state inside the table", async () => {
     fetchMock.mockResolvedValueOnce(createJsonResponse({ items: [] }));
 
     const { container } = render(<ChainsPage />);
 
-    expect(
-      await screen.findByText("多轮链路统计什么"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("多轮链路说明")).toBeInTheDocument();
     expect(screen.getByText(/一段任务区间里多次有关联的输入/)).toBeInTheDocument();
     expect(screen.getByText(/示例：用户先要求读取配置/)).toBeInTheDocument();
     expect(container.querySelector(".metric-grid--narrow")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "链路" })).toBeInTheDocument();
+    expect(container.querySelector(".table-explanation-card.ant-card")).not.toBeNull();
+    expect(container.querySelector(".table-panel .table-explanation-card")).toBeNull();
+    expect(container.querySelector(".table-panel__header .panel__subtitle")).toBeNull();
+    expect(container.querySelector(".empty-explanation")).toBeNull();
+    expect(container.querySelector(".table-wrap")).not.toBeNull();
   });
 });

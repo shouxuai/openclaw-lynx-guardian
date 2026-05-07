@@ -60,6 +60,44 @@ func TestListRoutesClampInvalidPageParameters(t *testing.T) {
 	expectNumber(t, body, "totalPages", 1)
 }
 
+func TestKeywordFiltersWorkForPagedTableRoutes(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	seed := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", fixtureBatch("paged-keyword-filters"), true)
+	decodeObjectStatus(t, seed, http.StatusOK)
+
+	cases := []struct {
+		name    string
+		path    string
+		idKey   string
+		wantID  string
+		wantNum int
+	}{
+		{name: "tool calls", path: "/lynx/tool-calls?q=git%20status&pageNum=1&pageSize=20", idKey: "toolCallId", wantID: "tool-call-approval", wantNum: 1},
+		{name: "approvals", path: "/lynx/approvals?q=definitely-not-present&pageNum=1&pageSize=20", idKey: "approvalId", wantNum: 0},
+		{name: "sessions", path: "/lynx/sessions?q=account-alpha&pageNum=1&pageSize=20", idKey: "sessionKey", wantID: "session-alpha", wantNum: 1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, tc.path, nil, false), http.StatusOK)
+			expectNumber(t, body, "total", tc.wantNum)
+			items := pageItems(t, body)
+			if len(items) != tc.wantNum {
+				t.Fatalf("expected %d filtered items, got %#v", tc.wantNum, items)
+			}
+			if tc.wantNum > 0 {
+				expectString(t, items[0], tc.idKey, tc.wantID)
+			}
+		})
+	}
+}
+
 func TestTokenSummarySeparatesActualEstimatedAndUnavailableUsage(t *testing.T) {
 	handler, closer := buildParityHandler(t)
 	t.Cleanup(func() {

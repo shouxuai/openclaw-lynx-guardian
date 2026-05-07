@@ -1,91 +1,103 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TokensPage } from "./TokensPage";
+
+function createJsonResponse(data: unknown): Response {
+  return new Response(JSON.stringify(data), { status: 200 });
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("TokensPage", () => {
-  it("keeps estimated and unavailable usage out of the actual total", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+  it("renders the native-style token dashboard", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/tokens/summary")) {
-        return new Response(JSON.stringify({
-          totalTokens: 100,
-          inputTokens: 60,
-          outputTokens: 40,
+        return createJsonResponse({
+          totalTokens: 2_170_856,
+          inputTokens: 2_149_606,
+          outputTokens: 21_250,
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
-          actualTokens: 100,
+          actualTokens: 2_170_856,
           estimatedTokens: 0,
-          estimatedCount: 1,
-          unavailableCount: 1,
-          topModels: [{ model: "actual-model", totalTokens: 100 }],
-        }), { status: 200 });
+          estimatedCount: 0,
+          unavailableCount: 0,
+          topModels: [{ model: "openclaw/main", totalTokens: 2_170_856 }],
+        });
       }
       if (url.includes("/tokens/trend")) {
-        return new Response(JSON.stringify({
+        return createJsonResponse({
           bucket: "hour",
-          points: [{ bucketStartMs: 1777390000000, inputTokens: 60, outputTokens: 40, totalTokens: 100 }],
-        }), { status: 200 });
+          points: [{
+            bucketStartMs: 1_777_350_000_000,
+            inputTokens: 64_306,
+            outputTokens: 72,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 64_378,
+          }],
+        });
       }
-      return new Response(JSON.stringify({
-        items: [
-          {
-            usageEventId: "actual-1",
-            provider: "openclaw",
-            model: "actual-model",
-            sourceType: "actual",
-            inputTokens: 60,
-            outputTokens: 40,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            totalTokens: 100,
-            assistantTextCount: 1,
-            isEstimated: false,
-            occurredAtMs: 1777390000000,
-          },
-          {
-            usageEventId: "estimated-1",
-            provider: "openclaw",
-            model: "estimated-model",
-            sourceType: "estimated",
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            totalTokens: 900,
-            assistantTextCount: 1,
-            isEstimated: true,
-            occurredAtMs: 1777390001000,
-          },
-          {
-            usageEventId: "unavailable-1",
-            provider: "openclaw",
-            model: "unknown-model",
-            sourceType: "unavailable",
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            totalTokens: 0,
-            assistantTextCount: 1,
-            isEstimated: false,
-            occurredAtMs: 1777390002000,
-          },
-        ],
-      }), { status: 200 });
-    }));
+      if (url.includes("/tokens/heatmap")) {
+        return createJsonResponse({
+          timeZone: "local",
+          totalTokens: 2_170_856,
+          hourTotals: Array.from({ length: 24 }, (_, hour) => ({
+            hour,
+            totalTokens: hour === 21 ? 64_306 : 0,
+          })),
+          weekdayTotals: Array.from({ length: 7 }, (_, weekday) => ({
+            weekday,
+            label: `周${weekday}`,
+            totalTokens: weekday === 1 ? 2_106_550 : 0,
+          })),
+        });
+      }
+      return createJsonResponse({
+        items: [{
+          usageEventId: "usage-1",
+          sessionKey: "sess-token-hook",
+          provider: "openclaw",
+          model: "openclaw/main",
+          sourceType: "actual",
+          sourceOrigin: "hook",
+          inputTokens: 64_306,
+          outputTokens: 72,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 64_378,
+          assistantTextCount: 1,
+          isEstimated: false,
+          occurredAtMs: 1_777_418_400_000,
+        }],
+        total: 1,
+        pageNum: 1,
+        pageSize: 20,
+        totalPages: 1,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
-    render(<TokensPage />);
+    const { container } = render(<TokensPage />);
 
-    expect(await screen.findByText("可计量总量")).toBeInTheDocument();
-    expect(screen.getAllByText("100").length).toBeGreaterThan(0);
-    expect(screen.getByText("估算记录 1")).toBeInTheDocument();
-    expect(screen.getByText("不可用记录 1")).toBeInTheDocument();
-    expect(screen.getByText("estimated")).toBeInTheDocument();
-    expect(screen.getByText("unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("Token 分析")).toBeInTheDocument();
+    expect(container.querySelector(".page-header")).not.toBeNull();
+    expect(container.querySelector(".token-hero")).toBeNull();
+    expect(container.querySelector(".token-metric-strip.metric-grid.metric-grid--compact")).not.toBeNull();
+    expect(container.querySelector(".token-metric-grid")).toBeNull();
+    expect(screen.getAllByText("总量", { selector: ".metric-card__label" })[0]).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "最近 24 小时" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Last 24 hours" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+    expect(await screen.findByTestId("token-trend-line-chart")).toBeInTheDocument();
+    expect(container.querySelector(".token-heatmap-grid")).not.toBeNull();
+    expect(container.querySelectorAll(".token-heatmap-cell__swatch")).toHaveLength(31);
+    expect(await screen.findByText("实时 hook")).toBeInTheDocument();
   });
 });

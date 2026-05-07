@@ -53,6 +53,13 @@ function createDecision(overrides: Record<string, unknown>) {
   };
 }
 
+function expectTableFitsDefaultContentWidth(container: HTMLElement): void {
+  const table = container.querySelector(".data-table") as HTMLTableElement | null;
+  const minWidth = Number.parseFloat(table?.style.minWidth ?? "0");
+
+  expect(minWidth).toBeLessThanOrEqual(1136);
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -110,6 +117,61 @@ describe("DecisionsPage tone mapping", () => {
     expect(screen.getByText("approval.bypass_phrase")).toBeInTheDocument();
     expect(screen.getByText("approval.bypass_phrase +30")).toBeInTheDocument();
     expect(screen.getByText("evidence_score")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: "裁决详情" })).getByText("绕过审批意图（approval_bypass）")).toBeInTheDocument();
+  });
+
+  it("shows the ordinary-language decision reason directly in the table", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      items: [
+      createDecision({
+        decisionId: "decision-why-1",
+        riskLevel: "L3",
+        matchedModules: ["approval_bypass", "protected_file_access"],
+        winningArbiter: "evidence_score",
+      }),
+      ],
+      total: 1,
+      pageNum: 1,
+      pageSize: 20,
+      totalPages: 1,
+    }), { status: 200 })));
+
+    render(<DecisionsPage />);
+
+    const row = (await screen.findByText("decision-why-1")).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText(/这次被判为 L3 高危/)).toBeInTheDocument();
+    expect(within(row!).getByText(/命中了 绕过审批意图（approval_bypass）、访问受保护文件（protected_file_access）/)).toBeInTheDocument();
+    expect(within(row!).getByText(/需要人工审批，不是直接放行/)).toBeInTheDocument();
+
+    fireEvent.click(within(row!).getByRole("button", { name: "查看 decision-why-1 裁决详情" }));
+
+    const dialog = screen.getByRole("dialog", { name: "裁决详情" });
+    expect(within(dialog).getByText("裁决概览")).toBeInTheDocument();
+    expect(within(dialog).queryByText("系统为什么这么判？")).not.toBeInTheDocument();
+  });
+
+  it("translates raw decision module codes in the table reason", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      items: [
+      createDecision({
+        decisionId: "decision-raw-module-1",
+        matchedModules: ["semantic", "M3", "M2"],
+      }),
+      ],
+      total: 1,
+      pageNum: 1,
+      pageSize: 20,
+      totalPages: 1,
+    }), { status: 200 })));
+
+    render(<DecisionsPage />);
+
+    const row = (await screen.findByText("decision-raw-module-1")).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText(/语义风险信号（semantic）/)).toBeInTheDocument();
+    expect(within(row!).getByText(/高风险代理\/权限操作（M3）/)).toBeInTheDocument();
+    expect(within(row!).getByText(/受保护资源访问（M2）/)).toBeInTheDocument();
   });
 
   it("uses pagination and filter controls instead of exposing every internal decision field in the table", async () => {
@@ -130,9 +192,17 @@ describe("DecisionsPage tone mapping", () => {
       }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<DecisionsPage />);
+    const { container } = render(<DecisionsPage />);
 
     await screen.findByText("decision-page-1");
+    expect(document.querySelector(".decision-summary-grid")).not.toBeNull();
+    expectTableFitsDefaultContentWidth(container);
+    expect(screen.getByText("裁决记录说明")).toBeInTheDocument();
+    expect(screen.getByText(/回答“系统为什么这么判”/)).toBeInTheDocument();
+    expect(screen.getByText(/告警类裁决需要查看详情证据/)).toBeInTheDocument();
+    expect(container.querySelector(".table-explanation-card.ant-card")).not.toBeNull();
+    expect(container.querySelector(".table-panel .table-explanation-card")).toBeNull();
+    expect(container.querySelector(".table-panel__header .panel__subtitle")).toBeNull();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/decisions?pageNum=1&pageSize=20");
     expect(screen.getByTitle("3")).toBeInTheDocument();
     expect(screen.getByLabelText("关键词")).toBeInTheDocument();

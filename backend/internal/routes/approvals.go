@@ -12,6 +12,7 @@ func RegisterApprovals(router gin.IRoutes, repository *repo.ApprovalsRepository)
 	router.GET("/approvals", func(c *gin.Context) {
 		values := c.Request.URL.Query()
 		query := repo.ApprovalsListQuery{
+			Q:             httpserver.ReadString(values, "q"),
 			FromMs:        httpserver.ReadInt64(values, "fromMs"),
 			ToMs:          httpserver.ReadInt64(values, "toMs"),
 			SessionKey:    httpserver.ReadString(values, "sessionKey"),

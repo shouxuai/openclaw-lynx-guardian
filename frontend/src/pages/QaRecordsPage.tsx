@@ -550,7 +550,7 @@ export function QaRecordsPage() {
         <div className="panel__header">
           <div>
             <h2 className="panel__title">问答列表</h2>
-            <p className="panel__subtitle">点击任意一行查看工具链路、审批和关联审计事件。</p>
+            <p className="panel__subtitle">点击任意一行查看工具链路、审批和关联审计事件的详情。</p>
           </div>
         </div>
         <DataTable
@@ -583,6 +583,7 @@ export function QaRecordsPage() {
       </article>
 
       <SideDrawer
+        closeOnBackdropClick
         closeLabel="关闭详情"
         open={Boolean(selectedRecordId && (detail || detailError))}
         size="wide"
@@ -674,6 +675,7 @@ export function QaRecordsPage() {
       <ModalDialog
         closeLabel="关闭审计事件"
         open={auditEventsOpen}
+        size="wide"
         title="关联审计事件"
         subtitle={selectedRecord?.qaRecordId ?? "查看当前问答关联的安全审计事件。"}
         onClose={() => setAuditEventsOpen(false)}

@@ -8,6 +8,7 @@ import (
 )
 
 type ToolCallsListQuery struct {
+	Q                 *string
 	FromMs            *int64
 	ToMs              *int64
 	SessionKey        *string
@@ -53,6 +54,22 @@ type toolCallDetailRow struct {
 func (r *ToolCallsRepository) List(query ToolCallsListQuery) (service.PageResponse[map[string]any], error) {
 	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"tool_call_id",
+		"session_key",
+		"run_id",
+		"approval_id",
+		"tool_name",
+		"param_summary",
+		"param_hash",
+		"triggered_modules_json",
+		"policy_decision",
+		"enforcement_action",
+		"result_status",
+		"result_excerpt",
+		"error_text",
+		"metadata_json",
+	}, query.Q)
 	filter.AppendRange("started_at", query.FromMs, query.ToMs)
 	filter.AppendEquals("session_key", query.SessionKey)
 	filter.AppendEquals("run_id", query.RunID)

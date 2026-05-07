@@ -37,6 +37,8 @@ const EMPTY_FILTERS: CheckFilters = {
   trigger: "",
 };
 
+const REPORT_USE_DESCRIPTION = "检测报告用于留存每次 /lynx-check 的执行证据、投递结果和完整 Markdown 正文，方便回溯自动巡检是否真实完成。";
+
 const STATUS_OPTIONS = [
   { label: "已完成", value: "completed" },
   { label: "运行中", value: "running" },
@@ -127,7 +129,7 @@ export function LynxChecksPage() {
     ? Math.round(durations.reduce((total, value) => total + value, 0) / durations.length)
     : undefined;
   const failRate = attemptedCount === 0 ? "0%" : `${(((attemptedCount - successCount) / attemptedCount) * 100).toFixed(2)}%`;
-  const statusText = error ? `检查任务加载失败：${error}` : loading ? "正在加载 lynx_checks 数据流" : "左侧筛选检测任务，右侧直接查看最近检测报告。";
+  const statusText = error ? `检查任务加载失败：${error}` : loading ? "正在加载 lynx_checks 数据流" : REPORT_USE_DESCRIPTION;
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -284,7 +286,7 @@ export function LynxChecksPage() {
           <div className="table-panel__header">
             <div>
               <h2 className="panel__title">任务执行列表</h2>
-              <p className="panel__subtitle">只保留排查时第一眼需要看的状态字段。</p>
+              <p className="panel__subtitle">按状态、触发方式和关键词定位一次检测，再查看它留下的报告正文与投递结果。</p>
             </div>
           </div>
           <DataTable
@@ -322,6 +324,8 @@ export function LynxChecksPage() {
                 </button>
               ),
             }))}
+            onRowClick={(row) => setSelectedRequestId(row.id)}
+            selectedRowId={selectedRequestId ?? undefined}
           />
           <TablePagination {...paginationProps} />
         </article>
@@ -329,13 +333,13 @@ export function LynxChecksPage() {
         <article className="panel report-side-panel">
           <div className="panel__header">
             <div>
-              <h2 className="panel__title">最近检测报告</h2>
+              <h2 className="panel__title">当前选中报告</h2>
               <p className="panel__subtitle">
                 {selectedDetail?.requestId || selectedRequestId ? `报告：${selectedDetail?.requestId ?? selectedRequestId}` : "暂无记录"}
               </p>
             </div>
             <span className="status-badge status-badge--info">
-              {runningCount > 0 ? `${runningCount} 个运行中` : "最近记录"}
+              {runningCount > 0 ? `${runningCount} 个运行中` : selectedRequestId ? "选中记录" : "暂无记录"}
             </span>
           </div>
           <div className="report-side-panel__meta">

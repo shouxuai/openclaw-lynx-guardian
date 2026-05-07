@@ -2,6 +2,7 @@ package repo
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/service"
 )
@@ -34,6 +35,10 @@ type TokenSummaryQuery struct {
 type TokenTrendQuery struct {
 	TokenSummaryQuery
 	Bucket *string
+}
+
+type TokenHeatmapQuery struct {
+	TokenSummaryQuery
 }
 
 type tokenUsageRow struct {
@@ -247,6 +252,77 @@ func (r *TokensRepository) GetTrend(query TokenTrendQuery) (map[string]any, erro
 		"bucket": bucket,
 		"points": points,
 	}, nil
+}
+
+func (r *TokensRepository) GetHeatmap(query TokenSummaryQuery) (map[string]any, error) {
+	filter := tokenCommonFilter(query)
+	rows, err := r.db.Query(
+		`
+		SELECT occurred_at, total_tokens
+		FROM token_usage `+filter.Where()+`
+		ORDER BY occurred_at ASC, usage_event_id ASC`,
+		filter.Params()...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	hourTotals := make([]int64, 24)
+	weekdayTotals := make([]int64, 7)
+	var totalTokens int64
+
+	for rows.Next() {
+		var occurredAtMs, rowTokens int64
+		if err := rows.Scan(&occurredAtMs, &rowTokens); err != nil {
+			return nil, err
+		}
+		totalTokens += rowTokens
+		localTime := time.UnixMilli(occurredAtMs).In(time.Local)
+		hourTotals[localTime.Hour()] += rowTokens
+		weekdayTotals[int(localTime.Weekday())] += rowTokens
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	weekdayLabels := []string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
+	return map[string]any{
+		"timeZone":    "local",
+		"totalTokens": totalTokens,
+		"hourTotals": buildTokenHeatmapTotals(hourTotals, "hour"),
+		"weekdayTotals": buildTokenHeatmapWeekdayTotals(
+			weekdayTotals,
+			weekdayLabels,
+		),
+	}, nil
+}
+
+func buildTokenHeatmapTotals(values []int64, _ string) []map[string]any {
+	out := make([]map[string]any, 0, len(values))
+	for index, total := range values {
+		out = append(out, map[string]any{
+			"hour":        index,
+			"totalTokens": total,
+		})
+	}
+	return out
+}
+
+func buildTokenHeatmapWeekdayTotals(values []int64, labels []string) []map[string]any {
+	out := make([]map[string]any, 0, len(values))
+	for index, total := range values {
+		label := ""
+		if index >= 0 && index < len(labels) {
+			label = labels[index]
+		}
+		out = append(out, map[string]any{
+			"weekday":     index,
+			"label":       label,
+			"totalTokens": total,
+		})
+	}
+	return out
 }
 
 func tokenCommonFilter(query TokenSummaryQuery) *Filter {

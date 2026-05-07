@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import dayjs from "dayjs";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EventsPage, buildDateRangeQuery } from "../../src/pages/EventsPage";
@@ -106,7 +107,9 @@ function createSecurityEventSummary(overrides: Record<string, unknown> = {}) {
 function renderEventsPage() {
   return render(
     <ConfigProvider locale={zhCN}>
-      <EventsPage />
+      <MemoryRouter>
+        <EventsPage />
+      </MemoryRouter>
     </ConfigProvider>,
   );
 }
@@ -180,6 +183,8 @@ describe("EventsPage", () => {
     });
     const summary = screen.getByLabelText("当前筛选安全事件概览");
     expect(within(summary).getByText("42")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "立即刷新" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "原始审计流水" })).toHaveAttribute("href", "/raw-events");
     const l4Card = within(summary).getByText("L4").closest("article");
     expect(l4Card).not.toBeNull();
     expect(within(l4Card!).getByText("5")).toBeInTheDocument();
@@ -205,6 +210,8 @@ describe("EventsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "查看 security:tool:tool-1 详情" }));
     const dialog = await screen.findByRole("dialog", { name: "工具调用检查" });
+    expect(within(dialog).getByText("事件概览")).toBeInTheDocument();
+    expect(within(dialog).getByText("基础信息")).toBeInTheDocument();
     expect(within(dialog).getByText("原始证据")).toBeInTheDocument();
     expect(within(dialog).getByText("event-1")).toBeInTheDocument();
     expect(fetchMock.mock.calls.map((call) => call[0])).toContain("/lynx/security-events/security%3Atool%3Atool-1");

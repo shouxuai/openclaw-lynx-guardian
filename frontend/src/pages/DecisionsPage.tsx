@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { DecisionResponse, RiskLevel, ScoreBreakdown } from "@lynx/local-console-shared";
-import { Button, Input, Select } from "antd";
+import { Button, Card, Input, Select, Typography } from "antd";
 
 import { listDecisions, type DecisionListQuery } from "../api/decisions";
 import { ModalDialog } from "../components/feedback/ModalDialog";
@@ -46,6 +46,28 @@ const ACTION_OPTIONS = [
   { label: "需审批", value: "require_approval" },
   { label: "阻断", value: "deny" },
 ];
+
+const MODULE_LABELS: Record<string, string> = {
+  M2: "受保护资源访问",
+  M3: "高风险代理/权限操作",
+  approval_bypass: "绕过审批意图",
+  chain_context: "链路上下文风险",
+  protected_file_access: "访问受保护文件",
+  concealed_execution: "隐藏执行意图",
+  evasive_intent_cn: "中文规避意图",
+  output_sensitive_data: "输出敏感信息",
+  plugin_integrity: "插件完整性风险",
+  secret_leak: "敏感信息泄露",
+  semantic: "语义风险信号",
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  input: "输入",
+  tool: "工具",
+  tool_call: "工具",
+  output: "输出",
+  assistant_output: "输出",
+};
 
 function buildDecisionQuery(filters: DecisionFilters): Omit<DecisionListQuery, "pageNum" | "pageSize"> {
   return {
@@ -135,6 +157,47 @@ function formatDegradedReason(decision: DecisionResponse): string {
   return decision.degraded.reason || "后端降级但已记录裁决";
 }
 
+function formatRiskText(decision: DecisionResponse): string {
+  const labels: Record<string, string> = {
+    L0: "L0 基础",
+    L1: "L1 关注",
+    L2: "L2 中危",
+    L3: "L3 高危",
+    L4: "L4 严重",
+  };
+  return labels[decision.riskLevel] ?? decision.riskLevel;
+}
+
+function formatMatchedModulesText(decision: DecisionResponse): string {
+  if (decision.matchedModules.length === 0) {
+    return "暂无明确模块";
+  }
+  return decision.matchedModules
+    .map((module) => MODULE_LABELS[module] ? `${MODULE_LABELS[module]}（${module}）` : module)
+    .join("、");
+}
+
+function formatPlainDecisionReason(decision: DecisionResponse): string {
+  if (decision.riskLevel === "L4" || decision.block || decision.action === "deny") {
+    return "处置结果是拒绝或阻断。L4 是硬拒绝，不能审批放行。";
+  }
+  if (decision.requiresApproval || decision.action === "require_approval") {
+    return "处置结果是需要人工审批，不是直接放行；审批通过后才可能产生后续放行记录。L4 是硬拒绝，不能审批放行。";
+  }
+  if (decision.action === "allow") {
+    return "处置结果是允许继续，但仍保留这次判断依据，方便之后回看为什么没有拦截。L4 是硬拒绝，不能审批放行。";
+  }
+  return "处置结果不是直接阻断，会保留证据供人工复核。L4 是硬拒绝，不能审批放行。";
+}
+
+function formatDecisionReason(decision: DecisionResponse): string {
+  return `这次被判为 ${formatRiskText(decision)}，因为命中了 ${formatMatchedModulesText(decision)}。${formatPlainDecisionReason(decision)}`;
+}
+
+function formatDecisionStage(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage;
+}
+
 function formatDetailJson(value: unknown): string {
   return value ? JSON.stringify(value, null, 2) : "暂无";
 }
@@ -178,7 +241,7 @@ export function DecisionsPage() {
     ? `决策记录加载失败：${error}`
     : loading
       ? "正在加载 Go 控制面裁决记录"
-      : "展示每次裁决的风险等级、动作和处置结果；证据与评分细节收纳在详情里。";
+      : undefined;
   const selectedMetadata = selectedDecision?.metadataJson;
   const selectedScriptEvidence = selectedMetadata?.scriptEvidence;
   const selectedResourceEvidence = selectedMetadata?.resourceEvidence;
@@ -191,21 +254,18 @@ export function DecisionsPage() {
         eyebrow="DECISION CONTROL PLANE"
       />
 
-      <section className="summary-card-grid">
+      <section className="summary-card-grid decision-summary-grid">
         <article className="summary-card">
           <p className="summary-card__label">待复核</p>
           <strong className="summary-card__value">{formatInteger(summary.warned)}</strong>
-          <p className="summary-card__delta">告警类裁决需要查看详情证据</p>
         </article>
         <article className="summary-card">
           <p className="summary-card__label">已阻断</p>
           <strong className="summary-card__value">{formatInteger(summary.blocked)}</strong>
-          <p className="summary-card__unit">L4 / deny / block</p>
         </article>
         <article className="summary-card">
           <p className="summary-card__label">需要审批</p>
           <strong className="summary-card__value">{formatInteger(summary.approvals)}</strong>
-          <p className="summary-card__unit">allow-current-chain 前置状态</p>
         </article>
       </section>
 
@@ -261,18 +321,25 @@ export function DecisionsPage() {
         </form>
       </section>
 
+      <Card className="table-explanation-card" size="small" title="裁决记录说明">
+        <Typography.Paragraph>
+          回答“系统为什么这么判”：列表保留裁决、决策理由、风险、动作、审批和处置结果；告警类裁决需要查看详情证据时进入详情。
+        </Typography.Paragraph>
+      </Card>
+
       <section className="table-panel">
         <div className="table-panel__header">
           <h2 className="panel__title">裁决记录</h2>
         </div>
         <DataTable
           columns={[
-            { key: "decision", label: "裁决", maxWidth: 320, minWidth: 220, width: 260 },
-            { key: "risk", label: "风险", maxWidth: 140, minWidth: 110, width: 120 },
-            { key: "action", label: "动作", maxWidth: 150, minWidth: 118, width: 132 },
-            { key: "approval", label: "审批", maxWidth: 140, minWidth: 110, width: 120 },
-            { key: "block", label: "处置结果", maxWidth: 150, minWidth: 118, width: 132 },
-            { key: "detail", label: "操作", maxWidth: 140, minWidth: 104, width: 116 },
+            { key: "decision", label: "裁决", maxWidth: 260, minWidth: 190, width: 220 },
+            { key: "reason", label: "决策理由", maxWidth: 410, minWidth: 280, width: 352 },
+            { key: "risk", label: "风险", maxWidth: 116, minWidth: 92, width: 102 },
+            { key: "action", label: "动作", maxWidth: 116, minWidth: 92, width: 102 },
+            { key: "approval", label: "审批", maxWidth: 118, minWidth: 94, width: 104 },
+            { key: "block", label: "处置结果", maxWidth: 128, minWidth: 104, width: 112 },
+            { key: "detail", label: "操作", maxWidth: 120, minWidth: 96, width: 104 },
           ]}
           error={error}
           loading={loading}
@@ -282,9 +349,10 @@ export function DecisionsPage() {
             decision: (
               <div className="row-stack">
                 <strong>{decision.decisionId}</strong>
-                <span>{decision.stage}</span>
+                <span>{formatDecisionStage(decision.stage)}</span>
               </div>
             ),
+            reason: <span className="table-cell-clamp table-cell-clamp--3">{formatDecisionReason(decision)}</span>,
             risk: renderRiskBadge(decision.riskLevel),
             action: renderActionBadge(decision.action),
             approval: formatApprovalState(decision),
@@ -312,44 +380,117 @@ export function DecisionsPage() {
       <ModalDialog
         closeLabel="关闭详情"
         open={Boolean(selectedDecision)}
+        size="wide"
         title="裁决详情"
         subtitle={selectedDecision?.decisionId ?? "查看裁决证据、仲裁器和评分轨迹。"}
         onClose={() => setSelectedDecision(null)}
       >
-        <dl className="detail-panel__grid">
-          {[
-            { label: "裁决 ID", value: selectedDecision?.decisionId ?? "暂无" },
-            { label: "阶段", value: selectedDecision?.stage ?? "暂无" },
-            { label: "风险等级", value: selectedDecision ? renderRiskBadge(selectedDecision.riskLevel) : "暂无" },
-            { label: "动作", value: selectedDecision ? renderActionBadge(selectedDecision.action) : "暂无" },
-            { label: "审计策略", value: selectedDecision ? renderPolicyDecisionBadge(selectedDecision.audit.policyDecision, selectedDecision.audit.enforcementAction) : "暂无" },
-            { label: "执行动作", value: selectedDecision ? renderActionBadge(selectedDecision.audit.enforcementAction) : "暂无" },
-            { label: "审批状态", value: selectedDecision ? formatApprovalState(selectedDecision) : "暂无" },
-            { label: "处置结果", value: selectedDecision ? formatBlockState(selectedDecision.block) : "暂无" },
-            { label: "获胜仲裁器", value: selectedDecision?.winningArbiter ?? "暂无" },
-            { label: "命中模块", value: selectedDecision && selectedDecision.matchedModules.length > 0 ? selectedDecision.matchedModules.join("；") : "暂无" },
-            { label: "Matched Rules", value: selectedDecision ? formatMatchedRules(selectedDecision) : "暂无" },
-            { label: "Score Breakdown", value: selectedDecision ? formatScoreBreakdown(collectScoreBreakdown(selectedDecision)) : "暂无" },
-            { label: "降级原因", value: selectedDecision ? formatDegradedReason(selectedDecision) : "暂无" },
-            { label: "策略版本", value: selectedMetadata?.policyVersion ? String(selectedMetadata.policyVersion) : "暂无" },
-          ].map((field) => (
-            <div key={field.label} className="detail-panel__field">
-              <dt>{field.label}</dt>
-              <dd>{field.value}</dd>
-            </div>
-          ))}
-        </dl>
-        {selectedScriptEvidence ? (
-          <section className="detail-section">
-            <h3>脚本预检证据</h3>
-            <pre className="code-panel">{formatDetailJson(selectedScriptEvidence)}</pre>
-          </section>
-        ) : null}
-        {selectedResourceEvidence ? (
-          <section className="detail-section">
-            <h3>资源策略证据</h3>
-            <pre className="code-panel">{formatDetailJson(selectedResourceEvidence)}</pre>
-          </section>
+        {selectedDecision ? (
+          <div className="audit-detail-dialog">
+            <section className="audit-detail-dialog__hero">
+              <div className="audit-detail-dialog__heroText">
+                <p className="audit-detail-dialog__eyebrow">裁决概览</p>
+                <p className="audit-detail-dialog__heroSubtitle">{selectedDecision.decisionId}</p>
+              </div>
+              <div className="audit-detail-dialog__chips" aria-label="裁决概览标签">
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">裁决阶段</span>
+                  <span className="audit-detail-dialog__chipValue">{formatDecisionStage(selectedDecision.stage)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">风险等级</span>
+                  <span className="audit-detail-dialog__chipValue">{renderRiskBadge(selectedDecision.riskLevel)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">执行动作</span>
+                  <span className="audit-detail-dialog__chipValue">{renderActionBadge(selectedDecision.action)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">处置结果</span>
+                  <span className="audit-detail-dialog__chipValue">
+                    <StatusBadge label={formatBlockState(selectedDecision.block)} tone={formatDecisionTone(selectedDecision)} />
+                  </span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">审批状态</span>
+                  <span className="audit-detail-dialog__chipValue">{formatApprovalState(selectedDecision)}</span>
+                </span>
+              </div>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h2 className="panel__title">基础信息</h2>
+                  <p className="panel__subtitle">裁决阶段、审计策略、审批状态和降级上下文。</p>
+                </div>
+              </div>
+              <dl className="detail-panel__grid audit-detail-dialog__summary-grid">
+                {[
+                  { label: "裁决 ID", value: selectedDecision.decisionId },
+                  { label: "阶段", value: formatDecisionStage(selectedDecision.stage) },
+                  { label: "风险等级", value: renderRiskBadge(selectedDecision.riskLevel) },
+                  { label: "动作", value: renderActionBadge(selectedDecision.action) },
+                  { label: "审计策略", value: renderPolicyDecisionBadge(selectedDecision.audit.policyDecision, selectedDecision.audit.enforcementAction) },
+                  { label: "执行动作", value: renderActionBadge(selectedDecision.audit.enforcementAction) },
+                  { label: "审批状态", value: formatApprovalState(selectedDecision) },
+                  { label: "处置结果", value: formatBlockState(selectedDecision.block) },
+                  { label: "降级原因", value: formatDegradedReason(selectedDecision) },
+                  { label: "策略版本", value: selectedMetadata?.policyVersion ? String(selectedMetadata.policyVersion) : "暂无" },
+                ].map((field) => (
+                  <div key={field.label} className="detail-panel__field">
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h2 className="panel__title">评分与证据</h2>
+                  <p className="panel__subtitle">命中模块、规则和分数变化，用来复核裁决来源。</p>
+                </div>
+              </div>
+              <dl className="detail-panel__grid audit-detail-dialog__summary-grid">
+                {[
+                  { label: "获胜仲裁器", value: selectedDecision.winningArbiter },
+                  { label: "命中模块", value: formatMatchedModulesText(selectedDecision) },
+                  { label: "Matched Rules", value: formatMatchedRules(selectedDecision) },
+                  { label: "Score Breakdown", value: formatScoreBreakdown(collectScoreBreakdown(selectedDecision)) },
+                ].map((field) => (
+                  <div key={field.label} className="detail-panel__field">
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            {selectedScriptEvidence ? (
+              <section className="audit-detail-dialog__section">
+                <div className="panel__header audit-detail-dialog__sectionHeader">
+                  <div>
+                    <h2 className="panel__title">脚本预检证据</h2>
+                    <p className="panel__subtitle">脚本风险扫描返回的结构化证据。</p>
+                  </div>
+                </div>
+                <pre className="code-panel audit-detail-dialog__json">{formatDetailJson(selectedScriptEvidence)}</pre>
+              </section>
+            ) : null}
+            {selectedResourceEvidence ? (
+              <section className="audit-detail-dialog__section">
+                <div className="panel__header audit-detail-dialog__sectionHeader">
+                  <div>
+                    <h2 className="panel__title">资源策略证据</h2>
+                    <p className="panel__subtitle">受保护资源策略返回的结构化证据。</p>
+                  </div>
+                </div>
+                <pre className="code-panel audit-detail-dialog__json">{formatDetailJson(selectedResourceEvidence)}</pre>
+              </section>
+            ) : null}
+          </div>
         ) : null}
       </ModalDialog>
     </div>

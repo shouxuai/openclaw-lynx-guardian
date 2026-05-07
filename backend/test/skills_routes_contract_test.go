@@ -157,6 +157,64 @@ func TestSkillInventoryListDoesNotBlockWhileLoadingFindings(t *testing.T) {
 	}
 }
 
+func TestSkillInventoryListPaginatesAndReturnsSourceBreakdown(t *testing.T) {
+	router := setupSkillRouter(t)
+
+	postSkillJSON(t, router, http.MethodPost, "/lynx/internal/v1/skills/inventory/sync", map[string]any{
+		"items": []map[string]any{
+			newSkillInventoryTestItem("skill-native-bundled", "Native Bundled", "openclaw-bundled", "2026-04-28T00:03:00Z"),
+			newSkillInventoryTestItem("skill-extension", "Extension Skill", "openclaw-extension", "2026-04-28T00:02:00Z"),
+			newSkillInventoryTestItem("skill-local", "Local Skill", "local", "2026-04-28T00:01:00Z"),
+		},
+	})
+
+	firstPage := getSkillJSON(t, router, "/lynx/skills?pageNum=1&pageSize=2")
+	items, ok := firstPage["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("expected two first-page skills, got %#v", firstPage["items"])
+	}
+	assertSkillField(t, firstPage, "total", float64(3))
+	assertSkillField(t, firstPage, "pageNum", float64(1))
+	assertSkillField(t, firstPage, "pageSize", float64(2))
+	assertSkillField(t, firstPage, "totalPages", float64(2))
+	assertSourceBreakdownCount(t, firstPage, "openclaw-bundled", 1)
+	assertSourceBreakdownCount(t, firstPage, "openclaw-extension", 1)
+	assertSourceBreakdownCount(t, firstPage, "local", 1)
+
+	secondPage := getSkillJSON(t, router, "/lynx/skills?pageNum=2&pageSize=2")
+	secondItems, ok := secondPage["items"].([]any)
+	if !ok || len(secondItems) != 1 {
+		t.Fatalf("expected one second-page skill, got %#v", secondPage["items"])
+	}
+}
+
+func TestSkillInventoryListFiltersBySourceKind(t *testing.T) {
+	router := setupSkillRouter(t)
+
+	postSkillJSON(t, router, http.MethodPost, "/lynx/internal/v1/skills/inventory/sync", map[string]any{
+		"items": []map[string]any{
+			newSkillInventoryTestItem("skill-native-bundled", "Native Bundled", "openclaw-bundled", "2026-04-28T00:03:00Z"),
+			newSkillInventoryTestItem("skill-extension", "Extension Skill", "openclaw-extension", "2026-04-28T00:02:00Z"),
+			newSkillInventoryTestItem("skill-local", "Local Skill", "local", "2026-04-28T00:01:00Z"),
+		},
+	})
+
+	page := getSkillJSON(t, router, "/lynx/skills?sourceKind=openclaw-extension&pageNum=1&pageSize=20")
+	items, ok := page["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected one plugin extension skill, got %#v", page["items"])
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected skill object, got %#v", items[0])
+	}
+	assertSkillField(t, item, "skillId", "skill-extension")
+	assertSkillField(t, page, "total", float64(1))
+	assertSourceBreakdownCount(t, page, "openclaw-bundled", 1)
+	assertSourceBreakdownCount(t, page, "openclaw-extension", 1)
+	assertSourceBreakdownCount(t, page, "local", 1)
+}
+
 func TestRemoteSkillSecurityRoutesReturnDisabledDiagnostics(t *testing.T) {
 	router := setupSkillRouter(t)
 
@@ -298,11 +356,47 @@ func decodeSkillJSON(t *testing.T, recorder *httptest.ResponseRecorder) map[stri
 	return out
 }
 
-func assertSkillField(t *testing.T, value map[string]any, key string, expected string) {
+func assertSkillField(t *testing.T, value map[string]any, key string, expected any) {
 	t.Helper()
-	if actual, _ := value[key].(string); actual != expected {
-		t.Fatalf("expected %s=%q, got %#v", key, expected, value[key])
+	if value[key] != expected {
+		t.Fatalf("expected %s=%#v, got %#v", key, expected, value[key])
 	}
+}
+
+func newSkillInventoryTestItem(skillID string, name string, source string, lastSeenAt string) map[string]any {
+	return map[string]any{
+		"skillId":       skillID,
+		"name":          name,
+		"source":        source,
+		"installPath":   "C:/Users/example/.openclaw/skills/" + skillID,
+		"manifestPath":  "C:/Users/example/.openclaw/skills/" + skillID + "/SKILL.md",
+		"hashAlgorithm": "sha256",
+		"baselineHash":  "hash-" + skillID,
+		"currentHash":   "hash-" + skillID,
+		"trustState":    "trusted",
+		"lastSeenAt":    lastSeenAt,
+	}
+}
+
+func assertSourceBreakdownCount(t *testing.T, page map[string]any, sourceKind string, expected int) {
+	t.Helper()
+	breakdown, ok := page["sourceBreakdown"].([]any)
+	if !ok {
+		t.Fatalf("expected sourceBreakdown array, got %#v", page["sourceBreakdown"])
+	}
+	for _, raw := range breakdown {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected source breakdown object, got %#v", raw)
+		}
+		if item["sourceKind"] == sourceKind {
+			if item["count"] != float64(expected) {
+				t.Fatalf("expected sourceBreakdown[%s]=%d, got %#v", sourceKind, expected, item["count"])
+			}
+			return
+		}
+	}
+	t.Fatalf("expected sourceBreakdown to include %s, got %#v", sourceKind, breakdown)
 }
 
 func insertTokenUsage(t *testing.T, database *sql.DB, id string, sourceType string, totalTokens int64, isEstimated bool) {

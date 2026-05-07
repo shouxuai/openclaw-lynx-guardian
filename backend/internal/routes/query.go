@@ -116,6 +116,7 @@ func RegisterToolCalls(router gin.IRoutes, repository *repo.ToolCallsRepository)
 	router.GET("/tool-calls", func(c *gin.Context) {
 		values := c.Request.URL.Query()
 		page, err := repository.List(repo.ToolCallsListQuery{
+			Q:                 httpserver.ReadString(values, "q"),
 			FromMs:            httpserver.ReadInt64(values, "fromMs"),
 			ToMs:              httpserver.ReadInt64(values, "toMs"),
 			SessionKey:        httpserver.ReadString(values, "sessionKey"),
@@ -156,6 +157,7 @@ func RegisterSessions(router gin.IRoutes, repository *repo.SessionsRepository) {
 	router.GET("/sessions", func(c *gin.Context) {
 		values := c.Request.URL.Query()
 		page, err := repository.List(repo.SessionsListQuery{
+			Q:              httpserver.ReadString(values, "q"),
 			FromMs:         httpserver.ReadInt64(values, "fromMs"),
 			ToMs:           httpserver.ReadInt64(values, "toMs"),
 			PageNum:        httpserver.ReadInt(values, "pageNum"),
@@ -283,6 +285,23 @@ func RegisterTokens(router gin.IRoutes, repository *repo.TokensRepository) {
 				Model:      httpserver.ReadString(values, "model"),
 			},
 			Bucket: httpserver.ReadString(values, "bucket"),
+		})
+		if err != nil {
+			c.JSON(500, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		c.JSON(200, result)
+	})
+
+	router.GET("/tokens/heatmap", func(c *gin.Context) {
+		values := c.Request.URL.Query()
+		result, err := repository.GetHeatmap(repo.TokenSummaryQuery{
+			FromMs:     httpserver.ReadInt64(values, "fromMs"),
+			ToMs:       httpserver.ReadInt64(values, "toMs"),
+			SessionKey: httpserver.ReadString(values, "sessionKey"),
+			RunID:      httpserver.ReadString(values, "runId"),
+			Provider:   httpserver.ReadString(values, "provider"),
+			Model:      httpserver.ReadString(values, "model"),
 		})
 		if err != nil {
 			c.JSON(500, gin.H{"ok": false, "message": err.Error()})

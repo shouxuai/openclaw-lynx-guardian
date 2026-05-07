@@ -12,8 +12,9 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync, renameSync, rmSync } from "fs";
+import { execFile } from "child_process";
 import { fileURLToPath } from "url";
-import { join, basename, resolve, normalize, dirname } from "path";
+import { join, basename, resolve, normalize, dirname, posix } from "path";
 import { homedir } from "os";
 import { SKILL_HASH_ALGORITHM, computeSkillHash, computeFileHash } from "./skill-hash.js";
 import { LYNX_RESOURCE_CONFIG } from "../runtime/resource-config.js";
@@ -250,9 +251,26 @@ export interface SkillInventoryRecord {
   hashAlgorithm: typeof SKILL_HASH_ALGORITHM;
   baselineHash: string;
   currentHash: string;
-  trustState: "trusted" | "first_seen" | "hash_mismatch" | "unreadable";
+  trustState: "trusted" | "first_seen" | "hash_mismatch" | "unreadable" | "unknown";
   lastSeenAt: string;
   metadata?: Record<string, unknown>;
+}
+
+type NativeSkillRegistryExecFile = (
+  file: string,
+  args: string[],
+  options: { timeout: number; maxBuffer: number },
+  callback: (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => void,
+) => void;
+
+interface NativeSkillRegistryConfig {
+  enabled?: boolean;
+  command?: string;
+  args?: string[];
+  timeoutMs?: number;
+  maxBufferBytes?: number;
+  retryDelaysMs?: number[];
+  execFileImpl?: NativeSkillRegistryExecFile;
 }
 
 interface SkillInventoryControlPlaneConfig {
@@ -261,11 +279,27 @@ interface SkillInventoryControlPlaneConfig {
   logger?: Pick<Console, "warn"> & Partial<Pick<Console, "debug">>;
   fetchImpl?: typeof fetch;
   retryDelaysMs?: number[];
+  nativeSkillRegistry?: NativeSkillRegistryConfig;
 }
 
 export interface SkillInventoryRoot {
   path: string;
   source: string;
+}
+
+type SkillInventoryScannerKind = "file-system" | "openclaw-runtime";
+
+interface SkillInventoryChannelMetadata {
+  kind: "native" | "other";
+  sourceKind: string;
+  scanner: SkillInventoryScannerKind;
+}
+
+export interface SkillInventoryRootResolveOptions {
+  env?: Record<string, string | undefined>;
+  execPath?: string;
+  argv1?: string;
+  cwd?: string;
 }
 
 // ── Blacklist Cache (local + remote merge with TTL) ─────────────────
@@ -816,14 +850,231 @@ function shouldSkipSkillInventoryDirectory(name: string): boolean {
 }
 
 function defaultSkillInventoryRoots(): SkillInventoryRoot[] {
-  const homeSkillsRoot = join(homedir(), ".openclaw", "skills");
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  return resolveDefaultSkillInventoryRoots(import.meta.url, homedir());
+}
+
+export function resolveDefaultSkillInventoryRoots(
+  moduleUrl: string | URL = import.meta.url,
+  homeDirectory: string = homedir(),
+  options: SkillInventoryRootResolveOptions = {},
+): SkillInventoryRoot[] {
+  const modulePath = filePathFromModuleUrl(moduleUrl);
+  const moduleDir = dirname(modulePath);
+  const normalizedModuleDir = normalizeInventoryPath(moduleDir);
+  const env = options.env ?? process.env;
+  const configDir = resolveOpenClawConfigDir(homeDirectory, env);
+  const appRoot = normalizedModuleDir.startsWith("/app/")
+    ? "/app"
+    : null;
+
   return uniqueSkillInventoryRoots([
-    { path: homeSkillsRoot, source: "local" },
-    { path: join(moduleDir, "skills"), source: "bundled" },
-    { path: join(moduleDir, "..", "skills"), source: "bundled" },
-    { path: join(moduleDir, "..", "..", "skills"), source: "bundled" },
+    { path: joinInventoryPath(configDir, "skills"), source: "local" },
+    { path: joinInventoryPath(homeDirectory, ".agents", "skills"), source: "agents-skills-personal" },
+    ...(appRoot
+      ? [
+          { path: joinInventoryPath(appRoot, "skills"), source: "openclaw-bundled" },
+          ...resolveOpenClawExtensionSkillRoots(joinInventoryPath(appRoot, "dist", "extensions")),
+        ]
+      : []),
+    ...resolveNativeOpenClawPackageSkillRoots(modulePath, options, env),
+    ...resolveOpenClawExtensionSkillRoots(joinInventoryPath(configDir, "extensions")),
+    ...resolveModuleLocalSkillRoots(moduleDir),
   ]);
+}
+
+function resolveOpenClawConfigDir(
+  homeDirectory: string,
+  env: Record<string, string | undefined>,
+): string {
+  const stateDir = env.OPENCLAW_STATE_DIR?.trim();
+  if (stateDir) {
+    return resolveInventoryUserPath(stateDir, homeDirectory);
+  }
+  const configPath = env.OPENCLAW_CONFIG_PATH?.trim();
+  if (configPath) {
+    return dirname(resolveInventoryUserPath(configPath, homeDirectory));
+  }
+  return joinInventoryPath(homeDirectory, ".openclaw");
+}
+
+function resolveInventoryUserPath(pathValue: string, homeDirectory: string): string {
+  if (pathValue === "~") {
+    return homeDirectory;
+  }
+  if (pathValue.startsWith("~/") || pathValue.startsWith("~\\")) {
+    return joinInventoryPath(homeDirectory, pathValue.slice(2));
+  }
+  return pathValue;
+}
+
+function resolveNativeOpenClawPackageSkillRoots(
+  modulePath: string,
+  options: SkillInventoryRootResolveOptions,
+  env: Record<string, string | undefined>,
+): SkillInventoryRoot[] {
+  const roots: SkillInventoryRoot[] = [];
+  const packageRoots = new Set<string>();
+  const bundledOverride = env.OPENCLAW_BUNDLED_SKILLS_DIR?.trim();
+
+  if (bundledOverride) {
+    roots.push({ path: bundledOverride, source: "openclaw-bundled" });
+  }
+
+  for (const anchorPath of [
+    modulePath,
+    options.argv1,
+    options.cwd,
+    options.execPath ? dirname(options.execPath) : undefined,
+  ]) {
+    if (!anchorPath) {
+      continue;
+    }
+    for (const ancestor of ancestorDirectories(anchorPath)) {
+      const bundledSkillsDir = joinInventoryPath(ancestor, "skills");
+      if (looksLikeSkillsDirectory(bundledSkillsDir)) {
+        packageRoots.add(ancestor);
+      }
+    }
+  }
+
+  for (const packageRoot of [...packageRoots].sort((left, right) => left.localeCompare(right))) {
+    roots.push({ path: joinInventoryPath(packageRoot, "skills"), source: "openclaw-bundled" });
+    roots.push(...resolveOpenClawExtensionSkillRoots(joinInventoryPath(packageRoot, "dist", "extensions")));
+  }
+
+  return uniqueSkillInventoryRoots(roots);
+}
+
+function resolveModuleLocalSkillRoots(moduleDir: string): SkillInventoryRoot[] {
+  const knownExtensionRoot = resolveKnownExtensionRoot(moduleDir);
+  if (knownExtensionRoot) {
+    return [{ path: joinInventoryPath(knownExtensionRoot.path, "skills"), source: knownExtensionRoot.source }];
+  }
+
+  return ancestorDirectories(moduleDir)
+    .map((ancestor) => ({ path: joinInventoryPath(ancestor, "skills"), source: "bundled" }))
+    .filter((root) => isDirectoryPath(root.path));
+}
+
+function resolveKnownExtensionRoot(moduleDir: string): SkillInventoryRoot | null {
+  const normalized = normalizeInventoryPath(moduleDir);
+  const distExtensionMatch = normalized.match(/^(.*\/dist\/extensions\/[^/]+)(?:\/.*)?$/);
+  if (distExtensionMatch?.[1]) {
+    return { path: denormalizeInventoryPathLike(moduleDir, distExtensionMatch[1]), source: "openclaw-extension" };
+  }
+
+  const managedExtensionMatch = normalized.match(/^(.*\/\.openclaw\/extensions\/[^/]+)(?:\/.*)?$/);
+  if (managedExtensionMatch?.[1]) {
+    return { path: denormalizeInventoryPathLike(moduleDir, managedExtensionMatch[1]), source: "openclaw-extension" };
+  }
+
+  return null;
+}
+
+function ancestorDirectories(pathValue: string): string[] {
+  const directories: string[] = [];
+  let current = isDirectoryPath(pathValue) ? pathValue : dirname(pathValue);
+
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (!current || directories.includes(current)) {
+      break;
+    }
+    directories.push(current);
+    const next = dirname(current);
+    if (next === current) {
+      break;
+    }
+    current = next;
+  }
+
+  return directories;
+}
+
+function looksLikeSkillsDirectory(pathValue: string): boolean {
+  try {
+    const entries = readdirSync(pathValue, { withFileTypes: true });
+    return entries.some((entry) => {
+      if (entry.name.startsWith(".")) {
+        return false;
+      }
+      if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        return true;
+      }
+      return entry.isDirectory() && existsSync(joinInventoryPath(pathValue, entry.name, "SKILL.md"));
+    });
+  } catch {
+    return false;
+  }
+}
+
+export function resolveOpenClawExtensionSkillRoots(extensionsRoot: string): SkillInventoryRoot[] {
+  if (!isDirectoryPath(extensionsRoot)) {
+    return [];
+  }
+
+  let entries;
+  try {
+    entries = readdirSync(extensionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const roots: SkillInventoryRoot[] = [];
+  const extensionDirectories = entries
+    .filter((entry) => entry.isDirectory() && !shouldSkipOpenClawExtensionDirectory(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of extensionDirectories) {
+    const extensionRoot = joinInventoryPath(extensionsRoot, entry.name);
+    for (const skillRootName of ["skills", "bundled-skills"]) {
+      const skillRoot = joinInventoryPath(extensionRoot, skillRootName);
+      if (isDirectoryPath(skillRoot)) {
+        roots.push({ path: skillRoot, source: "openclaw-extension" });
+      }
+    }
+  }
+
+  return uniqueSkillInventoryRoots(roots);
+}
+
+function shouldSkipOpenClawExtensionDirectory(name: string): boolean {
+  return name.startsWith(".") || name === "node_modules";
+}
+
+function isDirectoryPath(pathValue: string): boolean {
+  try {
+    return statSync(pathValue).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function normalizeInventoryPath(pathValue: string): string {
+  return pathValue.replace(/\\/g, "/");
+}
+
+function denormalizeInventoryPathLike(examplePath: string, normalizedPath: string): string {
+  return examplePath.includes("\\") ? normalizedPath.replace(/\//g, "\\") : normalizedPath;
+}
+
+function filePathFromModuleUrl(moduleUrl: string | URL): string {
+  try {
+    return fileURLToPath(moduleUrl);
+  } catch (error) {
+    const url = moduleUrl instanceof URL ? moduleUrl : new URL(moduleUrl);
+    if (url.protocol === "file:" && url.pathname.startsWith("/")) {
+      return decodeURIComponent(url.pathname);
+    }
+    throw error;
+  }
+}
+
+function joinInventoryPath(rootPath: string, ...parts: string[]): string {
+  const normalizedRoot = normalizeInventoryPath(rootPath);
+  if (normalizedRoot.startsWith("/") && !/^[A-Za-z]:\//.test(normalizedRoot)) {
+    return posix.join(normalizedRoot, ...parts);
+  }
+  return join(rootPath, ...parts);
 }
 
 function uniqueSkillInventoryRoots(roots: SkillInventoryRoot[]): SkillInventoryRoot[] {
@@ -855,7 +1106,31 @@ function publishSkillInventory(results: SkillIntegrityResult[]): void {
     return;
   }
 
-  void syncSkillInventoryWithRetry(client, items, inventoryControlPlaneConfig);
+  void publishSkillInventoryWithNativeRegistry(client, items, inventoryControlPlaneConfig);
+}
+
+async function publishSkillInventoryWithNativeRegistry(
+  client: GoControlPlaneClient,
+  items: SkillInventoryRecord[],
+  config: SkillInventoryControlPlaneConfig,
+): Promise<void> {
+  await syncSkillInventoryWithRetry(client, items, config);
+
+  if (config.nativeSkillRegistry?.enabled === false) {
+    return;
+  }
+
+  try {
+    const nativeItems = await buildNativeOpenClawSkillInventory(items, config);
+    if (nativeItems.length === 0) {
+      return;
+    }
+    await syncSkillInventoryWithRetry(client, nativeItems, config);
+  } catch (error) {
+    config.logger?.warn?.(
+      `[lynx-guardian] OpenClaw native skill registry sync skipped: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 async function syncSkillInventoryWithRetry(
@@ -896,15 +1171,224 @@ function delayMs(durationMs: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, durationMs));
 }
 
+interface NativeOpenClawSkillStatus {
+  name?: unknown;
+  description?: unknown;
+  source?: unknown;
+  bundled?: unknown;
+  filePath?: unknown;
+  baseDir?: unknown;
+  skillKey?: unknown;
+  primaryEnv?: unknown;
+  emoji?: unknown;
+  homepage?: unknown;
+  always?: unknown;
+  eligible?: unknown;
+  disabled?: unknown;
+  blockedByAllowlist?: unknown;
+  requirements?: unknown;
+  missing?: unknown;
+  configChecks?: unknown;
+  install?: unknown;
+}
+
+async function buildNativeOpenClawSkillInventory(
+  fileBackedItems: SkillInventoryRecord[],
+  config: SkillInventoryControlPlaneConfig,
+): Promise<SkillInventoryRecord[]> {
+  const report = await readNativeOpenClawSkillRegistryWithRetry(config);
+  const nativeSkills = Array.isArray(report?.skills) ? report.skills : [];
+  if (nativeSkills.length === 0) {
+    return [];
+  }
+
+  const fileBackedBySkillId = new Map(fileBackedItems.map((item) => [item.skillId, item]));
+  const now = new Date().toISOString();
+  return nativeSkills
+    .map((skill) => nativeSkillStatusToInventoryRecord(skill, fileBackedBySkillId, now))
+    .filter((item): item is SkillInventoryRecord => Boolean(item));
+}
+
+async function readNativeOpenClawSkillRegistryWithRetry(
+  config: SkillInventoryControlPlaneConfig,
+): Promise<{ skills?: NativeOpenClawSkillStatus[] } | null> {
+  const retryDelaysMs = (config.nativeSkillRegistry?.retryDelaysMs ?? [5000, 15000, 30000, 60000])
+    .map((value) => Math.max(0, Math.trunc(value)));
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await readNativeOpenClawSkillRegistry(config.nativeSkillRegistry);
+    } catch (error) {
+      const retryDelayMs = retryDelaysMs[attempt];
+      if (retryDelayMs === undefined) {
+        throw error;
+      }
+      config.logger?.debug?.(
+        `[lynx-guardian] OpenClaw native skill registry retrying in ${retryDelayMs}ms`,
+      );
+      attempt += 1;
+      await delayMs(retryDelayMs);
+    }
+  }
+}
+
+async function readNativeOpenClawSkillRegistry(
+  registryConfig: NativeSkillRegistryConfig | undefined,
+): Promise<{ skills?: NativeOpenClawSkillStatus[] } | null> {
+  const command = registryConfig?.command ?? "openclaw";
+  const args = registryConfig?.args ?? ["skills", "list", "--json"];
+  const timeout = Math.max(1000, Math.trunc(registryConfig?.timeoutMs ?? 15000));
+  const maxBuffer = Math.max(1024 * 1024, Math.trunc(registryConfig?.maxBufferBytes ?? 5 * 1024 * 1024));
+  const execFileImpl = registryConfig?.execFileImpl ?? execFile;
+  const output = await new Promise<string>((resolveOutput, rejectOutput) => {
+    execFileImpl(command, args, { timeout, maxBuffer }, (error, stdout, stderr) => {
+      if (error) {
+        rejectOutput(error);
+        return;
+      }
+      resolveOutput(`${decodeCommandOutput(stderr)}\n${decodeCommandOutput(stdout)}`);
+    });
+  });
+  const parsed = parseJsonObjectFromCommandOutput(output);
+  return isRecord(parsed) ? parsed as { skills?: NativeOpenClawSkillStatus[] } : null;
+}
+
+function decodeCommandOutput(value: string | Buffer | Uint8Array | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value).toString("utf8");
+  }
+  return String(value);
+}
+
+function nativeSkillStatusToInventoryRecord(
+  skill: NativeOpenClawSkillStatus,
+  fileBackedBySkillId: Map<string, SkillInventoryRecord>,
+  lastSeenAt: string,
+): SkillInventoryRecord | null {
+  const skillName = normalizeOptionalText(skill.name);
+  if (!skillName) {
+    return null;
+  }
+  const baseItem = fileBackedBySkillId.get(skillName);
+  const runtimeSource = normalizeOptionalText(skill.source) || baseItem?.source || "openclaw-runtime";
+  const baseDir = normalizeOptionalText(skill.baseDir) || pathDirnameIfPresent(normalizeOptionalText(skill.filePath));
+  const manifestPath = normalizeOptionalText(skill.filePath) || (baseDir ? joinInventoryPath(baseDir, "SKILL.md") : "");
+  const hashState = baseItem ?? computeNativeSkillHashState(skillName, baseDir);
+  return {
+    skillId: skillName,
+    name: skillName,
+    source: runtimeSource,
+    installPath: baseDir || baseItem?.installPath || "",
+    manifestPath: existsSync(manifestPath) ? manifestPath : baseItem?.manifestPath ?? manifestPath,
+    hashAlgorithm: SKILL_HASH_ALGORITHM,
+    baselineHash: hashState.baselineHash,
+    currentHash: hashState.currentHash,
+    trustState: hashState.trustState,
+    lastSeenAt,
+    metadata: {
+      ...(baseItem?.metadata ?? {}),
+      inventoryChannel: buildInventoryChannelMetadata(runtimeSource, "openclaw-runtime"),
+      openclawRuntime: {
+        description: normalizeOptionalText(skill.description),
+        source: runtimeSource,
+        bundled: skill.bundled === true,
+        filePath: normalizeOptionalText(skill.filePath),
+        baseDir,
+        skillKey: normalizeOptionalText(skill.skillKey),
+        primaryEnv: normalizeOptionalText(skill.primaryEnv),
+        emoji: normalizeOptionalText(skill.emoji),
+        homepage: normalizeOptionalText(skill.homepage),
+        always: skill.always === true,
+        eligible: skill.eligible === true,
+        disabled: skill.disabled === true,
+        blockedByAllowlist: skill.blockedByAllowlist === true,
+        requirements: skill.requirements,
+        missing: skill.missing,
+        configChecks: skill.configChecks,
+        install: skill.install,
+      },
+    },
+  };
+}
+
+function computeNativeSkillHashState(
+  skillName: string,
+  baseDir: string,
+): Pick<SkillInventoryRecord, "baselineHash" | "currentHash" | "trustState"> {
+  if (!baseDir || !existsSync(joinInventoryPath(baseDir, "SKILL.md"))) {
+    return { baselineHash: "", currentHash: "", trustState: "unknown" };
+  }
+  try {
+    const currentHash = computeSkillHash(baseDir);
+    const trustedEntry = TRUSTED_SKILL_REGISTRY.find((entry) => entry.name === skillName);
+    if (!trustedEntry?.hash) {
+      return { baselineHash: "", currentHash, trustState: "first_seen" };
+    }
+    return {
+      baselineHash: trustedEntry.hash,
+      currentHash,
+      trustState: trustedEntry.hash === currentHash ? "trusted" : "hash_mismatch",
+    };
+  } catch {
+    return { baselineHash: "", currentHash: "", trustState: "unreadable" };
+  }
+}
+
+function parseJsonObjectFromCommandOutput(output: string): unknown {
+  const text = output.trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new Error("OpenClaw skills list did not return JSON.");
+  }
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+function pathDirnameIfPresent(pathValue: string): string {
+  return pathValue ? dirname(pathValue) : "";
+}
+
+function normalizeOptionalText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function buildInventoryChannelMetadata(
+  sourceKind: string,
+  scanner: SkillInventoryScannerKind,
+): SkillInventoryChannelMetadata {
+  const normalizedSourceKind = sourceKind.trim() || "unknown";
+  return {
+    kind: scanner === "openclaw-runtime" || isNativeSkillSourceKind(normalizedSourceKind) ? "native" : "other",
+    sourceKind: normalizedSourceKind,
+    scanner,
+  };
+}
+
+function isNativeSkillSourceKind(sourceKind: string): boolean {
+  return sourceKind === "openclaw-bundled" || sourceKind === "openclaw-managed" || sourceKind === "openclaw-extra";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function skillResultToInventoryRecord(result: SkillIntegrityResult): SkillInventoryRecord {
   const manifestPath = join(result.path, "SKILL.md");
+  const source = result.source ?? "local";
   const trustState: SkillInventoryRecord["trustState"] = result.valid
     ? result.expectedHash ? "trusted" : "first_seen"
     : result.currentHash ? "hash_mismatch" : "unreadable";
   return {
     skillId: result.skillName,
     name: result.skillName,
-    source: result.source ?? "local",
+    source,
     installPath: result.path,
     manifestPath: existsSync(manifestPath) ? manifestPath : "",
     hashAlgorithm: SKILL_HASH_ALGORITHM,
@@ -913,6 +1397,7 @@ function skillResultToInventoryRecord(result: SkillIntegrityResult): SkillInvent
     trustState,
     lastSeenAt: new Date().toISOString(),
     metadata: {
+      inventoryChannel: buildInventoryChannelMetadata(source, "file-system"),
       reason: result.reason,
       valid: result.valid,
     },

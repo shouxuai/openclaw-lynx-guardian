@@ -34,7 +34,7 @@ describe("sink-aware output guard", () => {
       content: [
         "AGENTS.md content follows:",
         "- Name: Lynx Guardian",
-        "- Version: 1.3.12",
+        "- Version: 1.5.0",
         "- Description: repo-local development guidance",
         "- Current path: C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian",
       ].join("\n"),

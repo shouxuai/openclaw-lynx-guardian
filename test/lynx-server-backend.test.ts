@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -6,6 +6,7 @@ import { mkdtempSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 import { buildInstallLocalConsoleRuntimeDepsShellCommand } from "../scripts/dev-sync-lib.mjs";
+import { packageLocalConsoleServer } from "../scripts/package-local-console-server-lib.mjs";
 import {
   buildLynxServerExecutableName,
   resolveLocalConsoleBackendEntryPath,
@@ -70,5 +71,28 @@ describe("Lynx server backend packaging and launch", () => {
     expect(command).toContain("/app/extensions/openclaw-lynx-guardian/server/backend");
     expect(command).toContain("lynx-server backend present; skip runtime dependency install");
     expect(command).not.toContain("npm ci");
+  });
+
+  it("packages every supported Go backend executable", () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), "lynx-go-package-all-targets-"));
+    const backendDist = join(packageRoot, "backend", "dist");
+    const frontendDist = join(packageRoot, "frontend", "dist");
+    mkdirSync(backendDist, { recursive: true });
+    mkdirSync(frontendDist, { recursive: true });
+
+    writeFileSync(join(backendDist, "lynx-server-linux-x64"), "", "utf8");
+    writeFileSync(join(backendDist, "lynx-server-win32-x64.exe"), "", "utf8");
+    writeFileSync(join(backendDist, "lynx-server-darwin-arm64"), "", "utf8");
+    writeFileSync(join(backendDist, "lynx-server-darwin-x64"), "", "utf8");
+    writeFileSync(join(frontendDist, "index.html"), "<!doctype html>", "utf8");
+
+    const result = packageLocalConsoleServer({ repoRoot: packageRoot });
+
+    expect(readdirSync(result.backendDir).sort()).toEqual([
+      "lynx-server-darwin-arm64",
+      "lynx-server-darwin-x64",
+      "lynx-server-linux-x64",
+      "lynx-server-win32-x64.exe",
+    ]);
   });
 });

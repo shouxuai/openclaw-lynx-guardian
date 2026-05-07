@@ -56,6 +56,7 @@ describe("App", () => {
     eventTrend: [],
     tokenTrend: [],
     recentSecurityEvents: [],
+    recentQaRecords: [],
     recentToolCalls: [],
     recentApprovals: [],
   };
@@ -208,6 +209,25 @@ describe("App", () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.map((call) => call[0])).toContain(
         "/lynx/security-events?pageNum=1&pageSize=10",
+      );
+    });
+  });
+
+  it("keeps raw audit as an audit-log secondary page instead of a sidebar entry", async () => {
+    window.history.replaceState({}, "", "/webview/raw-events");
+
+    const { container } = render(<App />);
+
+    expect(
+      container.querySelector('nav a[href="/webview/raw-events"]'),
+    ).toBeNull();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "原始审计流水" }),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.map((call) => call[0])).toContain(
+        "/lynx/events?pageNum=1&pageSize=20",
       );
     });
   });

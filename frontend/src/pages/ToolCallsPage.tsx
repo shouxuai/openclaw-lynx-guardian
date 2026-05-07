@@ -261,7 +261,7 @@ export function ToolCallsPage() {
                 type="button"
                 onClick={() => void handleOpenDetail(call.toolCallId)}
               >
-                {detailLoadingId === call.toolCallId ? "加载中" : "查看 JSON"}
+                {detailLoadingId === call.toolCallId ? "加载中" : "查看详情"}
               </button>
             ),
           }))}
@@ -314,6 +314,7 @@ export function ToolCallsPage() {
       <ModalDialog
         closeLabel="关闭详情"
         open={isDetailDialogOpen}
+        size="wide"
         title="工具调用详情"
         subtitle={
           detailError
@@ -322,40 +323,119 @@ export function ToolCallsPage() {
         }
         onClose={handleCloseDetail}
       >
-        <dl className="detail-panel__grid">
-          {[
-            { label: "工具", value: selectedDetail ? formatToolLabel(selectedDetail.toolName) : "暂无" },
-            { label: "关联问答记录", value: formatQaRecordId(selectedDetail?.qaRecordId) },
-            { label: "状态", value: selectedDetail?.resultStatus ?? "暂无" },
-            { label: "会话", value: selectedDetail?.sessionKey ?? "暂无" },
-            { label: "Run ID", value: selectedDetail?.runId ?? "暂无" },
-            { label: "审批 ID", value: selectedDetail?.approvalId ?? "暂无" },
-            { label: "开始时间", value: selectedDetail ? formatTimestamp(selectedDetail.startedAtMs) : "暂无" },
-            { label: "结束时间", value: selectedDetail?.finishedAtMs ? formatTimestamp(selectedDetail.finishedAtMs) : "暂无" },
-            { label: "耗时", value: formatDuration(selectedDetail?.durationMs) },
-            { label: "参数摘要", value: selectedDetail?.paramSummary ?? "暂无" },
-            { label: "参数哈希", value: selectedDetail?.paramHash ?? "暂无" },
-            { label: "触发模块", value: formatList(selectedDetail?.triggeredModules) },
-            { label: "决策 / Grant", value: selectedDetail ? formatToolDecision(selectedDetail) : "暂无" },
-            { label: "Taint / 外传", value: selectedDetail ? formatToolSignals(selectedDetail) : "暂无" },
-            { label: "错误信息", value: selectedDetail?.errorText ?? "暂无" },
-            { label: "结果摘要", value: selectedDetail?.resultExcerpt ?? "暂无" },
-            {
-              label: "Metadata",
-              value: <pre className="code-panel">{formatDetailJson(generalMetadata(selectedDetail?.metadataJson))}</pre>,
-            },
-          ].map((field) => (
-            <div key={field.label} className="detail-panel__field">
-              <dt>{field.label}</dt>
-              <dd>{field.value}</dd>
-            </div>
-          ))}
-        </dl>
-        {selectedScriptPreflight ? (
-          <section className="detail-section">
-            <h3>脚本预检证据</h3>
-            <pre className="code-panel">{formatDetailJson(selectedScriptPreflight)}</pre>
-          </section>
+        {selectedDetail ? (
+          <div className="audit-detail-dialog">
+            <section className="audit-detail-dialog__hero">
+              <div className="audit-detail-dialog__heroText">
+                <p className="audit-detail-dialog__eyebrow">工具调用概览</p>
+                <p className="audit-detail-dialog__heroSubtitle">
+                  {selectedDetail.resultExcerpt ?? selectedDetail.toolCallId}
+                </p>
+              </div>
+              <div className="audit-detail-dialog__chips" aria-label="工具调用概览标签">
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">工具</span>
+                  <span className="audit-detail-dialog__chipValue">{formatToolLabel(selectedDetail.toolName)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">状态</span>
+                  <span className="audit-detail-dialog__chipValue">{renderStateBadge(selectedDetail.resultStatus)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">耗时</span>
+                  <span className="audit-detail-dialog__chipValue">{formatDuration(selectedDetail.durationMs)}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">风险</span>
+                  <span className="audit-detail-dialog__chipValue">{selectedDetail.riskLevel ?? "暂无"}</span>
+                </span>
+                <span className="audit-detail-dialog__chip">
+                  <span className="audit-detail-dialog__chipLabel">关联问答</span>
+                  <span className="audit-detail-dialog__chipValue">{formatQaRecordId(selectedDetail.qaRecordId)}</span>
+                </span>
+              </div>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h3 className="panel__title">调用上下文</h3>
+                  <p className="panel__subtitle">定位这次工具调用所在的会话、运行、问答记录和审批链路。</p>
+                </div>
+              </div>
+              <dl className="detail-panel__grid audit-detail-dialog__summary-grid">
+                {[
+                  { label: "工具调用 ID", value: selectedDetail.toolCallId },
+                  { label: "关联问答记录", value: formatQaRecordId(selectedDetail.qaRecordId) },
+                  { label: "会话", value: selectedDetail.sessionKey ?? "暂无" },
+                  { label: "Run ID", value: selectedDetail.runId ?? "暂无" },
+                  { label: "审批 ID", value: selectedDetail.approvalId ?? "暂无" },
+                  { label: "开始时间", value: formatTimestamp(selectedDetail.startedAtMs) },
+                  { label: "结束时间", value: selectedDetail.finishedAtMs ? formatTimestamp(selectedDetail.finishedAtMs) : "暂无" },
+                  { label: "耗时", value: formatDuration(selectedDetail.durationMs) },
+                ].map((field) => (
+                  <div key={field.label} className="detail-panel__field">
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h3 className="panel__title">参数与结果</h3>
+                  <p className="panel__subtitle">参数摘要、触发模块和执行结果保留在详情里，避免列表横向撑开。</p>
+                </div>
+              </div>
+              <dl className="detail-panel__grid audit-detail-dialog__summary-grid">
+                {[
+                  { label: "参数摘要", value: selectedDetail.paramSummary ?? "暂无" },
+                  { label: "参数哈希", value: selectedDetail.paramHash ?? "暂无" },
+                  { label: "触发模块", value: formatList(selectedDetail.triggeredModules) },
+                  { label: "决策 / Grant", value: formatToolDecision(selectedDetail) },
+                  { label: "Taint / 外传", value: formatToolSignals(selectedDetail) },
+                  { label: "错误信息", value: selectedDetail.errorText ?? "暂无" },
+                  { label: "结果摘要", value: selectedDetail.resultExcerpt ?? "暂无" },
+                ].map((field) => (
+                  <div key={field.label} className="detail-panel__field">
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            <section className="audit-detail-dialog__section">
+              <div className="panel__header audit-detail-dialog__sectionHeader">
+                <div>
+                  <h3 className="panel__title">控制面证据</h3>
+                  <p className="panel__subtitle">决策、授权、taint 和脚本预检等元数据证据。</p>
+                </div>
+              </div>
+              <div className="audit-detail-dialog__evidence-grid">
+                <div className="detail-panel__field">
+                  <dt>Metadata</dt>
+                  <dd>
+                    <pre className="code-panel audit-detail-dialog__json">
+                      {formatDetailJson(generalMetadata(selectedDetail.metadataJson))}
+                    </pre>
+                  </dd>
+                </div>
+                {selectedScriptPreflight ? (
+                  <div className="detail-panel__field">
+                    <dt>脚本预检证据</dt>
+                    <dd>
+                      <pre className="code-panel audit-detail-dialog__json">
+                        {formatDetailJson(selectedScriptPreflight)}
+                      </pre>
+                    </dd>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          </div>
         ) : null}
       </ModalDialog>
     </div>

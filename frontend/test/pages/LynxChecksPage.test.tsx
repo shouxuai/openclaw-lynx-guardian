@@ -75,6 +75,21 @@ describe("LynxChecksPage", () => {
           reportMarkdown: fullReport,
         });
       }
+      if (url === "/lynx/lynx-checks/CHECK-EVIDENCE") {
+        return createJsonResponse({
+          ...createCheck({
+            requestId: "CHECK-EVIDENCE",
+            status: "failed",
+            sendSucceeded: false,
+            errorMessage: "delivery failed",
+            completedAtMs: 1_776_945_601_000,
+            evidenceBundle: {
+              reportPath: ".openclaw/lynx/check-runs/evidence.report.md",
+            },
+          }),
+          reportMarkdown: "# 第二份检测报告\n\n失败投递的完整报告正文。",
+        });
+      }
       return createJsonResponse(createPage([
         createCheck({
           requestId: "CHECK-FACTS",
@@ -99,8 +114,11 @@ describe("LynxChecksPage", () => {
     render(<LynxChecksPage />);
 
     expect(screen.getByText("检测报告")).toBeInTheDocument();
+    expect(await screen.findByText(/检测报告用于留存每次/)).toBeInTheDocument();
+    expect(screen.queryByText(/左侧筛选检测任务/)).not.toBeInTheDocument();
     expect(await screen.findByText("CHECK-FACTS")).toBeInTheDocument();
-    expect(await screen.findByText("最近检测报告")).toBeInTheDocument();
+    expect(await screen.findByText("当前选中报告")).toBeInTheDocument();
+    expect(screen.queryByText("最近检测报告")).not.toBeInTheDocument();
     expect(screen.getByTestId("lynx-checks-workspace")).toBeInTheDocument();
     expect(screen.queryByText("Task State")).not.toBeInTheDocument();
     expect(screen.queryByText("证据")).not.toBeInTheDocument();
@@ -117,6 +135,11 @@ describe("LynxChecksPage", () => {
     const reportMarkdown = await screen.findByTestId("lynx-check-report-markdown");
     expect(reportMarkdown).toHaveTextContent("## Full Section");
     expect(reportMarkdown).toHaveTextContent("END-OF-FULL-REPORT");
+    fireEvent.click(screen.getByRole("button", { name: "查看 CHECK-EVIDENCE 检测报告" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("lynx-check-report-markdown")).toHaveTextContent("失败投递的完整报告正文。");
+    });
+    expect(screen.getByText("报告：CHECK-EVIDENCE")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /导出/ })).not.toBeInTheDocument();
     expect(screen.getByText(".openclaw/lynx/check-runs/facts.report.md")).toBeInTheDocument();
     expect(screen.getByText(".openclaw/lynx/check-runs/evidence.report.md")).toBeInTheDocument();

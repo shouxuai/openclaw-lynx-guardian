@@ -8,6 +8,7 @@ import (
 )
 
 type SessionsListQuery struct {
+	Q              *string
 	FromMs         *int64
 	ToMs           *int64
 	PageNum        *int
@@ -79,6 +80,17 @@ const sessionCountsSQL = `
 func (r *SessionsRepository) List(query SessionsListQuery) (service.PageResponse[map[string]any], error) {
 	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"s.session_key",
+		"s.channel_profile",
+		"s.channel_id",
+		"s.requester_id",
+		"s.requester_ou_id",
+		"s.account_id",
+		"s.conversation_id",
+		"s.thread_id",
+		"s.metadata_json",
+	}, query.Q)
 	filter.AppendRange("s.last_seen_at", query.FromMs, query.ToMs)
 	filter.AppendEquals("s.channel_profile", query.ChannelProfile)
 	filter.AppendEquals("s.channel_id", query.ChannelID)

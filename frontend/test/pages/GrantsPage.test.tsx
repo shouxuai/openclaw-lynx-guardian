@@ -45,6 +45,16 @@ function createGrant(grantId = "grant-1") {
   };
 }
 
+function createPage(items: unknown[], pageNum = 1, pageSize = 20, total = items.length) {
+  return {
+    items,
+    total,
+    pageNum,
+    pageSize,
+    totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+  };
+}
+
 describe("GrantsPage", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -58,26 +68,36 @@ describe("GrantsPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses filters and moves scope/revocation detail out of the table", async () => {
+  it("uses filters, pagination and renders grant details with the audit dialog structure", async () => {
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse({ items: [createGrant()] }))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createGrant()], 1, 20, 41)))
+      .mockResolvedValueOnce(createJsonResponse(createPage([createGrant("grant-page-2")], 2, 20, 41)))
       .mockResolvedValueOnce(
-        createJsonResponse({ items: [createGrant("grant-filtered")] }),
+        createJsonResponse(createPage([createGrant("grant-filtered")], 1, 20, 1)),
       );
 
-    render(<GrantsPage />);
+    const { container } = render(<GrantsPage />);
 
     expect(
       await screen.findByRole("heading", { name: "放行记录" }),
     ).toBeInTheDocument();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/lynx/grants?pageNum=1&pageSize=20");
+    await screen.findByText("grant-1");
+    expect(screen.getByTitle("2")).toBeInTheDocument();
     expect(screen.queryByText("链路授权")).not.toBeInTheDocument();
     expect(screen.queryByText("临时放行")).not.toBeInTheDocument();
-    await screen.findByText("grant-1");
     expect(screen.getByLabelText("关键词")).toBeInTheDocument();
     expect(screen.getByLabelText("申请人")).toBeInTheDocument();
     expect(screen.queryByText("Grant ID")).not.toBeInTheDocument();
     expect(screen.queryByText("放行范围")).not.toBeInTheDocument();
     expect(screen.queryByText("撤销原因")).not.toBeInTheDocument();
+    expect(container.querySelector(".page-header__description")).toBeNull();
+    expect(container.querySelector(".table-panel__header .panel__subtitle")).toBeNull();
+    expect(screen.getByText("放行记录说明")).toBeInTheDocument();
+    expect(screen.getByText(/审批通过后，后续同一链路里的 tool 调用如果命中已授权范围/)).toBeInTheDocument();
+    expect(container.querySelector(".table-explanation-card.ant-card")).not.toBeNull();
+    expect(container.querySelector(".table-panel .table-explanation-card")).toBeNull();
+    expect(Number.parseInt(container.querySelector("table")?.style.minWidth ?? "0", 10)).toBeLessThanOrEqual(1136);
 
     fireEvent.click(
       screen.getByRole("button", { name: "查看 grant-1 放行详情" }),
@@ -85,10 +105,18 @@ describe("GrantsPage", () => {
     expect(
       await screen.findByRole("dialog", { name: "放行详情" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("放行概览")).toBeInTheDocument();
+    expect(screen.getByText("授权上下文")).toBeInTheDocument();
+    expect(screen.getByText("放行范围")).toBeInTheDocument();
     expect(screen.getByText("path:C:/Users/example/.env")).toBeInTheDocument();
     expect(screen.getByText("manual revoke")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "关闭详情" }));
+    fireEvent.click(screen.getByTitle("2"));
+
+    await screen.findByText("grant-page-2");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/lynx/grants?pageNum=2&pageSize=20");
+
     fireEvent.change(screen.getByLabelText("关键词"), {
       target: { value: "filtered" },
     });
@@ -98,13 +126,13 @@ describe("GrantsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
 
     await screen.findByText("grant-filtered");
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "/lynx/grants?q=filtered&requesterId=ou-requester",
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      "/lynx/grants?q=filtered&requesterId=ou-requester&pageNum=1&pageSize=20",
     );
   });
 
-  it("explains empty release records as follow-up tool calls after approval", async () => {
+  it("shows an uncluttered empty table state for grant records", async () => {
     fetchMock.mockResolvedValueOnce(createJsonResponse({ items: [] }));
 
     const { container } = render(<GrantsPage />);
@@ -114,20 +142,15 @@ describe("GrantsPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("审批后的工具放行流水")).toBeInTheDocument();
     expect(container.querySelector(".metric-grid--narrow")).toBeInTheDocument();
-    expect((await screen.findAllByText("暂无放行记录")).length).toBeGreaterThan(
-      0,
-    );
-    expect(
-      screen.getByText(/审批通过后，后续同一链路里的 tool 调用如果命中已授权范围/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/示例：审批 APR-102 通过 read 工具后/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/后续 read 同一路径会记录为已放行/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/换成 exec、换路径或链路结束就不会复用/),
-    ).toBeInTheDocument();
+    expect((await screen.findAllByText("暂无放行记录")).length).toBeGreaterThan(0);
+    expect(screen.getByText("放行记录说明")).toBeInTheDocument();
+    expect(screen.getByText(/审批通过后，后续同一链路里的 tool 调用如果命中已授权范围/)).toBeInTheDocument();
+    expect(screen.getByText(/换成 exec、换路径或链路结束就不会复用/)).toBeInTheDocument();
+    expect(container.querySelector(".table-explanation-card.ant-card")).not.toBeNull();
+    expect(container.querySelector(".table-panel .table-explanation-card")).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "放行" })).toBeInTheDocument();
+    expect(container.querySelector(".page-header__description")).toBeNull();
+    expect(container.querySelector(".empty-explanation")).toBeNull();
+    expect(container.querySelector(".table-wrap")).not.toBeNull();
   });
 });

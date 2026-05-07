@@ -616,6 +616,51 @@ async function deliverToCandidate(
         );
       }
     }
+
+    if (isFeishuDeliveryCandidate(candidate) && injectableWebchatText.length > 0) {
+      const conversationId = resolveFeishuDirectConversationId(candidate);
+      if (conversationId) {
+        try {
+          options.log.info(
+            `[lynx-guardian] sender-execution-plane attempt=${attempt}/${maxAttempts} tag=${options.tag} transport=feishu-openapi-direct route=${candidate.targetKey}`,
+          );
+          const directResult = await deliverLynxFeishuTextDirectly({
+            conversationId,
+            content: injectableWebchatText,
+            logger: options.log,
+          });
+          if (directResult.delivered) {
+            options.log.info(
+              `[lynx-guardian] sender-execution-plane success attempt=${attempt}/${maxAttempts} tag=${options.tag} transport=feishu-openapi-direct route=${candidate.targetKey}`,
+            );
+            return {
+              targetKey: candidate.targetKey,
+              sessionKey: candidate.sessionKey,
+              channelId: candidate.channelId,
+              messageProvider: candidate.messageProvider,
+              senderId: candidate.senderId,
+              bindingId: candidate.bindingId,
+              delivered: true,
+              transport: "feishu-openapi-direct",
+            };
+          }
+
+          lastErrorMessage = `Feishu OpenAPI direct delivery failed (${[
+            directResult.reason,
+            directResult.configReason,
+            directResult.errorMessage,
+          ].filter(Boolean).join(": ") || "unknown reason"})`;
+          options.log.warn(
+            `[lynx-guardian] sender-execution-plane failed attempt=${attempt}/${maxAttempts} tag=${options.tag} transport=feishu-openapi-direct route=${candidate.targetKey} reason=${lastErrorMessage}`,
+          );
+        } catch (err: any) {
+          lastErrorMessage = err?.message ?? String(err);
+          options.log.warn(
+            `[lynx-guardian] sender-execution-plane failed attempt=${attempt}/${maxAttempts} tag=${options.tag} transport=feishu-openapi-direct route=${candidate.targetKey} reason=${lastErrorMessage}`,
+          );
+        }
+      }
+    }
   }
 
   return {
@@ -687,13 +732,13 @@ type FeishuConfigFailureReason =
   | "feishu_disabled"
   | "missing_credentials";
 
-export interface DirectFeishuApprovalDeliveryInput {
+export interface DirectFeishuTextDeliveryInput {
   conversationId?: string;
   content: string;
   logger?: Pick<Logger, "warn">;
 }
 
-export interface DirectFeishuApprovalDeliveryResult {
+export interface DirectFeishuTextDeliveryResult {
   delivered: boolean;
   transport: "feishu-openapi-direct" | "none";
   reason?:
@@ -709,6 +754,10 @@ export interface DirectFeishuApprovalDeliveryResult {
   receiveId?: string;
   messageId?: string;
 }
+
+export interface DirectFeishuApprovalDeliveryInput extends DirectFeishuTextDeliveryInput {}
+
+export interface DirectFeishuApprovalDeliveryResult extends DirectFeishuTextDeliveryResult {}
 
 const tenantAccessTokenCache = new Map<string, {
   token: string;
@@ -900,9 +949,9 @@ async function fetchTenantAccessToken(
   }
 }
 
-export async function deliverLynxFeishuApprovalPromptDirectly(
-  input: DirectFeishuApprovalDeliveryInput,
-): Promise<DirectFeishuApprovalDeliveryResult> {
+export async function deliverLynxFeishuTextDirectly(
+  input: DirectFeishuTextDeliveryInput,
+): Promise<DirectFeishuTextDeliveryResult> {
   const targetResult = resolveFeishuTarget(input.conversationId);
   if (!targetResult.ok) {
     return {
@@ -999,6 +1048,12 @@ export async function deliverLynxFeishuApprovalPromptDirectly(
       receiveId: target.receiveId,
     };
   }
+}
+
+export async function deliverLynxFeishuApprovalPromptDirectly(
+  input: DirectFeishuApprovalDeliveryInput,
+): Promise<DirectFeishuApprovalDeliveryResult> {
+  return deliverLynxFeishuTextDirectly(input);
 }
 
 export function resetDirectFeishuApprovalDeliveryForTests(): void {
@@ -1203,6 +1258,53 @@ function extractTextFromMessageContent(content: Message["content"]): string {
 
 export function extractInjectableWebchatText(message: Message): string {
   return extractTextFromMessageContent(message.content).trim();
+}
+
+function isFeishuDeliveryCandidate(candidate: DeliveryCandidate): boolean {
+  return [candidate.messageProvider, candidate.channelId]
+    .map((value) => normalizeString(value).toLowerCase())
+    .some((value) => value === "feishu");
+}
+
+function normalizeFeishuDirectConversationId(value: unknown): string | undefined {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const prefixedOpenId = normalized.match(/^(?:user|dm):(ou_[A-Za-z0-9_-]+)$/i);
+  if (prefixedOpenId) {
+    return `dm:${prefixedOpenId[1]}`;
+  }
+
+  const feishuOpenId = normalized.match(/^feishu:(ou_[A-Za-z0-9_-]+)$/i);
+  if (feishuOpenId) {
+    return `dm:${feishuOpenId[1]}`;
+  }
+
+  if (/^ou_[A-Za-z0-9_-]+$/i.test(normalized)) {
+    return `dm:${normalized}`;
+  }
+
+  const prefixedChatId = normalized.match(/^chat:(oc_[A-Za-z0-9_-]+)$/i);
+  if (prefixedChatId) {
+    return prefixedChatId[1];
+  }
+
+  if (/^oc_[A-Za-z0-9_-]+$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return undefined;
+}
+
+function resolveFeishuDirectConversationId(candidate: DeliveryCandidate): string | undefined {
+  return [
+    candidate.to,
+    candidate.bindingId,
+    candidate.senderId,
+    candidate.accountId,
+  ].map(normalizeFeishuDirectConversationId).find(Boolean);
 }
 
 export function setLynxWebchatGatewayCallerForTests(

@@ -46,6 +46,8 @@ assert.equal(shouldStagePath(".worktrees\\output-result-intercept"), false);
 assert.equal(shouldStagePath("dist\\index.js"), false);
 assert.equal(shouldStagePath("backend\\dist\\main.js"), false);
 assert.equal(shouldStagePath("server\\backend\\lynx-server-linux-x64"), true);
+assert.equal(shouldStagePath("server\\frontend\\dist\\index.html"), true);
+assert.equal(shouldStagePath("server\\frontend\\dist\\assets\\index-bundle.js"), true);
 assert.equal(shouldStagePath("src\\utils.ts"), true);
 assert.equal(shouldStagePath("skills\\lynx-guardian-lesson\\SKILL.md"), true);
 assert.deepEqual(
@@ -146,14 +148,22 @@ try {
   mkdirSync(frontendDist, { recursive: true });
   writeFileSync(path.join(backendDist, "lynx-server-linux-x64"), "", "utf8");
   writeFileSync(path.join(backendDist, "lynx-server-win32-x64.exe"), "", "utf8");
+  writeFileSync(path.join(backendDist, "lynx-server-darwin-arm64"), "", "utf8");
+  writeFileSync(path.join(backendDist, "lynx-server-darwin-x64"), "", "utf8");
   writeFileSync(path.join(backendDist, "lynx-console-linux-x64"), "", "utf8");
   writeFileSync(path.join(frontendDist, "index.html"), "<!doctype html>", "utf8");
 
   const packageResult = packageLocalConsoleServer({ repoRoot: packageFixtureRoot });
   assert.deepEqual(
     readdirSync(packageResult.backendDir).sort(),
-    ["lynx-server-linux-x64", "lynx-server-win32-x64.exe"],
+    [
+      "lynx-server-darwin-arm64",
+      "lynx-server-darwin-x64",
+      "lynx-server-linux-x64",
+      "lynx-server-win32-x64.exe",
+    ],
   );
+  assert.deepEqual(readdirSync(path.join(packageResult.frontendDir, "dist")).sort(), ["index.html"]);
 } finally {
   rmSync(packageFixtureRoot, { recursive: true, force: true });
 }

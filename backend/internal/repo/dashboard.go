@@ -8,6 +8,7 @@ type DashboardOverviewQuery struct {
 }
 
 func (r *DashboardRepository) GetOverview(query DashboardOverviewQuery) (map[string]any, error) {
+	qaRecordsRange := buildTimeRangeFilter("started_at", query.FromMs, query.ToMs)
 	toolCallsRange := buildTimeRangeFilter("started_at", query.FromMs, query.ToMs)
 	approvalsRange := buildTimeRangeFilter("requested_at", query.FromMs, query.ToMs)
 	lynxChecksRange := buildTimeRangeFilter("created_at", query.FromMs, query.ToMs)
@@ -50,6 +51,10 @@ func (r *DashboardRepository) GetOverview(query DashboardOverviewQuery) (map[str
 		return nil, err
 	}
 	recentSecurityEvents := recentSecurityEventRows(securityEvents)
+	recentQARecords, err := r.recentQARecords(qaRecordsRange)
+	if err != nil {
+		return nil, err
+	}
 	recentToolCalls, err := r.recentToolCalls(toolCallsRange)
 	if err != nil {
 		return nil, err
@@ -72,6 +77,7 @@ func (r *DashboardRepository) GetOverview(query DashboardOverviewQuery) (map[str
 		"eventTrend":              eventTrend,
 		"tokenTrend":              tokenTrend,
 		"recentSecurityEvents":    recentSecurityEvents,
+		"recentQaRecords":         recentQARecords,
 		"recentToolCalls":         recentToolCalls,
 		"recentApprovals":         recentApprovals,
 	}, nil
@@ -319,6 +325,30 @@ func (r *DashboardRepository) recentToolCalls(filter *Filter) ([]map[string]any,
 			return nil, err
 		}
 		out = append(out, mapToolCallListRow(row))
+	}
+	return out, rows.Err()
+}
+
+func (r *DashboardRepository) recentQARecords(filter *Filter) ([]map[string]any, error) {
+	rows, err := r.db.Query(
+		qaRecordSelect+`
+		`+filter.Where()+`
+		ORDER BY started_at DESC, qa_record_id DESC
+		LIMIT 5`,
+		filter.Params()...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]map[string]any, 0)
+	for rows.Next() {
+		row, err := scanQARecordRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, mapQARecordListRow(row))
 	}
 	return out, rows.Err()
 }

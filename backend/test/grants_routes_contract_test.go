@@ -59,6 +59,123 @@ func TestGrantCheckAllowsSameRequesterChainAndTarget(t *testing.T) {
 	}
 }
 
+func TestApprovalResolveMarksApprovalRecordApproved(t *testing.T) {
+	router, database := setupGrantRouterWithApprovals(t)
+	_, err := database.Exec(`
+		INSERT INTO approvals (
+			approval_id, requester_ou_id, approver_ou_ids_json, module, risk_level,
+			tool_name, scope_type, requested_at, expires_at, resolution
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"approval-local-1",
+		"ou-1",
+		`["owner-1"]`,
+		"file_read",
+		"L3",
+		"read_file",
+		"workflow",
+		int64(1000),
+		int64(9999999999999),
+		"pending",
+	)
+	if err != nil {
+		t.Fatalf("insert approval: %v", err)
+	}
+
+	resolveApproval(t, router, grantResolveBody{
+		ApprovalID:     "approval-local-1",
+		ChainID:        "chain-local-1",
+		SessionKey:     "session-1",
+		ChannelProfile: "feishu",
+		ChannelID:      "channel-1",
+		ConversationID: "conversation-1",
+		RequesterID:    "requester-1",
+		RequesterOuID:  "ou-1",
+		ApproverID:     "approver-1",
+		ApproverOuID:   "owner-1",
+		RiskFamily:     "file_read",
+		RiskLevel:      "L3",
+		ToolName:       "read_file",
+		TargetKind:     "tool",
+		TargetHash:     "target-a",
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/lynx/approvals/approval-local-1", nil)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var detail api.ApprovalDetail
+	if err := json.Unmarshal(recorder.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode approval detail: %v", err)
+	}
+	if detail.Resolution == nil || *detail.Resolution != "approved" {
+		t.Fatalf("expected approval marked approved, got %#v", detail.Resolution)
+	}
+	if detail.ResolvedAtMs == nil {
+		t.Fatalf("expected resolvedAtMs to be set")
+	}
+	if detail.ResolvedApproverOuID == nil || *detail.ResolvedApproverOuID != "owner-1" {
+		t.Fatalf("expected resolved approver owner-1, got %#v", detail.ResolvedApproverOuID)
+	}
+}
+
+func TestApprovalResolveRejectsL4HardDenyRecord(t *testing.T) {
+	router, database := setupGrantRouterWithApprovals(t)
+	_, err := database.Exec(`
+		INSERT INTO approvals (
+			approval_id, requester_ou_id, approver_ou_ids_json, module, risk_level,
+			tool_name, scope_type, requested_at, expires_at, resolution
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"approval-l4-local",
+		"ou-1",
+		`["owner-1"]`,
+		"plugin_integrity",
+		"L4",
+		"write_file",
+		"workflow",
+		int64(1000),
+		int64(9999999999999),
+		"pending",
+	)
+	if err != nil {
+		t.Fatalf("insert approval: %v", err)
+	}
+
+	data, err := json.Marshal(grantResolveBody{
+		ApprovalID:     "approval-l4-local",
+		ChainID:        "chain-l4-local",
+		SessionKey:     "session-1",
+		ChannelProfile: "feishu",
+		ChannelID:      "channel-1",
+		ConversationID: "conversation-1",
+		RequesterID:    "requester-1",
+		RequesterOuID:  "ou-1",
+		ApproverID:     "approver-1",
+		ApproverOuID:   "owner-1",
+		RiskFamily:     "plugin_integrity",
+		RiskLevel:      "L4",
+		ToolName:       "write_file",
+		TargetKind:     "tool",
+		TargetHash:     "target-a",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/lynx/approvals/approval-l4-local/resolve", strings.NewReader(string(data)))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected L4 resolve to be forbidden, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	detail := getApprovalDetail(t, router, "approval-l4-local")
+	if detail.Resolution == nil || *detail.Resolution != "pending" {
+		t.Fatalf("L4 approval should remain pending, got %#v", detail.Resolution)
+	}
+}
+
 func TestGrantCheckRevokesOnRiskEscalation(t *testing.T) {
 	router := setupGrantRouter(t)
 	resolveApproval(t, router, grantResolveBody{
@@ -234,6 +351,76 @@ func TestChainLifecycleRevokesActiveGrants(t *testing.T) {
 	}
 }
 
+func TestGrantListFiltersAndPaginates(t *testing.T) {
+	router := setupGrantRouter(t)
+	resolveApproval(t, router, grantResolveBody{
+		ApprovalID:     "approval-alpha",
+		ChainID:        "chain-alpha",
+		SessionKey:     "session-alpha",
+		ChannelProfile: "webchat",
+		ChannelID:      "channel-alpha",
+		ConversationID: "conversation-alpha",
+		RequesterID:    "requester-alpha",
+		RequesterOuID:  "ou-alpha",
+		ApproverID:     "approver-alpha",
+		ApproverOuID:   "owner-alpha",
+		RiskFamily:     "file_read",
+		RiskLevel:      "L2",
+		ToolName:       "read_file",
+		TargetKind:     "file",
+		TargetHash:     "target-alpha",
+	})
+	resolveApproval(t, router, grantResolveBody{
+		ApprovalID:     "approval-beta",
+		ChainID:        "chain-beta",
+		SessionKey:     "session-beta",
+		ChannelProfile: "webchat",
+		ChannelID:      "channel-beta",
+		ConversationID: "conversation-beta",
+		RequesterID:    "requester-beta",
+		RequesterOuID:  "ou-beta",
+		ApproverID:     "approver-beta",
+		ApproverOuID:   "owner-beta",
+		RiskFamily:     "exec",
+		RiskLevel:      "L3",
+		ToolName:       "exec",
+		TargetKind:     "command",
+		TargetHash:     "target-beta",
+	})
+	resolveApproval(t, router, grantResolveBody{
+		ApprovalID:     "approval-gamma",
+		ChainID:        "chain-gamma",
+		SessionKey:     "session-gamma",
+		ChannelProfile: "feishu",
+		ChannelID:      "channel-gamma",
+		ConversationID: "conversation-gamma",
+		RequesterID:    "requester-gamma",
+		RequesterOuID:  "ou-gamma",
+		ApproverID:     "approver-gamma",
+		ApproverOuID:   "owner-gamma",
+		RiskFamily:     "file_read",
+		RiskLevel:      "L2",
+		ToolName:       "read_file",
+		TargetKind:     "file",
+		TargetHash:     "target-gamma",
+	})
+
+	page := decodeObjectStatus(t, doJSON(t, router, http.MethodGet, "/lynx/grants?q=webchat&pageNum=1&pageSize=1", nil, false), http.StatusOK)
+	expectNumber(t, page, "total", 2)
+	expectNumber(t, page, "pageNum", 1)
+	expectNumber(t, page, "pageSize", 1)
+	expectNumber(t, page, "totalPages", 2)
+	items := pageItems(t, page)
+	if len(items) != 1 {
+		t.Fatalf("expected one grant on first page, got %#v", items)
+	}
+
+	filtered := decodeObjectStatus(t, doJSON(t, router, http.MethodGet, "/lynx/grants?requesterId=ou-beta&pageNum=1&pageSize=20", nil, false), http.StatusOK)
+	expectNumber(t, filtered, "total", 1)
+	filteredItems := pageItems(t, filtered)
+	expectString(t, filteredItems[0], "approvalId", "approval-beta")
+}
+
 func TestChainSummaryAccumulatesEvents(t *testing.T) {
 	router := setupGrantRouter(t)
 
@@ -311,6 +498,54 @@ func TestChainListReturnsEmptySignalArrays(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), "null") {
 		t.Fatalf("chain list should use empty arrays instead of null: %s", recorder.Body.String())
 	}
+}
+
+func TestChainListFiltersAndPaginates(t *testing.T) {
+	router := setupGrantRouter(t)
+	postJSON(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-webchat-alpha",
+		SessionKey:     "session-alpha",
+		ChannelProfile: "webchat",
+		ConversationID: "conversation-alpha",
+		RequesterID:    "requester-alpha",
+		EventType:      "before_dispatch",
+		Hook:           "before_dispatch",
+		Content:        "alpha searchable prompt",
+	})
+	postJSON(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-webchat-beta",
+		SessionKey:     "session-beta",
+		ChannelProfile: "webchat",
+		ConversationID: "conversation-beta",
+		RequesterID:    "requester-beta",
+		EventType:      "before_tool_call",
+		Hook:           "before_tool_call",
+		ToolName:       "read_file",
+	})
+	postJSON(t, router, http.MethodPost, "/lynx/internal/v1/chains/update", api.ChainUpdateRequest{
+		ChainID:        "chain-feishu-gamma",
+		SessionKey:     "session-gamma",
+		ChannelProfile: "feishu",
+		ConversationID: "conversation-gamma",
+		RequesterID:    "requester-gamma",
+		EventType:      "before_dispatch",
+		Hook:           "before_dispatch",
+	})
+
+	page := decodeObjectStatus(t, doJSON(t, router, http.MethodGet, "/lynx/chains?channelProfile=webchat&pageNum=1&pageSize=1", nil, false), http.StatusOK)
+	expectNumber(t, page, "total", 2)
+	expectNumber(t, page, "pageNum", 1)
+	expectNumber(t, page, "pageSize", 1)
+	expectNumber(t, page, "totalPages", 2)
+	items := pageItems(t, page)
+	if len(items) != 1 {
+		t.Fatalf("expected one chain on first page, got %#v", items)
+	}
+
+	filtered := decodeObjectStatus(t, doJSON(t, router, http.MethodGet, "/lynx/chains?q=requester-beta&pageNum=1&pageSize=20", nil, false), http.StatusOK)
+	expectNumber(t, filtered, "total", 1)
+	filteredItems := pageItems(t, filtered)
+	expectString(t, filteredItems[0], "chainId", "chain-webchat-beta")
 }
 
 func TestChainSummaryClearsPendingApprovalAfterGrantResolution(t *testing.T) {
@@ -536,6 +771,35 @@ func setupGrantRouter(t *testing.T) *gin.Engine {
 	return router
 }
 
+func setupGrantRouterWithApprovals(t *testing.T) (*gin.Engine, *sql.DB) {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	database.SetMaxOpenConns(1)
+	if err := db.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	chainRepository := repo.NewChainRepository(database)
+	grantRepository := repo.NewGrantRepository(database)
+	approvalsRepository := repo.NewApprovalsRepository(database)
+	grantService := grants.NewService(grantRepository)
+	chainService := chain.NewService(chainRepository, grantService)
+
+	router := gin.New()
+	query := router.Group("/lynx")
+	internal := query.Group("/internal/v1")
+	routes.RegisterApprovals(query, approvalsRepository)
+	routes.RegisterChains(query, internal, chainService, chainRepository)
+	routes.RegisterGrants(query, internal, grantService, grantRepository, approvalsRepository)
+	return router, database
+}
+
 func resolveApproval(t *testing.T, router http.Handler, body grantResolveBody) api.Grant {
 	t.Helper()
 	var grant api.Grant
@@ -544,6 +808,21 @@ func resolveApproval(t *testing.T, router http.Handler, body grantResolveBody) a
 		t.Fatalf("expected grant id in approval resolution")
 	}
 	return grant
+}
+
+func getApprovalDetail(t *testing.T, router http.Handler, approvalID string) api.ApprovalDetail {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/lynx/approvals/"+approvalID, nil)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d for approval detail: %s", recorder.Code, recorder.Body.String())
+	}
+	var detail api.ApprovalDetail
+	if err := json.Unmarshal(recorder.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode approval detail: %v", err)
+	}
+	return detail
 }
 
 func checkGrant(t *testing.T, router http.Handler, body api.GrantCheckRequest) api.GrantCheckResult {
@@ -558,6 +837,23 @@ func firstValue(values []string) string {
 		return ""
 	}
 	return values[0]
+}
+
+func pageItems(t *testing.T, payload map[string]any) []map[string]any {
+	t.Helper()
+	rawItems, ok := payload["items"].([]any)
+	if !ok {
+		t.Fatalf("expected page items array, got %#v", payload["items"])
+	}
+	items := make([]map[string]any, 0, len(rawItems))
+	for _, rawItem := range rawItems {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			t.Fatalf("expected page item object, got %T", rawItem)
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 func contractContainsString(values []string, needle string) bool {

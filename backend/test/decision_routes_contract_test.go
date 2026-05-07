@@ -387,6 +387,48 @@ func TestDecisionRouteReturnsBothArbitersForChineseEvasion(t *testing.T) {
 	}
 }
 
+func TestDecisionListRouteReturnsPageMetadataAndSlicesItems(t *testing.T) {
+	router, _ := setupDecisionRouter(t)
+
+	postDecision(t, router, "/lynx/internal/v1/decision/input", api.DecisionRequest{
+		RequestID: "req-page-oldest",
+		Stage:     "input",
+		Hook:      "before_dispatch",
+		Content:   "ordinary business request",
+		CreatedAt: "2026-04-28T00:00:00Z",
+	})
+	postDecision(t, router, "/lynx/internal/v1/decision/input", api.DecisionRequest{
+		RequestID: "req-page-middle",
+		Stage:     "input",
+		Hook:      "before_dispatch",
+		Content:   "ordinary business request",
+		CreatedAt: "2026-04-28T00:00:01Z",
+	})
+	postDecision(t, router, "/lynx/internal/v1/decision/input", api.DecisionRequest{
+		RequestID: "req-page-newest",
+		Stage:     "input",
+		Hook:      "before_dispatch",
+		Content:   "ordinary business request",
+		CreatedAt: "2026-04-28T00:00:02Z",
+	})
+
+	page := decodeObjectStatus(t, policyGetJSON(t, router, "/lynx/decisions?pageNum=2&pageSize=1"), http.StatusOK)
+	expectNumber(t, page, "total", 3)
+	expectNumber(t, page, "pageNum", 2)
+	expectNumber(t, page, "pageSize", 1)
+	expectNumber(t, page, "totalPages", 3)
+
+	rawItems, ok := page["items"].([]any)
+	if !ok || len(rawItems) != 1 {
+		t.Fatalf("expected one decision item on page 2, got %#v", page["items"])
+	}
+	item, ok := rawItems[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected decision item object, got %#v", rawItems[0])
+	}
+	expectString(t, item, "decisionId", "req-page-middle")
+}
+
 func TestDecisionAuditInsertErrorsAreNotIgnored(t *testing.T) {
 	router, repository, database := setupDecisionRouterWithDB(t)
 	insertConflictingAuditEvent(t, database, "req-audit-conflict-audit")
@@ -631,11 +673,11 @@ func arbiterHasModule(arbiters []api.ArbiterResult, name api.DecisionArbiterName
 func assertStoredDecisionCount(t *testing.T, repository *repo.DecisionRepository, expected int) {
 	t.Helper()
 
-	decisions, err := repository.ListDecisions(context.Background(), repo.DecisionListQuery{})
+	page, err := repository.ListDecisions(context.Background(), repo.DecisionListQuery{})
 	if err != nil {
 		t.Fatalf("list decisions: %v", err)
 	}
-	if len(decisions) != expected {
-		t.Fatalf("stored decision count = %d, want %d", len(decisions), expected)
+	if page.Total != expected {
+		t.Fatalf("stored decision count = %d, want %d", page.Total, expected)
 	}
 }

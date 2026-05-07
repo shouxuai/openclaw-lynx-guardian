@@ -3,9 +3,11 @@ import type { DashboardOverviewDto, RiskBucketDto } from "@lynx/local-console-sh
 import { Link } from "react-router-dom";
 
 import { getDashboardOverview } from "../api/dashboard";
+import { ROUTE_PATHS } from "../app/route-paths";
 import { DataTable } from "../components/tables/DataTable";
 import { mockDashboard } from "../data/mock-console";
-import { formatActionText, renderRiskBadge } from "../utils/status";
+import { formatQaRecordId } from "../utils/qa-records";
+import { renderRiskBadge, renderStateBadge } from "../utils/status";
 import { formatDateOnly, formatInteger, formatTimestamp } from "../utils/format";
 
 const EMPTY_DASHBOARD: DashboardOverviewDto = {
@@ -21,6 +23,7 @@ const EMPTY_DASHBOARD: DashboardOverviewDto = {
   eventTrend: [],
   tokenTrend: [],
   recentSecurityEvents: [],
+  recentQaRecords: [],
   recentToolCalls: [],
   recentApprovals: [],
 };
@@ -446,26 +449,31 @@ export function DashboardPage() {
 
       <section className="table-panel">
         <div className="table-panel__header">
-          <h2 className="panel__title">最近安全事件</h2>
-          <Link className="inline-link" to="/events">查看全部</Link>
+          <h2 className="panel__title">最近问答记录</h2>
+          <Link className="inline-link" to={ROUTE_PATHS.qaRecords}>查看全部</Link>
         </div>
         <DataTable
           columns={[
-            { key: "id", label: "事件 ID" },
+            { key: "qaId", label: "问答 ID", maxWidth: 220, minWidth: 170, width: 188 },
+            { key: "prompt", label: "用户输入", maxWidth: 460, minWidth: 280, width: 360 },
+            { key: "status", label: "状态" },
             { key: "risk", label: "风险等级" },
-            { key: "action", label: "执行动作" },
-            { key: "recommendation", label: "处置建议" },
+            { key: "tools", label: "工具调用" },
             { key: "time", label: "时间" },
           ]}
+          emptyDescription="暂无问答记录"
           error={error}
           loading={loading}
+          loadingLabel="正在加载问答记录"
           onRetry={retryDashboard}
-          rows={dashboard.recentSecurityEvents.map((event) => ({
-            id: event.eventId,
-            risk: renderRiskBadge(event.riskLevel),
-            action: event.title,
-            recommendation: event.summary ?? formatActionText(event.enforcementAction),
-            time: formatTimestamp(event.occurredAtMs),
+          rows={dashboard.recentQaRecords.map((record) => ({
+            id: record.qaRecordId,
+            qaId: formatQaRecordId(record.qaRecordId),
+            prompt: record.userPromptExcerpt ?? record.finalAnswerExcerpt ?? "暂无输入",
+            status: renderStateBadge(record.status),
+            risk: renderRiskBadge(record.riskLevel),
+            tools: `${formatInteger(record.toolCallCount)} 次`,
+            time: formatTimestamp(record.startedAtMs),
           }))}
         />
       </section>

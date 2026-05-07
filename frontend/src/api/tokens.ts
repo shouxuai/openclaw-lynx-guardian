@@ -1,5 +1,6 @@
 import type {
   CommonListQuery,
+  TokenHeatmapDto,
   TokenSummaryDto,
   TokenTrendBucket,
   TokenTrendDto,
@@ -11,6 +12,10 @@ import { buildQueryString, fetchJson } from "./client";
 export interface TokenTimeRangeQuery {
   fromMs?: number;
   toMs?: number;
+}
+
+export function getTokenHeatmap(query: TokenTimeRangeQuery = {}): Promise<TokenHeatmapDto> {
+  return fetchJson<TokenHeatmapDto>(`/tokens/heatmap${buildQueryString(query)}`);
 }
 
 export function getTokenSummary(query: TokenTimeRangeQuery = {}): Promise<TokenSummaryDto> {

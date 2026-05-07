@@ -61,3 +61,57 @@ func TestDashboardRiskDistributionUsesSecurityEvents(t *testing.T) {
 		t.Fatalf("dashboard overview should expose recentSecurityEvents instead of recentHighRiskEvents")
 	}
 }
+
+func TestDashboardOverviewReturnsRecentQARecords(t *testing.T) {
+	handler, closer := buildParityHandler(t)
+	t.Cleanup(func() {
+		if err := closer(); err != nil {
+			t.Fatalf("closer returned error: %v", err)
+		}
+	})
+
+	items := make([]any, 0, 7)
+	for index := 0; index < 6; index++ {
+		record := qaRecordFixture(fmt.Sprintf("qa-dashboard-recent-%d", index))
+		startedAtMs := parityBaseTimeMs - int64(index+1)*100
+		setQARecordTimes(record, startedAtMs, startedAtMs+50)
+		data := record["data"].(map[string]any)
+		data["userPromptExcerpt"] = fmt.Sprintf("dashboard prompt %d", index)
+		data["toolCallCount"] = index + 1
+		items = append(items, record)
+	}
+
+	outOfRange := qaRecordFixture("qa-dashboard-out-of-range")
+	setQARecordTimes(outOfRange, parityBaseTimeMs-10_000, parityBaseTimeMs-9_900)
+	items = append(items, outOfRange)
+
+	seed := doJSON(t, handler, http.MethodPost, "/lynx/internal/v1/ingest/batch", fixtureBatchWithItems("dashboard-qa-records", items), true)
+	decodeObjectStatus(t, seed, http.StatusOK)
+
+	path := fmt.Sprintf("/lynx/dashboard/overview?fromMs=%d&toMs=%d", parityBaseTimeMs-1_000, parityBaseTimeMs)
+	body := decodeObjectStatus(t, doJSON(t, handler, http.MethodGet, path, nil, false), http.StatusOK)
+	recentRecords, ok := body["recentQaRecords"].([]any)
+	if !ok {
+		t.Fatalf("expected dashboard recentQaRecords array")
+	}
+	if len(recentRecords) != 5 {
+		t.Fatalf("expected dashboard to return five recent QA records, got %d in %#v", len(recentRecords), recentRecords)
+	}
+
+	latest, ok := recentRecords[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected latest recent QA record object, got %T", recentRecords[0])
+	}
+	expectString(t, latest, "qaRecordId", "qa-dashboard-recent-0")
+	expectString(t, latest, "userPromptExcerpt", "dashboard prompt 0")
+	expectString(t, latest, "status", "completed")
+	expectString(t, latest, "riskLevel", "L2")
+	expectNumber(t, latest, "toolCallCount", 1)
+	expectNumber(t, latest, "startedAtMs", int(parityBaseTimeMs-100))
+
+	oldestVisible, ok := recentRecords[4].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fifth recent QA record object, got %T", recentRecords[4])
+	}
+	expectString(t, oldestVisible, "qaRecordId", "qa-dashboard-recent-4")
+}

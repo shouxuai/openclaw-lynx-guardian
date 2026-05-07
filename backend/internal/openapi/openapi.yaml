@@ -231,6 +231,33 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
         "500":
           $ref: "#/components/responses/ErrorResponse"
+  /lynx/approvals/{approvalId}/resolve:
+    post:
+      tags: [query]
+      operationId: resolveApproval
+      summary: Resolve one approval record.
+      description: Allows a still-pending non-L4 approval from the local console helper view and records the approval result. L4 hard-deny records cannot be approved from this endpoint.
+      parameters:
+        - name: approvalId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalResolveRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ObjectResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
   /lynx/lynx-checks:
     get:
       tags: [query]
@@ -766,6 +793,48 @@ components:
           enum: [false]
         message:
           type: string
+    ApprovalResolveRequest:
+      type: object
+      properties:
+        approvalId:
+          type: string
+        resolution:
+          type: string
+          enum: [allow-current-chain, allow-once, allow-always, approved, rejected, denied, blocked, failed]
+        chainId:
+          type: string
+        sessionKey:
+          type: string
+        channelProfile:
+          type: string
+        channelId:
+          type: string
+        conversationId:
+          type: string
+        requesterId:
+          type: string
+        requesterOuId:
+          type: string
+        approverId:
+          type: string
+        approverOuId:
+          type: string
+        riskFamily:
+          type: string
+        riskLevel:
+          type: string
+          enum: [L0, L1, L2, L3, L4]
+        toolName:
+          type: string
+        targetKind:
+          type: string
+        targetHash:
+          type: string
+        resourceScope:
+          $ref: "#/components/schemas/JsonObject"
+        expiresAt:
+          type: string
+      additionalProperties: true
     IngestBatchRequest:
       type: object
       required: [schemaVersion, producer, sentAtMs, batchId, items]

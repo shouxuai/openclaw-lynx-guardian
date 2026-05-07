@@ -2,17 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 
 import type { ConsoleThemeMode } from "../../app/App";
-import { PRIMARY_NAV_ITEMS } from "../../app/nav-config";
+import { CONSOLE_ROUTE_ITEMS } from "../../app/nav-config";
 
 const TOPBAR_EYEBROWS: Record<string, string> = {
   dashboard: "SECURITY OVERVIEW",
   "qa-records": "QA RECORDS",
   events: "AUDIT LOGS",
+  "raw-events": "RAW AUDIT",
   decisions: "DECISION CONTROL PLANE",
   "tool-calls": "TOOL CALLS MONITOR",
   approvals: "APPROVAL GOVERNANCE",
-  chains: "高级诊断",
-  grants: "高级诊断",
+  policies: "POLICY GOVERNANCE",
+  chains: "AUDIT CHAIN",
+  grants: "APPROVAL GRANTS",
   "lynx-checks": "LYNX CHECK RUNS",
   sessions: "SESSION INDEX",
   skills: "SKILL INVENTORY",
@@ -23,7 +25,7 @@ function resolveTopBarContext(pathname: string): {
   eyebrow?: string;
   title: string;
 } {
-  const match = PRIMARY_NAV_ITEMS.slice()
+  const match = CONSOLE_ROUTE_ITEMS.slice()
     .sort((left, right) => right.path.length - left.path.length)
     .find((item) =>
       item.path === "/" ? pathname === "/" : pathname.startsWith(item.path),

@@ -221,6 +221,23 @@ describe("QaRecordsPage", () => {
     expect(within(drawer).queryByRole("button", { name: /展开执行链路/ })).not.toBeInTheDocument();
   });
 
+  it("closes the QA detail drawer when its backdrop is clicked", async () => {
+    renderQaRecordsPage();
+
+    await screen.findByText("qa-1");
+    fireEvent.click(screen.getByRole("row", { name: /qa-1.*请运行测试/ }));
+
+    const drawer = await screen.findByRole("dialog", { name: "问答详情" });
+    expect(drawer).toBeInTheDocument();
+    const backdrop = document.querySelector(".side-drawer-backdrop");
+    expect(backdrop).not.toBeNull();
+    fireEvent.mouseDown(backdrop!);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "问答详情" })).not.toBeInTheDocument();
+    });
+  });
+
   it("expands a clicked node inside that node card and does not render the old bottom detail panel", async () => {
     renderQaRecordsPage();
 

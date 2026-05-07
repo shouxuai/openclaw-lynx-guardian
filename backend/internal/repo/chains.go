@@ -7,10 +7,22 @@ import (
 	"fmt"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
+	"github.com/openclaw/lynx-guardian/backend/internal/service"
 )
 
 type ChainRepository struct {
 	db *sql.DB
+}
+
+type ChainListQuery struct {
+	Q              *string
+	ChannelProfile *string
+	ConversationID *string
+	SessionKey     *string
+	RequesterID    *string
+	PageNum        *int
+	PageSize       *int
+	Limit          *int
 }
 
 func NewChainRepository(db *sql.DB) *ChainRepository {
@@ -104,21 +116,49 @@ func (r *ChainRepository) Get(ctx context.Context, chainID string) (api.ChainSum
 	return summary, nil
 }
 
-func (r *ChainRepository) List(ctx context.Context) ([]api.ChainSummary, error) {
+func (r *ChainRepository) List(ctx context.Context, query ChainListQuery) (service.PageResponse[api.ChainSummary], error) {
+	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
+	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"chain_id",
+		"session_key",
+		"channel_profile",
+		"channel_id",
+		"conversation_id",
+		"requester_id",
+		"requester_ou_id",
+		"status",
+		"summary_json",
+		"active_grant_id",
+		"pending_approval_id",
+	}, query.Q)
+	filter.AppendEquals("channel_profile", query.ChannelProfile)
+	filter.AppendEquals("conversation_id", query.ConversationID)
+	filter.AppendEquals("session_key", query.SessionKey)
+	filter.AppendEquals("requester_id", query.RequesterID)
+
+	total, err := countRowsContext(ctx, r.db, "chains", filter)
+	if err != nil {
+		return service.PageResponse[api.ChainSummary]{}, err
+	}
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT summary_json
-		FROM chains
+		FROM chains `+filter.Where()+`
 		ORDER BY updated_at DESC, chain_id DESC
-		LIMIT 100`)
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
+	)
 	if err != nil {
-		return nil, err
+		return service.PageResponse[api.ChainSummary]{}, err
 	}
+	defer rows.Close()
 
 	out := make([]api.ChainSummary, 0)
 	for rows.Next() {
 		var summaryJSON string
 		if err := rows.Scan(&summaryJSON); err != nil {
-			return nil, err
+			return service.PageResponse[api.ChainSummary]{}, err
 		}
 		var summary api.ChainSummary
 		unmarshalJSONText(summaryJSON, &summary)
@@ -126,17 +166,14 @@ func (r *ChainRepository) List(ctx context.Context) ([]api.ChainSummary, error) 
 		out = append(out, summary)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
+		return service.PageResponse[api.ChainSummary]{}, err
 	}
 	for index := range out {
 		if err := r.loadPromptCoverage(ctx, &out[index]); err != nil {
-			return nil, err
+			return service.PageResponse[api.ChainSummary]{}, err
 		}
 	}
-	return out, nil
+	return service.BuildPageResponse(out, total, page), nil
 }
 
 func normalizeChainSummary(summary *api.ChainSummary) {

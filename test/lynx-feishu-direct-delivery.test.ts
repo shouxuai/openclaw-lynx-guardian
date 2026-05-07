@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   deliverLynxFeishuApprovalPromptDirectly,
+  deliverLynxReport,
   resetDirectFeishuApprovalDeliveryForTests,
 } from "../src/delivery/message-delivery.js";
 
@@ -149,6 +150,78 @@ describe("lynx feishu direct delivery", () => {
       reason: "malformed_target",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses Feishu OpenAPI direct delivery for route-only scheduled report targets", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: 0,
+          tenant_access_token: "tenant-token",
+          expire: 7200,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: 0,
+          data: {
+            message_id: "om_report_1",
+          },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as any);
+    writeHostFeishuConfig({
+      enabled: true,
+      appId: "cli_test_app",
+      appSecret: "test_secret",
+      domain: "feishu",
+    });
+
+    const result = await deliverLynxReport({
+      log: {
+        error: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+      },
+      ctx: {},
+      tag: "scheduled-route-only-feishu",
+      attempts: 1,
+      routeHint: {
+        targetKey: "agent:main:main",
+        sessionKey: "agent:main:main",
+        channelId: "feishu",
+        messageProvider: "feishu",
+        senderId: "feishu:ou_report_user",
+        updatedAtMs: 1,
+      },
+      message: {
+        role: "assistant",
+        content: "# OpenClaw 检测报告\n\n定时检查结果。",
+      },
+    });
+
+    expect(result).toMatchObject({
+      delivered: true,
+      transport: "feishu-openapi-direct",
+      deliveryAttempts: [
+        expect.objectContaining({
+          delivered: true,
+          transport: "feishu-openapi-direct",
+          messageProvider: "feishu",
+          senderId: "feishu:ou_report_user",
+        }),
+      ],
+    });
+    const sendBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body ?? "{}"));
+    expect(fetchMock.mock.calls[1]?.[0]).toContain("/im/v1/messages?receive_id_type=open_id");
+    expect(sendBody.receive_id).toBe("ou_report_user");
+    expect(JSON.parse(sendBody.content)).toEqual({
+      text: "# OpenClaw 检测报告\n\n定时检查结果。",
+    });
   });
 
   it("reuses token only for matching config identity and re-authenticates when config changes", async () => {

@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
 	"github.com/openclaw/lynx-guardian/backend/internal/decision"
+	"github.com/openclaw/lynx-guardian/backend/internal/httpserver"
 	"github.com/openclaw/lynx-guardian/backend/internal/policy"
 	"github.com/openclaw/lynx-guardian/backend/internal/repo"
 )
@@ -23,7 +24,17 @@ func RegisterDecisions(
 	registerDecisionPost(internal, "/decision/install", service, policyService)
 
 	public.GET("/decisions", func(c *gin.Context) {
-		decisions, err := repository.ListDecisions(c.Request.Context(), repo.DecisionListQuery{})
+		values := c.Request.URL.Query()
+		decisions, err := repository.ListDecisions(c.Request.Context(), repo.DecisionListQuery{
+			Q:              httpserver.ReadString(values, "q"),
+			RiskLevel:      httpserver.ReadStringSlice(values, "riskLevel"),
+			Action:         httpserver.ReadStringSlice(values, "action"),
+			Stage:          httpserver.ReadStringSlice(values, "stage"),
+			WinningArbiter: httpserver.ReadStringSlice(values, "winningArbiter"),
+			PageNum:        httpserver.ReadInt(values, "pageNum"),
+			PageSize:       httpserver.ReadInt(values, "pageSize"),
+			Limit:          httpserver.ReadInt(values, "limit"),
+		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
 			return

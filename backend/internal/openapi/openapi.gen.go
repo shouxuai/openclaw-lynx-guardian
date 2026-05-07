@@ -16,6 +16,69 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for ApprovalResolveRequestResolution.
+const (
+	AllowAlways       ApprovalResolveRequestResolution = "allow-always"
+	AllowCurrentChain ApprovalResolveRequestResolution = "allow-current-chain"
+	AllowOnce         ApprovalResolveRequestResolution = "allow-once"
+	Approved          ApprovalResolveRequestResolution = "approved"
+	Blocked           ApprovalResolveRequestResolution = "blocked"
+	Denied            ApprovalResolveRequestResolution = "denied"
+	Failed            ApprovalResolveRequestResolution = "failed"
+	Rejected          ApprovalResolveRequestResolution = "rejected"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalResolveRequestResolution enum.
+func (e ApprovalResolveRequestResolution) Valid() bool {
+	switch e {
+	case AllowAlways:
+		return true
+	case AllowCurrentChain:
+		return true
+	case AllowOnce:
+		return true
+	case Approved:
+		return true
+	case Blocked:
+		return true
+	case Denied:
+		return true
+	case Failed:
+		return true
+	case Rejected:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalResolveRequestRiskLevel.
+const (
+	L0 ApprovalResolveRequestRiskLevel = "L0"
+	L1 ApprovalResolveRequestRiskLevel = "L1"
+	L2 ApprovalResolveRequestRiskLevel = "L2"
+	L3 ApprovalResolveRequestRiskLevel = "L3"
+	L4 ApprovalResolveRequestRiskLevel = "L4"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalResolveRequestRiskLevel enum.
+func (e ApprovalResolveRequestRiskLevel) Valid() bool {
+	switch e {
+	case L0:
+		return true
+	case L1:
+		return true
+	case L2:
+		return true
+	case L3:
+		return true
+	case L4:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CapabilitiesResponseQueryApiVersion.
 const (
 	V1 CapabilitiesResponseQueryApiVersion = "v1"
@@ -126,6 +189,35 @@ func (e GetTokenTrendParamsBucket) Valid() bool {
 		return false
 	}
 }
+
+// ApprovalResolveRequest defines model for ApprovalResolveRequest.
+type ApprovalResolveRequest struct {
+	ApprovalId           *string                           `json:"approvalId,omitempty"`
+	ApproverId           *string                           `json:"approverId,omitempty"`
+	ApproverOuId         *string                           `json:"approverOuId,omitempty"`
+	ChainId              *string                           `json:"chainId,omitempty"`
+	ChannelId            *string                           `json:"channelId,omitempty"`
+	ChannelProfile       *string                           `json:"channelProfile,omitempty"`
+	ConversationId       *string                           `json:"conversationId,omitempty"`
+	ExpiresAt            *string                           `json:"expiresAt,omitempty"`
+	RequesterId          *string                           `json:"requesterId,omitempty"`
+	RequesterOuId        *string                           `json:"requesterOuId,omitempty"`
+	Resolution           *ApprovalResolveRequestResolution `json:"resolution,omitempty"`
+	ResourceScope        *JsonObject                       `json:"resourceScope,omitempty"`
+	RiskFamily           *string                           `json:"riskFamily,omitempty"`
+	RiskLevel            *ApprovalResolveRequestRiskLevel  `json:"riskLevel,omitempty"`
+	SessionKey           *string                           `json:"sessionKey,omitempty"`
+	TargetHash           *string                           `json:"targetHash,omitempty"`
+	TargetKind           *string                           `json:"targetKind,omitempty"`
+	ToolName             *string                           `json:"toolName,omitempty"`
+	AdditionalProperties map[string]interface{}            `json:"-"`
+}
+
+// ApprovalResolveRequestResolution defines model for ApprovalResolveRequest.Resolution.
+type ApprovalResolveRequestResolution string
+
+// ApprovalResolveRequestRiskLevel defines model for ApprovalResolveRequest.RiskLevel.
+type ApprovalResolveRequestRiskLevel string
 
 // CapabilitiesResponse defines model for CapabilitiesResponse.
 type CapabilitiesResponse struct {
@@ -401,6 +493,9 @@ type ListToolCallsParams struct {
 	ApprovalId        *ApprovalId        `form:"approvalId,omitempty" json:"approvalId,omitempty"`
 }
 
+// ResolveApprovalJSONRequestBody defines body for ResolveApproval for application/json ContentType.
+type ResolveApprovalJSONRequestBody = ApprovalResolveRequest
+
 // IngestApprovalsJSONRequestBody defines body for IngestApprovals for application/json ContentType.
 type IngestApprovalsJSONRequestBody = IngestBatchRequest
 
@@ -421,6 +516,335 @@ type IngestTokenUsageJSONRequestBody = IngestBatchRequest
 
 // IngestToolCallsJSONRequestBody defines body for IngestToolCalls for application/json ContentType.
 type IngestToolCallsJSONRequestBody = IngestBatchRequest
+
+// UpsertPolicyRuleJSONRequestBody defines body for UpsertPolicyRule for application/json ContentType.
+type UpsertPolicyRuleJSONRequestBody = JsonObject
+
+// UpsertProtectedResourceJSONRequestBody defines body for UpsertProtectedResource for application/json ContentType.
+type UpsertProtectedResourceJSONRequestBody = JsonObject
+
+// Getter for additional properties for ApprovalResolveRequest. Returns the specified
+// element and whether it was found
+func (a ApprovalResolveRequest) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for ApprovalResolveRequest
+func (a *ApprovalResolveRequest) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for ApprovalResolveRequest to handle AdditionalProperties
+func (a *ApprovalResolveRequest) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["approvalId"]; found {
+		err = json.Unmarshal(raw, &a.ApprovalId)
+		if err != nil {
+			return fmt.Errorf("error reading 'approvalId': %w", err)
+		}
+		delete(object, "approvalId")
+	}
+
+	if raw, found := object["approverId"]; found {
+		err = json.Unmarshal(raw, &a.ApproverId)
+		if err != nil {
+			return fmt.Errorf("error reading 'approverId': %w", err)
+		}
+		delete(object, "approverId")
+	}
+
+	if raw, found := object["approverOuId"]; found {
+		err = json.Unmarshal(raw, &a.ApproverOuId)
+		if err != nil {
+			return fmt.Errorf("error reading 'approverOuId': %w", err)
+		}
+		delete(object, "approverOuId")
+	}
+
+	if raw, found := object["chainId"]; found {
+		err = json.Unmarshal(raw, &a.ChainId)
+		if err != nil {
+			return fmt.Errorf("error reading 'chainId': %w", err)
+		}
+		delete(object, "chainId")
+	}
+
+	if raw, found := object["channelId"]; found {
+		err = json.Unmarshal(raw, &a.ChannelId)
+		if err != nil {
+			return fmt.Errorf("error reading 'channelId': %w", err)
+		}
+		delete(object, "channelId")
+	}
+
+	if raw, found := object["channelProfile"]; found {
+		err = json.Unmarshal(raw, &a.ChannelProfile)
+		if err != nil {
+			return fmt.Errorf("error reading 'channelProfile': %w", err)
+		}
+		delete(object, "channelProfile")
+	}
+
+	if raw, found := object["conversationId"]; found {
+		err = json.Unmarshal(raw, &a.ConversationId)
+		if err != nil {
+			return fmt.Errorf("error reading 'conversationId': %w", err)
+		}
+		delete(object, "conversationId")
+	}
+
+	if raw, found := object["expiresAt"]; found {
+		err = json.Unmarshal(raw, &a.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("error reading 'expiresAt': %w", err)
+		}
+		delete(object, "expiresAt")
+	}
+
+	if raw, found := object["requesterId"]; found {
+		err = json.Unmarshal(raw, &a.RequesterId)
+		if err != nil {
+			return fmt.Errorf("error reading 'requesterId': %w", err)
+		}
+		delete(object, "requesterId")
+	}
+
+	if raw, found := object["requesterOuId"]; found {
+		err = json.Unmarshal(raw, &a.RequesterOuId)
+		if err != nil {
+			return fmt.Errorf("error reading 'requesterOuId': %w", err)
+		}
+		delete(object, "requesterOuId")
+	}
+
+	if raw, found := object["resolution"]; found {
+		err = json.Unmarshal(raw, &a.Resolution)
+		if err != nil {
+			return fmt.Errorf("error reading 'resolution': %w", err)
+		}
+		delete(object, "resolution")
+	}
+
+	if raw, found := object["resourceScope"]; found {
+		err = json.Unmarshal(raw, &a.ResourceScope)
+		if err != nil {
+			return fmt.Errorf("error reading 'resourceScope': %w", err)
+		}
+		delete(object, "resourceScope")
+	}
+
+	if raw, found := object["riskFamily"]; found {
+		err = json.Unmarshal(raw, &a.RiskFamily)
+		if err != nil {
+			return fmt.Errorf("error reading 'riskFamily': %w", err)
+		}
+		delete(object, "riskFamily")
+	}
+
+	if raw, found := object["riskLevel"]; found {
+		err = json.Unmarshal(raw, &a.RiskLevel)
+		if err != nil {
+			return fmt.Errorf("error reading 'riskLevel': %w", err)
+		}
+		delete(object, "riskLevel")
+	}
+
+	if raw, found := object["sessionKey"]; found {
+		err = json.Unmarshal(raw, &a.SessionKey)
+		if err != nil {
+			return fmt.Errorf("error reading 'sessionKey': %w", err)
+		}
+		delete(object, "sessionKey")
+	}
+
+	if raw, found := object["targetHash"]; found {
+		err = json.Unmarshal(raw, &a.TargetHash)
+		if err != nil {
+			return fmt.Errorf("error reading 'targetHash': %w", err)
+		}
+		delete(object, "targetHash")
+	}
+
+	if raw, found := object["targetKind"]; found {
+		err = json.Unmarshal(raw, &a.TargetKind)
+		if err != nil {
+			return fmt.Errorf("error reading 'targetKind': %w", err)
+		}
+		delete(object, "targetKind")
+	}
+
+	if raw, found := object["toolName"]; found {
+		err = json.Unmarshal(raw, &a.ToolName)
+		if err != nil {
+			return fmt.Errorf("error reading 'toolName': %w", err)
+		}
+		delete(object, "toolName")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for ApprovalResolveRequest to handle AdditionalProperties
+func (a ApprovalResolveRequest) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.ApprovalId != nil {
+		object["approvalId"], err = json.Marshal(a.ApprovalId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'approvalId': %w", err)
+		}
+	}
+
+	if a.ApproverId != nil {
+		object["approverId"], err = json.Marshal(a.ApproverId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'approverId': %w", err)
+		}
+	}
+
+	if a.ApproverOuId != nil {
+		object["approverOuId"], err = json.Marshal(a.ApproverOuId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'approverOuId': %w", err)
+		}
+	}
+
+	if a.ChainId != nil {
+		object["chainId"], err = json.Marshal(a.ChainId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'chainId': %w", err)
+		}
+	}
+
+	if a.ChannelId != nil {
+		object["channelId"], err = json.Marshal(a.ChannelId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'channelId': %w", err)
+		}
+	}
+
+	if a.ChannelProfile != nil {
+		object["channelProfile"], err = json.Marshal(a.ChannelProfile)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'channelProfile': %w", err)
+		}
+	}
+
+	if a.ConversationId != nil {
+		object["conversationId"], err = json.Marshal(a.ConversationId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'conversationId': %w", err)
+		}
+	}
+
+	if a.ExpiresAt != nil {
+		object["expiresAt"], err = json.Marshal(a.ExpiresAt)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'expiresAt': %w", err)
+		}
+	}
+
+	if a.RequesterId != nil {
+		object["requesterId"], err = json.Marshal(a.RequesterId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'requesterId': %w", err)
+		}
+	}
+
+	if a.RequesterOuId != nil {
+		object["requesterOuId"], err = json.Marshal(a.RequesterOuId)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'requesterOuId': %w", err)
+		}
+	}
+
+	if a.Resolution != nil {
+		object["resolution"], err = json.Marshal(a.Resolution)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'resolution': %w", err)
+		}
+	}
+
+	if a.ResourceScope != nil {
+		object["resourceScope"], err = json.Marshal(a.ResourceScope)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'resourceScope': %w", err)
+		}
+	}
+
+	if a.RiskFamily != nil {
+		object["riskFamily"], err = json.Marshal(a.RiskFamily)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'riskFamily': %w", err)
+		}
+	}
+
+	if a.RiskLevel != nil {
+		object["riskLevel"], err = json.Marshal(a.RiskLevel)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'riskLevel': %w", err)
+		}
+	}
+
+	if a.SessionKey != nil {
+		object["sessionKey"], err = json.Marshal(a.SessionKey)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'sessionKey': %w", err)
+		}
+	}
+
+	if a.TargetHash != nil {
+		object["targetHash"], err = json.Marshal(a.TargetHash)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'targetHash': %w", err)
+		}
+	}
+
+	if a.TargetKind != nil {
+		object["targetKind"], err = json.Marshal(a.TargetKind)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'targetKind': %w", err)
+		}
+	}
+
+	if a.ToolName != nil {
+		object["toolName"], err = json.Marshal(a.ToolName)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'toolName': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
 
 // Getter for additional properties for IngestBatchRequest. Returns the specified
 // element and whether it was found
@@ -924,6 +1348,9 @@ type ServerInterface interface {
 	// Read one approval record.
 	// (GET /lynx/approvals/{approvalId})
 	GetApproval(c *gin.Context, approvalId string)
+	// Resolve one approval record.
+	// (POST /lynx/approvals/{approvalId}/resolve)
+	ResolveApproval(c *gin.Context, approvalId string)
 	// Read dashboard overview metrics.
 	// (GET /lynx/dashboard/overview)
 	GetDashboardOverview(c *gin.Context, params GetDashboardOverviewParams)
@@ -966,6 +1393,15 @@ type ServerInterface interface {
 	// Read local console capabilities.
 	// (GET /lynx/meta/capabilities)
 	GetCapabilities(c *gin.Context)
+	// Read policy rules, protected resources, and current policy version.
+	// (GET /lynx/policies)
+	GetPolicies(c *gin.Context)
+	// Create or update one user-managed policy rule.
+	// (POST /lynx/policy-rules)
+	UpsertPolicyRule(c *gin.Context)
+	// Create or update one protected resource policy.
+	// (POST /lynx/protected-resources)
+	UpsertProtectedResource(c *gin.Context)
 	// List conversation sessions.
 	// (GET /lynx/sessions)
 	ListSessions(c *gin.Context, params ListSessionsParams)
@@ -1134,6 +1570,30 @@ func (siw *ServerInterfaceWrapper) GetApproval(c *gin.Context) {
 	}
 
 	siw.Handler.GetApproval(c, approvalId)
+}
+
+// ResolveApproval operation middleware
+func (siw *ServerInterfaceWrapper) ResolveApproval(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "approvalId" -------------
+	var approvalId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "approvalId", c.Param("approvalId"), &approvalId, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter approvalId: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ResolveApproval(c, approvalId)
 }
 
 // GetDashboardOverview operation middleware
@@ -1615,6 +2075,45 @@ func (siw *ServerInterfaceWrapper) GetCapabilities(c *gin.Context) {
 	}
 
 	siw.Handler.GetCapabilities(c)
+}
+
+// GetPolicies operation middleware
+func (siw *ServerInterfaceWrapper) GetPolicies(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetPolicies(c)
+}
+
+// UpsertPolicyRule operation middleware
+func (siw *ServerInterfaceWrapper) UpsertPolicyRule(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.UpsertPolicyRule(c)
+}
+
+// UpsertProtectedResource operation middleware
+func (siw *ServerInterfaceWrapper) UpsertProtectedResource(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.UpsertProtectedResource(c)
 }
 
 // ListSessions operation middleware
@@ -2128,6 +2627,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.GET(options.BaseURL+"/lynx/approvals", wrapper.ListApprovals)
 	router.GET(options.BaseURL+"/lynx/approvals/:approvalId", wrapper.GetApproval)
+	router.POST(options.BaseURL+"/lynx/approvals/:approvalId/resolve", wrapper.ResolveApproval)
 	router.GET(options.BaseURL+"/lynx/dashboard/overview", wrapper.GetDashboardOverview)
 	router.GET(options.BaseURL+"/lynx/events", wrapper.ListEvents)
 	router.GET(options.BaseURL+"/lynx/events/:eventId", wrapper.GetEvent)
@@ -2142,6 +2642,9 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/lynx/lynx-checks", wrapper.ListLynxChecks)
 	router.GET(options.BaseURL+"/lynx/lynx-checks/:requestId", wrapper.GetLynxCheck)
 	router.GET(options.BaseURL+"/lynx/meta/capabilities", wrapper.GetCapabilities)
+	router.GET(options.BaseURL+"/lynx/policies", wrapper.GetPolicies)
+	router.POST(options.BaseURL+"/lynx/policy-rules", wrapper.UpsertPolicyRule)
+	router.POST(options.BaseURL+"/lynx/protected-resources", wrapper.UpsertProtectedResource)
 	router.GET(options.BaseURL+"/lynx/sessions", wrapper.ListSessions)
 	router.GET(options.BaseURL+"/lynx/sessions/:sessionKey", wrapper.GetSession)
 	router.GET(options.BaseURL+"/lynx/tokens/summary", wrapper.GetTokenSummary)

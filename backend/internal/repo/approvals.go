@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 
 // ApprovalsListQuery mirrors the TS ApprovalsListQuery.
 type ApprovalsListQuery struct {
+	Q             *string
 	FromMs        *int64
 	ToMs          *int64
 	SessionKey    *string
@@ -34,6 +36,23 @@ type ApprovalsRepository struct {
 
 func NewApprovalsRepository(db *sql.DB) *ApprovalsRepository {
 	return &ApprovalsRepository{db: db}
+}
+
+func (r *ApprovalsRepository) MarkResolved(
+	ctx context.Context,
+	approvalID string,
+	resolution string,
+	resolvedApproverOuID string,
+	resolvedAtMs int64,
+) error {
+	const stmt = `
+		UPDATE approvals
+		SET resolution = ?,
+		    resolved_at = COALESCE(resolved_at, ?),
+		    resolved_approver_ou_id = COALESCE(NULLIF(?, ''), resolved_approver_ou_id)
+		WHERE approval_id = ?`
+	_, err := r.db.ExecContext(ctx, stmt, resolution, resolvedAtMs, resolvedApproverOuID, approvalID)
+	return err
 }
 
 type approvalListRow struct {
@@ -71,6 +90,27 @@ type approvalDetailRow struct {
 func (r *ApprovalsRepository) List(query ApprovalsListQuery) (service.PageResponse[api.ApprovalListItem], error) {
 	page := service.ResolvePageRequest(query.PageNum, query.PageSize, query.Limit)
 	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"approval_id",
+		"pending_id",
+		"session_key",
+		"run_id",
+		"transport",
+		"channel_profile",
+		"channel_id",
+		"account_id",
+		"conversation_id",
+		"requester_ou_id",
+		"resolved_approver_ou_id",
+		"request_fingerprint_hash",
+		"module",
+		"tool_name",
+		"scope_type",
+		"resolution",
+		"prompt_excerpt",
+		"audit_summary_json",
+		"metadata_json",
+	}, query.Q)
 	filter.AppendRange("requested_at", query.FromMs, query.ToMs)
 	filter.AppendEquals("session_key", query.SessionKey)
 	filter.AppendEquals("run_id", query.RunID)

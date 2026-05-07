@@ -407,3 +407,17 @@ type SkillDetail struct {
 	SkillInventoryItem
 	Findings []SkillFinding `json:"findings"`
 }
+
+type SkillSourceBreakdownItem struct {
+	SourceKind string `json:"sourceKind"`
+	Count      int    `json:"count"`
+}
+
+type SkillListResponse struct {
+	Items           []SkillDetail              `json:"items"`
+	Total           int                        `json:"total"`
+	PageNum         int                        `json:"pageNum"`
+	PageSize        int                        `json:"pageSize"`
+	TotalPages      int                        `json:"totalPages"`
+	SourceBreakdown []SkillSourceBreakdownItem `json:"sourceBreakdown"`
+}

@@ -8,20 +8,20 @@ import {
 describe("PRIMARY_NAV_ITEMS", () => {
   it("groups navigation by control plane function", () => {
     expect(PRIMARY_NAV_GROUPS.map((group) => group.label)).toEqual([
-      "总览",
-      "审计",
+      "工作台",
+      "审计链路",
+      "审批闭环",
       "治理",
-      "高级诊断",
-      "运行",
+      "运行资产",
     ]);
     expect(
       PRIMARY_NAV_GROUPS.map((group) => group.items.map((item) => item.label)),
     ).toEqual([
       ["概览", "问答记录"],
-      ["审计日志", "原始审计流水", "决策观测", "工具调用"],
-      ["审批管理", "策略配置"],
-      ["多轮链路", "放行记录"],
-      ["检测报告", "会话", "Skill 供应链", "Token 统计"],
+      ["审计日志", "工具调用", "多轮链路"],
+      ["审批管理", "决策观测", "放行记录"],
+      ["策略配置"],
+      ["检测报告", "会话", "Token 统计", "Skill 供应链"],
     ]);
   });
 
@@ -30,17 +30,16 @@ describe("PRIMARY_NAV_ITEMS", () => {
       "概览",
       "问答记录",
       "审计日志",
-      "原始审计流水",
-      "决策观测",
       "工具调用",
-      "审批管理",
-      "策略配置",
       "多轮链路",
+      "审批管理",
+      "决策观测",
       "放行记录",
+      "策略配置",
       "检测报告",
       "会话",
-      "Skill 供应链",
       "Token 统计",
+      "Skill 供应链",
     ]);
   });
 });

@@ -100,7 +100,7 @@ func Build(cfg *config.Config) (http.Handler, Closer, error) {
 	routes.RegisterTokens(query, tokens)
 
 	routes.RegisterChains(query, ingestGroup, chainService, chains)
-	routes.RegisterGrants(query, ingestGroup, grantService, approvalGrants)
+	routes.RegisterGrants(query, ingestGroup, grantService, approvalGrants, approvals)
 	routes.RegisterIngest(ingestGroup, ingestService)
 	routes.RegisterDecisions(query, ingestGroup, decisionService, decisions, policyService)
 	routes.RegisterPolicy(query, policyRepository)

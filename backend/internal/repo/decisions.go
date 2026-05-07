@@ -10,10 +10,18 @@ import (
 	"time"
 
 	"github.com/openclaw/lynx-guardian/backend/internal/api"
+	"github.com/openclaw/lynx-guardian/backend/internal/service"
 )
 
 type DecisionListQuery struct {
-	Limit *int
+	Q              *string
+	RiskLevel      []string
+	Action         []string
+	Stage          []string
+	WinningArbiter []string
+	PageNum        *int
+	PageSize       *int
+	Limit          *int
 }
 
 type DecisionRepository struct {
@@ -622,11 +630,37 @@ func (r *DecisionRepository) GetDecision(ctx context.Context, id string) (api.De
 	return r.hydrateDecision(ctx, row)
 }
 
-func (r *DecisionRepository) ListDecisions(ctx context.Context, q DecisionListQuery) ([]api.DecisionResponse, error) {
-	limit := 100
-	if q.Limit != nil && *q.Limit > 0 {
-		limit = *q.Limit
+func (r *DecisionRepository) ListDecisions(ctx context.Context, q DecisionListQuery) (service.PageResponse[api.DecisionResponse], error) {
+	page := service.ResolvePageRequest(q.PageNum, q.PageSize, q.Limit)
+	filter := &Filter{}
+	filter.AppendTextSearch([]string{
+		"d.id",
+		"d.request_id",
+		"d.stage",
+		"d.hook",
+		"d.session_key",
+		"d.channel_profile",
+		"d.conversation_id",
+		"d.requester_id",
+		"d.risk_level",
+		"d.action",
+		"d.winning_arbiter",
+		"d.matched_modules_json",
+		"d.prompt_context",
+		"d.user_message",
+		"a.payload_json",
+	}, q.Q)
+	filter.AppendRiskLevelIn("d.risk_level", q.RiskLevel)
+	filter.AppendIn("d.action", q.Action)
+	filter.AppendIn("d.stage", q.Stage)
+	filter.AppendIn("d.winning_arbiter", q.WinningArbiter)
+
+	joinExpr := "decisions d LEFT JOIN audit_events a ON a.event_id = d.id || '-audit'"
+	total, err := countRowsContext(ctx, r.db, joinExpr, filter)
+	if err != nil {
+		return service.PageResponse[api.DecisionResponse]{}, err
 	}
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT d.id, d.stage, d.risk_level, d.action, d.block, d.score, d.winning_arbiter,
 		       d.matched_modules_json, d.requires_approval, d.approval_request_json,
@@ -634,12 +668,13 @@ func (r *DecisionRepository) ListDecisions(ctx context.Context, q DecisionListQu
 		       COALESCE(a.payload_json, '')
 		FROM decisions d
 		LEFT JOIN audit_events a ON a.event_id = d.id || '-audit'
+		`+filter.Where()+`
 		ORDER BY d.created_at DESC, d.id DESC
-		LIMIT ?`,
-		limit,
+		LIMIT ? OFFSET ?`,
+		append(filter.Params(), page.PageSize, page.Offset)...,
 	)
 	if err != nil {
-		return nil, err
+		return service.PageResponse[api.DecisionResponse]{}, err
 	}
 	defer rows.Close()
 
@@ -647,26 +682,23 @@ func (r *DecisionRepository) ListDecisions(ctx context.Context, q DecisionListQu
 	for rows.Next() {
 		row, err := scanDecisionRows(rows)
 		if err != nil {
-			return nil, err
+			return service.PageResponse[api.DecisionResponse]{}, err
 		}
 		decisionRows = append(decisionRows, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
+		return service.PageResponse[api.DecisionResponse]{}, err
 	}
 
 	out := make([]api.DecisionResponse, 0, len(decisionRows))
 	for _, row := range decisionRows {
 		decision, err := r.hydrateDecision(ctx, row)
 		if err != nil {
-			return nil, err
+			return service.PageResponse[api.DecisionResponse]{}, err
 		}
 		out = append(out, decision)
 	}
-	return out, nil
+	return service.BuildPageResponse(out, total, page), nil
 }
 
 type decisionRow struct {

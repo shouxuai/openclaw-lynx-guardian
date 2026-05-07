@@ -4,6 +4,13 @@ import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 
+import {
+  buildLynxServerExecutableName,
+  getGoBuildTargets,
+  toGoArch,
+  toGoOS,
+} from "./build-local-console-lib.mjs";
+
 const rootDir = process.cwd();
 
 function withWindowsComSpec(env = process.env) {
@@ -56,24 +63,6 @@ function resolveGoCommand() {
   return "go";
 }
 
-function toGoOS(platform) {
-  if (platform === "win32") {
-    return "windows";
-  }
-  return platform;
-}
-
-function toGoArch(arch) {
-  if (arch === "x64") {
-    return "amd64";
-  }
-  return arch;
-}
-
-function executableName(platform, arch) {
-  return `lynx-server-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
-}
-
 function buildGoTarget(platform, arch) {
   const backendGoDir = path.join(rootDir, "backend");
   const outputDir = path.join(backendGoDir, "dist");
@@ -87,7 +76,7 @@ function buildGoTarget(platform, arch) {
     "-ldflags",
     "-s -w",
     "-o",
-    path.join(outputDir, executableName(platform, arch)),
+    path.join(outputDir, buildLynxServerExecutableName(platform, arch)),
     "./cmd/lynx-server",
   ], {
     cwd: backendGoDir,
@@ -113,11 +102,7 @@ function buildGoBackendIfPresent() {
     return;
   }
 
-  const targets = new Map();
-  targets.set("linux/x64", ["linux", "x64"]);
-  targets.set(`${process.platform}/${process.arch}`, [process.platform, process.arch]);
-
-  for (const [platform, arch] of targets.values()) {
+  for (const { platform, arch } of getGoBuildTargets()) {
     buildGoTarget(platform, arch);
   }
 }

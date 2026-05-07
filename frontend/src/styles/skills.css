@@ -1,0 +1,127 @@
+.skills-source-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.skills-source-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.skills-source-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  max-width: 100%;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-lg);
+  background: var(--control-bg);
+  color: var(--text-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  line-height: 1.25;
+  padding: 5px 10px;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.skills-source-chip strong {
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.skills-source-chip:hover,
+.skills-source-chip:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  outline: 0;
+}
+
+.skills-source-chip:focus-visible {
+  box-shadow: 0 0 0 3px rgba(11, 99, 246, 0.14);
+}
+
+.skills-source-chip--active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.skills-source-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.skills-source-cell__channel {
+  color: var(--text-soft);
+  font-size: var(--font-size-sm);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.skills-source-cell__channel--native {
+  color: var(--success);
+}
+
+.skills-source-cell__channel--other {
+  color: var(--warning);
+}
+
+.skills-source-cell__detail {
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-finding-summary {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 26px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+
+.skills-finding-summary--neutral {
+  background: #f1f5f9;
+  color: var(--neutral);
+}
+
+.skills-finding-summary--warning {
+  background: #fff7ed;
+  color: var(--warning);
+}
+
+.skills-finding-summary--danger {
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+@media (max-width: 760px) {
+  .skills-source-chip {
+    flex: 1 1 142px;
+  }
+}
