@@ -117,3 +117,7 @@ test-results/
 /DESIGN.md
 /.workplace/
 .codex-screens
+/backend/
+/frontend/
+/test-results/
+/docs/
