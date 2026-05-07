@@ -1,0 +1,8 @@
+{
+  "openclawDiscovery": {
+    "enabled": true,
+    "runOnStartup": false,
+    "fullScan": false,
+    "localOnly": false
+  }
+}
