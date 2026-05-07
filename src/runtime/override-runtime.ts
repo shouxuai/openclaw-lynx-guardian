@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { EventContext } from "../types.js";
-import { savePendingOverride } from "./pending-override-store.js";
-import type { PendingOverride } from "./pending-override-store.js";
+import { savePendingOverride } from "../approval/pending-override-store.js";
+import type { PendingOverride } from "../approval/pending-override-store.js";
 
 const approvedOverrides = new Map<string, { operationFingerprint: string; expiresAt: number }>();
 

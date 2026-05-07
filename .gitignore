@@ -1,100 +1,114 @@
-# -------------------------- Node.js 核心依赖 --------------------------
-# 项目依赖目录（npm install 生成）
+# Node.js dependencies and package-manager noise
 node_modules/
-# npm 调试日志文件
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-# 包管理锁文件（可选忽略，建议团队统一规范后决定是否忽略）
 # package-lock.json
 # yarn.lock
 # pnpm-lock.yaml
-# npm 全局安装的包缓存
 node_cache/
 
-# -------------------------- 前端构建产物 --------------------------
-# 通用构建目录
+# Build outputs
 dist/
 build/
 out/
-# Vue 项目构建/开发产物
 *.js.map
 *.css.map
 vue.config.js.env
-# React 项目构建产物
 coverage/
-# Vite 项目临时文件
 .vite/
-# Webpack 临时配置/产物
 webpack-stats.json
-# 打包压缩文件
 *.zip
 *.tar.gz
 *.rar
-.claude
-.codex
-# -------------------------- 编辑器/IDE 配置 --------------------------
-# VSCode
-.vscode/
-*.code-workspace
-# WebStorm/IntelliJ
-.idea/
-*.iml
-*.ipr
-*.iws
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-# Vim
-*.swp
-*.swo
-# Emacs
-*~
-\#*\#
-/.emacs.desktop
-/.emacs.desktop.lock
 
-# -------------------------- 系统/缓存文件 --------------------------
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-# Linux
-*.swp
-.Trash-*
-# 临时文件
-*.tmp
-*.temp
-# 环境变量文件（包含敏感信息）
+# Go backend local artifacts
+/backend/bin/
+/backend/dist/
+/backend/out/
+/backend/tmp/
+/backend/vendor/
+/backend/data/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.prof
+*.pprof
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.pid
+
+# Packaged server deliverables are committed even though backend build caches are not.
+!/server/
+!/server/backend/
+!/server/backend/**
+!/server/frontend/
+!/server/frontend/dist/
+!/server/frontend/dist/**
+
+# Local environment and secrets
 .env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 
-# -------------------------- 其他通用忽略项 --------------------------
-# 日志文件
+# Local Go workspace files
+go.work
+go.work.sum
+
+# Editor and IDE files
+.claude
+.codex
+.vscode/
+*.code-workspace
+.idea/
+*.iml
+*.ipr
+*.iws
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+
+# System files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.Trash-*
+
+# Runtime logs, caches, and reports
 logs/
 *.log
-# 缓存目录
 .cache/
-# 测试报告
 test-results/
-# 性能分析文件
 *.cpuprofile
 *.heapprofile
+*.tmp
+*.temp
 
+# Repo-local development material not packaged as extension source
 /test/
 /test-temp
 /tests/
-/docs
-/docs/**
 .worktrees/
 /scripts-dev
 /AGENTS.md
@@ -102,3 +116,9 @@ test-results/
 /notes
 /skills/openclaw-plugin-dev-workflow
 /DESIGN.md
+/.workplace/
+.codex-screens
+/backend/
+/frontend/
+/test-results/
+/docs/

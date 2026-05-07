@@ -2,6 +2,7 @@
 
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
+import { resolve } from "path";
 import { setTimeout as delay } from "timers/promises";
 import {
   DEFAULT_GATEWAY_CONTAINER,
@@ -9,6 +10,7 @@ import {
 } from "./dev-sync-lib.mjs";
 import {
   buildReadySyncSuccessMessage,
+  buildPackageLocalConsoleServerArgs,
   buildCronStoreContainsJobShellCommand,
   buildCronStoreSyncShellCommand,
   chooseReadyLogText,
@@ -18,6 +20,8 @@ import {
   hasGatewayReadyMarkers,
   resolveCronStoreSyncPaths,
 } from "./ready-sync-lib.mjs";
+
+const defaultRepoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const PASSTHROUGH_VALUE_ARGS = new Set([
   "--container",
@@ -37,6 +41,7 @@ function parseArgs(argv) {
     skipRestart: false,
     skipVerify: false,
     containerOverride: "",
+    repoRoot: defaultRepoRoot,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -73,13 +78,20 @@ function parseArgs(argv) {
         if (arg === "--container") {
           const value = argv[index + 1] || "";
           options.forwardArgs.push(value);
-          options.containerOverride = value;
-          index += 1;
-          break;
-        }
-        if (PASSTHROUGH_VALUE_ARGS.has(arg)) {
-          const value = argv[index + 1] || "";
-          options.forwardArgs.push(value);
+        options.containerOverride = value;
+        index += 1;
+        break;
+      }
+      if (arg === "--repo-root") {
+        const value = argv[index + 1] || "";
+        options.forwardArgs.push(value);
+        options.repoRoot = resolve(value || defaultRepoRoot);
+        index += 1;
+        break;
+      }
+      if (PASSTHROUGH_VALUE_ARGS.has(arg)) {
+        const value = argv[index + 1] || "";
+        options.forwardArgs.push(value);
           index += 1;
         }
         break;
@@ -104,14 +116,16 @@ function parsePositiveInt(flag, value) {
 function printHelp() {
   console.log(`
 Usage:
-  node scripts-dev/sync-openclaw-dev-ready.mjs [options]
+  node scripts/sync-openclaw-dev-ready.mjs [options]
 
 Wrapper behavior:
   1. Runs verify-dev-sync.mjs
-  2. Runs sync-openclaw-dev.mjs
-  3. Waits for the gateway container to become healthy
-  4. Waits for Lynx Guardian startup markers
-  5. Prints a clear SUCCESS callback
+  2. Builds shared/backend/frontend and packages server/
+  3. Runs sync-openclaw-dev.mjs (including lynx-server backend runtime check)
+  4. Waits for the gateway container to become healthy
+  5. Waits for Lynx Guardian startup markers
+  6. Verifies and syncs the scheduled cron store
+  7. Prints a clear SUCCESS callback
 
 Wrapper options:
   --health-timeout-ms <ms>   Timeout for waiting on container health (default: 90000)
@@ -306,17 +320,29 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const containerName = resolveContainerName(options.containerOverride);
   const verifyScriptPath = fileURLToPath(new URL("./verify-dev-sync.mjs", import.meta.url));
+  const packageScriptPath = fileURLToPath(new URL("./package-local-console-server.mjs", import.meta.url));
   const syncScriptPath = fileURLToPath(new URL("./sync-openclaw-dev.mjs", import.meta.url));
   const cronStorePaths = resolveCronStoreSyncPaths();
 
-  console.log("[lynx-dev-ready] step 1/6: verify dev sync assertions");
+  console.log("[lynx-dev-ready] step 1/7: verify dev sync assertions");
   if (options.skipVerify) {
     console.log("[lynx-dev-ready] verify step skipped by --skip-verify");
   } else {
     runCommand(process.execPath, [verifyScriptPath], { capture: false });
   }
 
-  console.log("[lynx-dev-ready] step 2/6: sync plugin files and restart gateway");
+  console.log("[lynx-dev-ready] step 2/7: build and package latest Lynx server frontend/backend");
+  const packageArgs = buildPackageLocalConsoleServerArgs({
+    packageScriptPath,
+    repoRoot: options.repoRoot,
+  });
+  if (options.dryRun) {
+    console.log(`[lynx-dev-ready] dry-run package skipped: ${process.execPath} ${packageArgs.join(" ")}`);
+  } else {
+    runCommand(process.execPath, packageArgs, { capture: false });
+  }
+
+  console.log("[lynx-dev-ready] step 3/7: sync plugin files, check backend runtime deps, and restart gateway");
   runCommand(process.execPath, [syncScriptPath, ...options.forwardArgs], { capture: false });
 
   if (options.dryRun) {
@@ -324,7 +350,7 @@ async function main() {
     return;
   }
 
-  console.log(`[lynx-dev-ready] step 3/6: wait for ${containerName} after the first restart`);
+  console.log(`[lynx-dev-ready] step 4/7: wait for ${containerName} after the first restart`);
   const initialReady = await waitForGatewayReady(
     containerName,
     options.healthTimeoutMs,
@@ -336,15 +362,15 @@ async function main() {
     console.log(line);
   }
 
-  console.log(`[lynx-dev-ready] step 4/6: verify legacy cron store contains ${DEFAULT_SCHEDULED_LYNX_CHECK_JOB_ID}`);
+  console.log(`[lynx-dev-ready] step 5/7: verify legacy cron store contains ${DEFAULT_SCHEDULED_LYNX_CHECK_JOB_ID}`);
   verifyCronStoreContainsJob(containerName, cronStorePaths.sourceStorePath);
   console.log(`[lynx-dev-ready] cron source verified: ${cronStorePaths.sourceStorePath}`);
 
-  console.log(`[lynx-dev-ready] step 5/6: sync cron store -> docker-state`);
+  console.log(`[lynx-dev-ready] step 6/7: sync cron store -> docker-state`);
   syncCronStore(containerName, cronStorePaths);
   console.log(`[lynx-dev-ready] cron store synced: ${cronStorePaths.sourceStorePath} -> ${cronStorePaths.targetStorePath}`);
 
-  console.log(`[lynx-dev-ready] step 6/6: restart gateway again so cron reloads ${cronStorePaths.targetStorePath}`);
+  console.log(`[lynx-dev-ready] step 7/7: restart gateway again so cron reloads ${cronStorePaths.targetStorePath}`);
   const finalReady = await restartGatewayAndWait(
     containerName,
     options.healthTimeoutMs,

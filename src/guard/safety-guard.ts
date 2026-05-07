@@ -8,34 +8,40 @@
 
 import { detectPromptInjection, detectSystemPromptExtraction } from "./prompt-injection.js";
 import { detectSystemPromptLeak } from "./system-prompt-guard.js";
-import { detectChineseEvasiveIntent } from "./evasive-intent-cn.js";
 import {
   detectConcealedIntent,
   detectOperationGradeConcealedExecution,
   type ConcealedIntentDetection,
 } from "./concealed-intent.js";
 import { matchGlobalInputAllowlistRule } from "./global-allowlist.js";
-import { normalizePluginProtectionText } from "./plugin-protection-normalization.js";
-import { SensitiveDataBlocker } from "./sensitive.js";
-import {
-  buildInputEvidenceBundle,
-  buildOutputEvidenceBundle,
-  buildToolEvidenceBundle,
-} from "./policy/evidence-bundle-builder.js";
-import type { GuardEvidenceBundle } from "./policy/evidence-bundle.js";
-import { advanceAttackGraph, type AttackGraphEvent, type AttackGraphState } from "./policy/attack-graph.js";
-import {
-  advanceAttackGraphState,
-  clearGuardPolicyState,
-  markGuardArtifactTaint,
-  readAttackGraphState,
-  readGuardArtifactTaint,
-} from "../runtime/guard-policy-state.js";
+import { normalizePluginProtectionText } from "../local-guard/local-l4-fast-path.js";
+import { SensitiveDataBlocker } from "../local-guard/sensitive-patterns.js";
 import {
   findObfuscatedLynxPluginPath,
   findObfuscatedProtectedReferenceLabels,
   findObfuscatedSystemAuthPath,
 } from "../path-glob-protection.js";
+
+interface GuardEvidenceBundle {
+  modules: string[];
+  summary: string;
+  [key: string]: unknown;
+}
+
+type AttackStage =
+  | "idle"
+  | "sensitive_scope_entered"
+  | "artifact_prepared"
+  | "execution_ready"
+  | "exfiltration_ready";
+
+interface AttackGraphState {
+  stage: AttackStage;
+}
+
+interface AttackGraphEvent {
+  action: "sensitive_read" | "artifact_write" | "artifact_exec" | "external_send";
+}
 
 // ── Risk Levels ────────────────────────────────────────────────────
 
@@ -205,7 +211,6 @@ interface SessionState {
   lastTopicCategory: string;
   lastActiveTime: number;
   operationHistory: OperationCategory[];  // last N operation categories for sequence detection
-  evasiveIntentCnFamilies: string[][];
   execMasquerade?: ExecMasqueradeState;
 }
 
@@ -241,7 +246,6 @@ function getSessionState(sessionKey: string): SessionState {
       lastTopicCategory: "normal",
       lastActiveTime: Date.now(),
       operationHistory: [],
-      evasiveIntentCnFamilies: [],
       execMasquerade: undefined,
     };
     sessionStates.set(sessionKey, state);
@@ -378,61 +382,15 @@ function computeAnomalyAdjustment(sessionKey: string, baseScore: number, trigger
   return adjustment;
 }
 
-const EVASIVE_CN_HISTORY_MAX = 4;
-
-function computeChineseEvasiveConversationAdjustment(sessionKey: string, families: string[]): number {
-  if (!sessionKey || families.length === 0) return 0;
-
-  const state = getSessionState(sessionKey);
-  const currentFamilies = [...new Set(families)];
-  const history = state.evasiveIntentCnFamilies.slice(-EVASIVE_CN_HISTORY_MAX);
-  const recent = history.slice(-3);
-  const unionFamilies = new Set<string>(recent.flat());
-  const has = (family: string): boolean => unionFamilies.has(family);
-
-  let adjustment = 0;
-
-  if (
-    has("bypass_goal")
-    && has("masquerade_method")
-    && (has("wildcard_obfuscation") || has("dangerous_outcome"))
-  ) {
-    adjustment += 2;
-  } else if (
-    (has("bypass_goal") && has("masquerade_method"))
-    || (has("bypass_goal") && has("detector_target"))
-  ) {
-    adjustment += 1;
-  }
-
-  const detectorFocusTurns = recent.filter((turn) => turn.includes("detector_target")).length;
-  if (detectorFocusTurns >= 2) {
-    adjustment += 1;
-  }
-
-  if (recent.length >= 2) {
-    const firstBreadth = new Set(recent[0]).size;
-    const lastBreadth = new Set(recent[recent.length - 1]).size;
-    if (lastBreadth >= 3 && lastBreadth > firstBreadth) {
-      adjustment += 1;
-    }
-  }
-
-  state.evasiveIntentCnFamilies.push(currentFamilies);
-  if (state.evasiveIntentCnFamilies.length > EVASIVE_CN_HISTORY_MAX) {
-    state.evasiveIntentCnFamilies.shift();
-  }
-
-  return Math.min(adjustment, 2);
-}
-
-function isStandaloneWildcardLowSignal(
-  result: ReturnType<typeof detectChineseEvasiveIntent>,
+function isBenignFullwidthPunctuationOnlyConcealment(
+  text: string,
+  result: ConcealedIntentDetection,
 ): boolean {
-  if (!result.detected) return false;
-  if (result.severity !== "low" || result.scoreDelta !== 1) return false;
-  return result.matchedFamilies.length === 1
-    && result.matchedFamilies[0] === "wildcard_obfuscation";
+  if (!result.detected || result.severity !== "low" || result.scoreDelta !== 1) return false;
+  if (!result.matchedFamilies.every((family) => family === "glyph_confusable" || family === "intent_concealment")) {
+    return false;
+  }
+  return !/[\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A]/.test(text);
 }
 
 // ── Identity Verification (M0) ─────────────────────────────────────
@@ -922,7 +880,7 @@ function detectWildcardObfuscation(text: string): boolean {
 function detectPathObfuscation(text: string): boolean {
   return detectWildcardObfuscation(text)
     || /~[/\\][^\s]*(?:\?|\[[^\]\s]+\])/.test(text)
-    || /(?:^|\s|['"`])[^\s]*(?:\?|\[[^\]\s]+\])[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text);
+    || /(?:^|\s|['"`])(?=[^\s]*[/\\.])(?=[^\s]*(?:\?|\[[^\]\s]+\]))[^\s]*(?:[/\\.]|\s|['"`]|$)/.test(text);
 }
 
 interface PipeExecResult {
@@ -996,7 +954,7 @@ function checkFatalTriangle(
   let outputToExternal = false;
 
   const command = (params?.command ?? "") as string;
-  const filePath = (params?.file_path ?? params?.path ?? "") as string;
+  const filePath = (params?.file_path ?? params?.path ?? params?.file ?? "") as string;
   const combined = `${toolName} ${command} ${filePath}`;
 
   if (/\.env|credentials|secret|\.ssh|\.aws|\.gnupg|password|token|api[_-]?key|\/etc\/passwd|\/etc\/shadow|\/etc\/sudoers/i.test(combined)) {
@@ -1209,19 +1167,10 @@ function extractOutputArtifactPaths(output: string): string[] {
 }
 
 function deriveOutputArtifactTaintReadLabels(
-  output: string,
-  sessionKey?: string,
+  _output: string,
+  _sessionKey?: string,
 ): string[] {
-  const labels = new Set<string>();
-
-  for (const path of extractOutputArtifactPaths(output)) {
-    const taintRecord = readGuardArtifactTaint(sessionKey, path);
-    for (const taint of taintRecord?.taints ?? []) {
-      labels.add(taint);
-    }
-  }
-
-  return [...labels];
+  return [];
 }
 
 function deriveOutputTaintReadLabels(
@@ -1267,57 +1216,46 @@ function shouldPersistOutputAttackEvent(input: {
   return input.priorChainState?.stage !== input.chainProgress.stage;
 }
 
-function shouldInstantDenyConcealedInput(
-  concealedIntent: ConcealedIntentDetection,
-  chineseEvasiveIntent: ReturnType<typeof detectChineseEvasiveIntent>,
-): boolean {
+function shouldInstantDenyConcealedInput(concealedIntent: ConcealedIntentDetection): boolean {
   if (!concealedIntent.matchedFamilies.includes("intent_concealment")) {
     return false;
   }
 
-  if (concealedIntent.matchedFamilies.includes("execute_sink")) {
-    return true;
-  }
-
-  if (concealedIntent.matchedFamilies.includes("staged_loader_chain")) {
-    return true;
-  }
-
-  if (concealedIntent.matchedFamilies.includes("detector_evasion")) {
-    return true;
-  }
-
-  if (concealedIntent.matchedFamilies.includes("approval_bypass")) {
-    return true;
-  }
-
-  if (chineseEvasiveIntent.matchedFamilies.includes("approval_evasion")) {
-    return true;
-  }
-
   return (
-    chineseEvasiveIntent.matchedFamilies.includes("bypass_goal")
-    && chineseEvasiveIntent.matchedFamilies.includes("detector_target")
+    concealedIntent.matchedFamilies.includes("execute_sink")
+    || concealedIntent.matchedFamilies.includes("staged_loader_chain")
+    || concealedIntent.matchedFamilies.includes("detector_evasion")
+    || concealedIntent.matchedFamilies.includes("approval_bypass")
   );
 }
 
 export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
   const globalAllowlistRule = matchGlobalInputAllowlistRule(text);
-  const atMs = Date.now();
-  const finalizeInputDecision = (decision: GuardDecision): GuardDecision => ({
-    ...decision,
-    evidenceBundle: buildInputEvidenceBundle({
-      text,
-      assessment: decision.riskAssessment,
-      sessionKey,
-      atMs,
-    }),
-  });
+  const finalizeInputDecision = (decision: GuardDecision): GuardDecision => decision;
 
   // === 即时危险通道（early-return，直接 L4）===
 
   // M1: 高置信度提示注入 / indirect_injection
+  const earlyIdentityClaims = detectIdentityClaims(text);
+  const earlyProtectedAccess = detectProtectedFileAccess(text);
+  const earlySysprompt = detectSystemPromptExtraction(text);
+  if (earlySysprompt.detected) {
+    const instantModules = ["M2:system_prompt_extraction"];
+    if (earlyProtectedAccess.matchedFiles.length > 0) {
+      instantModules.push("M2:protected_file_access");
+    }
+    if (earlyIdentityClaims.detected && !verifiedOwner) {
+      instantModules.push("M0:identity_verification");
+    }
+    return finalizeInputDecision(
+      buildInstantDenyForModules(
+        instantModules,
+        `system prompt extraction: ${earlySysprompt.matchedPatterns.join(",")}`,
+      ),
+    );
+  }
+
   const injection = detectPromptInjection(text);
   if (injection.detected && (injection.confidence >= 0.85 || injection.category === "indirect_injection")) {
     return finalizeInputDecision(buildInstantDeny("M1:prompt_injection", "提示注入攻击（高置信度）"));
@@ -1335,7 +1273,12 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     if (identityClaims.detected && !verifiedOwner) {
       instantModules.push("M0:identity_verification");
     }
-    return finalizeInputDecision(buildInstantDenyForModules(instantModules, "system prompt extraction"));
+    return finalizeInputDecision(
+      buildInstantDenyForModules(
+        instantModules,
+        `system prompt extraction: ${sysprompt.matchedPatterns.join(",")}`,
+      ),
+    );
   }
 
   if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
@@ -1370,17 +1313,15 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     }
   }
 
-  // M4: 中文规避意图（输入侧）
-  const evasiveIntentCn = detectChineseEvasiveIntent(text);
   const concealedIntent = detectConcealedIntent(text);
 
-  if (shouldInstantDenyConcealedInput(concealedIntent, evasiveIntentCn)) {
+  if (shouldInstantDenyConcealedInput(concealedIntent)) {
     return finalizeInputDecision(
       buildInstantDeny("M4:concealed_intent", "attempt to conceal bypass intent with encoding or obfuscation"),
     );
   }
 
-  const suppressVisibleM4 = isStandaloneWildcardLowSignal(evasiveIntentCn);
+  const suppressConcealedM4 = isBenignFullwidthPunctuationOnlyConcealment(text, concealedIntent);
 
   // === 评分通道 ===
 
@@ -1451,35 +1392,6 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     pushDim(accum, "clarity", 2);
   }
 
-  // M4: 中文规避意图（模块化加权 + 有界增益）
-  if (evasiveIntentCn.detected && !suppressVisibleM4) {
-    modules.push("M4:evasive_intent_cn");
-    if (evasiveIntentCn.severity === "high") {
-      pushDim(accum, "harm", 2);
-      pushDim(accum, "rev", 1);
-      pushDim(accum, "auth", 2);
-      pushDim(accum, "pattern", 2);
-      pushDim(accum, "clarity", 2);
-    } else if (evasiveIntentCn.severity === "medium") {
-      pushDim(accum, "harm", 2);
-      pushDim(accum, "auth", 1);
-      pushDim(accum, "pattern", 2);
-      pushDim(accum, "clarity", 2);
-    } else {
-      pushDim(accum, "harm", 1);
-      pushDim(accum, "pattern", 1);
-      pushDim(accum, "clarity", 1);
-    }
-
-    if (evasiveIntentCn.matchedFamilies.includes("dangerous_outcome")) {
-      pushDim(accum, "harm", 2);
-      pushDim(accum, "rev", 2);
-    }
-    if (evasiveIntentCn.matchedFamilies.length >= 3) {
-      pushDim(accum, "pattern", 2);
-    }
-  }
-
   // M0 + M2/M3 组合：叠加额外 auth 信号
   if (!verifiedOwner && identityClaims.detected && (
     modules.includes("M2:protected_file_access") || modules.includes("M3:over_agency")
@@ -1508,7 +1420,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
     pushDim(accum, "clarity", pipeExec.shellExec ? 2 : 1);
   }
 
-  if (concealedIntent.detected) {
+  if (concealedIntent.detected && !suppressConcealedM4) {
     modules.push("M4:concealed_intent");
     if (concealedIntent.severity === "high") {
       pushDim(accum, "harm", 2);
@@ -1528,21 +1440,10 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   let score = computeWeightedScore(accum);
-  if (evasiveIntentCn.detected && !suppressVisibleM4) {
-    score = Math.min(score + Math.min(evasiveIntentCn.scoreDelta, 2), 10);
-  }
 
   if (sessionKey) {
-    const sharedAnomalyModules = modules.filter((m) => m !== "M4:evasive_intent_cn");
-    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, sharedAnomalyModules);
+    const anomalyAdj = computeAnomalyAdjustment(sessionKey, score, modules);
     score = Math.min(score + anomalyAdj, 10);
-    if (evasiveIntentCn.detected && !suppressVisibleM4) {
-      const cnConversationAdj = computeChineseEvasiveConversationAdjustment(
-        sessionKey,
-        evasiveIntentCn.matchedFamilies,
-      );
-      score = Math.min(score + cnConversationAdj, 10);
-    }
   }
 
   if (verifiedOwner && score > 0) {
@@ -1640,40 +1541,7 @@ export function guardOutput(output: string, sessionKey?: string, context?: Guard
     };
   }
 
-  const atMs = Date.now();
-  const finalizeOutputDecision = (decision: GuardDecision): GuardDecision => {
-    const priorChainState = readAttackGraphState(sessionKey);
-    const artifactTaintReadLabels = deriveOutputArtifactTaintReadLabels(output, sessionKey);
-    const taintReadLabels = deriveOutputTaintReadLabels(artifactTaintReadLabels, priorChainState);
-    const attackEvent = deriveOutputAttackGraphEvent({
-      output,
-      priorChainState,
-      artifactTaintReadLabels,
-    });
-    const chainProgress = attackEvent
-      ? advanceAttackGraph(priorChainState ?? undefined, attackEvent)
-      : priorChainState;
-
-    if (!decision.block && attackEvent && shouldPersistOutputAttackEvent({
-      attackEvent,
-      priorChainState,
-      chainProgress: chainProgress ?? null,
-    })) {
-      advanceAttackGraphState(sessionKey, attackEvent);
-    }
-
-    return {
-      ...decision,
-      evidenceBundle: buildOutputEvidenceBundle({
-        output,
-        assessment: decision.riskAssessment,
-        sessionKey,
-        chainProgress,
-        taintReadLabels,
-        atMs,
-      }),
-    };
-  };
+  const finalizeOutputDecision = (decision: GuardDecision): GuardDecision => decision;
 
   if (detectOpenClawMemorySessionLeak(output)) {
     return finalizeOutputDecision(buildInstantDeny("M2:memory_session_privacy", "attempt to reveal OpenClaw memory/session records"));
@@ -1803,19 +1671,16 @@ export function guardToolCall(
   const note = (params?.note ?? "") as string;
   const raw = (params?.raw ?? "") as string;
   const command = (params?.command ?? "") as string;
-  const filePath = (params?.file_path ?? params?.path ?? "") as string;
+  const filePath = (params?.file_path ?? params?.path ?? params?.file ?? "") as string;
   const normalizedToolName = toolName.trim().toLowerCase();
   const normalizedToolAction = toolAction.trim().toLowerCase();
   const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
-  const atMs = Date.now();
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
   const memorySessionAccess = detectOpenClawMemorySessionArtifactAccess(combined, toolName);
   const credTheft = detectCredentialTheft(combined);
   const triangle = checkFatalTriangle(toolName, params);
   const artifactPath = inferToolArtifactPath(normalizedToolName, filePath, command);
-  const taintReadLabels = artifactPath
-    ? (readGuardArtifactTaint(sessionKey, artifactPath)?.taints ?? [])
-    : [];
+  const taintReadLabels: string[] = [];
   const attackEvent = deriveToolAttackGraphEvent({
     normalizedToolName,
     protectedAccess,
@@ -1828,45 +1693,7 @@ export function guardToolCall(
   });
   let masqueradeTaintLevel = getActiveExecMasqueradeLevel(sessionKey);
 
-  const finalizeToolDecision = (decision: GuardDecision): GuardDecision => {
-    const priorChainState = readAttackGraphState(sessionKey);
-    const chainProgress = attackEvent
-      ? advanceAttackGraph(priorChainState ?? undefined, attackEvent)
-      : priorChainState;
-    const taintWriteLabels = deriveToolTaintWriteLabels({
-      normalizedToolName,
-      artifactPath,
-      priorChainState,
-      taintReadLabels,
-    });
-
-    if (shouldPersistToolAttackEvent({
-      decision,
-      attackEvent,
-      priorChainState,
-      chainProgress,
-    })) {
-      advanceAttackGraphState(sessionKey, attackEvent);
-    }
-
-    if (artifactPath && taintWriteLabels.length > 0 && !decision.block) {
-      markGuardArtifactTaint(sessionKey, artifactPath, taintWriteLabels, { atMs });
-    }
-
-    return {
-      ...decision,
-      evidenceBundle: buildToolEvidenceBundle({
-        toolName: normalizedToolName || toolName,
-        params,
-        assessment: decision.riskAssessment,
-        sessionKey,
-        chainProgress,
-        taintReadLabels,
-        taintWriteLabels,
-        atMs,
-      }),
-    };
-  };
+  const finalizeToolDecision = (decision: GuardDecision): GuardDecision => decision;
 
   if (normalizedToolName === "gateway" && /^config\.(?:patch|set|replace|update)$/i.test(normalizedToolAction)) {
     return finalizeToolDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
@@ -2078,7 +1905,6 @@ function buildDescription(modules: string[], level: RiskLevel): string {
     "M2:protected_file_access": "核心配置文件访问",
     "M2:system_prompt_leak": "系统提示泄露",
     "M3:over_agency": "过度代理/权限提升",
-    "M4:evasive_intent_cn": "中文规避意图输入",
     "M4:concealed_intent": "隐藏意图/内容混淆",
     "M5:credential_theft": "凭证窃取风险",
     "M6:malicious_code": "恶意代码请求",
@@ -2091,5 +1917,4 @@ function buildDescription(modules: string[], level: RiskLevel): string {
 
 export function clearSessionState(sessionKey: string): void {
   sessionStates.delete(sessionKey);
-  clearGuardPolicyState(sessionKey);
 }

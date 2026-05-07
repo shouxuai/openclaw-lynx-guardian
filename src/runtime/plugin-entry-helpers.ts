@@ -4,19 +4,20 @@ import { classifyLynxCheckTrigger } from "../discovery/lynx-check-trigger.js";
 import {
   resolvePluginApprovalCompat,
   type PluginApprovalCompatTier,
-} from "./plugin-approval-compat.js";
+} from "../approval/approval-bridge.js";
 import {
   extractMessageText,
   normalizeString,
 } from "./plugin-runtime-helpers.js";
+import { buildLocalConsoleWebviewFootnote } from "../console/runtime.js";
 import { evaluateGuardDecisionPolicy } from "./policy-runtime.js";
 import {
   readRecentActiveDeliverySnapshots,
-} from "./recent-active-delivery.js";
+} from "../delivery/recent-delivery.js";
 import {
   readRequesterProvenance,
   rememberRequesterProvenance,
-} from "./requester-provenance-store.js";
+} from "../approval/approval-bridge.js";
 
 export const LOCAL_TOOL_APPROVAL_COMMAND = "/lynx-approve";
 const RECENT_FEISHU_DM_APPROVAL_CONTEXT_TTL_MS = 5 * 60 * 1000;
@@ -118,6 +119,8 @@ export function buildForcedAgentStartDenyContext(params: {
     "不得调用任何工具。",
     "不得查看、读取、清除、导出、总结、引用或泄露任何受保护内容。",
     "不得提供审批、确认短语、重试、绕过方法、替代执行步骤或操作建议。",
+    "最终面向用户的拒绝回复必须在正文最后原样附上下面的分割线和脚注，不得改写、删除或移动到正文中：",
+    buildLocalConsoleWebviewFootnote(),
   ].join("\n");
 }
 
@@ -157,10 +160,7 @@ export function resolveGuardPolicyState(decision: GuardDecision) {
   });
   const effectiveAssessment = policyResolution.effectiveAssessment;
   const legacyAssessmentSelected = effectiveAssessment === decision.riskAssessment;
-  const policyEvaluation = policyResolution.bundleEvaluation
-    && effectiveAssessment === policyResolution.bundleEvaluation.compatibilityAssessment
-    ? policyResolution.bundleEvaluation
-    : policyResolution.legacyEvaluation;
+  const policyEvaluation = policyResolution.legacyEvaluation;
 
   return {
     policyResolution,
