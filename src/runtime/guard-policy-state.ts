@@ -18,6 +18,8 @@ interface GuardPolicySessionState {
 const guardPolicySessions = new Map<string, GuardPolicySessionState>();
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
+const ATTACK_GRAPH_TTL_MS = 30 * 60 * 1000;
+const ARTIFACT_TAINT_TTL_MS = 30 * 60 * 1000;
 
 function isExpired(session: GuardPolicySessionState, now: number): boolean {
   return session.lastUpdatedAt + SESSION_TTL_MS <= now;
@@ -85,6 +87,23 @@ function touchSession(session: GuardPolicySessionState): void {
   session.lastUpdatedAt = Date.now();
 }
 
+function isAttackGraphExpired(state: AttackGraphState, now: number): boolean {
+  return state.updatedAt + ATTACK_GRAPH_TTL_MS <= now;
+}
+
+function readFreshAttackGraphState(session: GuardPolicySessionState, now: number): AttackGraphState | null {
+  if (!session.attackGraph) {
+    return null;
+  }
+
+  if (isAttackGraphExpired(session.attackGraph, now)) {
+    session.attackGraph = null;
+    return null;
+  }
+
+  return session.attackGraph;
+}
+
 function cloneAttackGraphState(state: AttackGraphState | null): AttackGraphState | null {
   return state ? { ...state } : null;
 }
@@ -102,12 +121,17 @@ function cloneArtifactTaintRecord(record: ArtifactTaintRecord | null): ArtifactT
 
 export function readAttackGraphState(sessionKey?: string): AttackGraphState | null {
   const session = getSession(sessionKey);
-  if (!session?.attackGraph) {
+  if (!session) {
+    return null;
+  }
+
+  const attackGraph = readFreshAttackGraphState(session, Date.now());
+  if (!attackGraph) {
     return null;
   }
 
   touchSession(session);
-  return cloneAttackGraphState(session.attackGraph);
+  return cloneAttackGraphState(attackGraph);
 }
 
 export function advanceAttackGraphState(
@@ -123,7 +147,9 @@ export function advanceAttackGraphState(
     return null;
   }
 
-  session.attackGraph = advanceAttackGraph(session.attackGraph ?? undefined, event);
+  const now = Date.now();
+  const currentAttackGraph = readFreshAttackGraphState(session, now);
+  session.attackGraph = advanceAttackGraph(currentAttackGraph ?? undefined, event, now);
   touchSession(session);
   return cloneAttackGraphState(session.attackGraph);
 }
@@ -165,6 +191,11 @@ export function readGuardArtifactTaint(
 
   const record = session.taintStore.read(canonicalPath, options);
   if (!record) {
+    return null;
+  }
+
+  if (record.updatedAt + ARTIFACT_TAINT_TTL_MS <= Date.now()) {
+    session.taintStore.clear(canonicalPath);
     return null;
   }
 

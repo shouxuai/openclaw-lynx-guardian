@@ -15,7 +15,7 @@ import {
 } from "../src/runtime/api-risk-adapter.js";
 import { evaluateGuardDecisionPolicy } from "../src/runtime/policy-runtime.js";
 import { buildGuardContext } from "../src/runtime/plugin-runtime-helpers.js";
-import { guardInput, guardToolCall } from "../src/guard/safety-guard.js";
+import { clearSessionState, guardInput, guardOutput, guardToolCall } from "../src/guard/safety-guard.js";
 
 import {
   checkContent,
@@ -295,6 +295,153 @@ describe("benign protected-file reads", () => {
 
     expect(decision.block).toBe(true);
     expect(decision.riskAssessment.modules).toContain("M2:memory_session_privacy");
+  });
+});
+
+describe("system file protection", () => {
+  it("blocks exec commands that append to shell startup files", () => {
+    const decision = guardToolCall("exec", {
+      command: "echo 'alias ll=\"ls -la\"' >> ~/.bashrc",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:protected_file_access");
+  });
+
+  it("blocks direct writes to shell startup files", () => {
+    const decision = guardToolCall("write", {
+      path: "/home/node/.bashrc",
+      content: "export PATH=/tmp/bin:$PATH\n",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:protected_file_access");
+  });
+
+  it("does not raise risk for plain reads of shell startup files", () => {
+    const decision = guardToolCall("read", {
+      path: "/home/node/.bashrc",
+    });
+
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.modules).not.toContain("M2:protected_file_access");
+  });
+
+  it("blocks writes to system service configuration files", () => {
+    const decision = guardToolCall("write", {
+      path: "/etc/ssh/sshd_config",
+      content: "PermitRootLogin yes\n",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:protected_file_access");
+  });
+
+  it("blocks deletes of system startup service files", () => {
+    const decision = guardToolCall("exec", {
+      command: "rm /etc/systemd/system/openclaw.service",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:protected_file_access");
+  });
+
+  it("blocks writes to Windows hosts", () => {
+    const decision = guardToolCall("write", {
+      path: "C:\\Windows\\System32\\drivers\\etc\\hosts",
+      content: "127.0.0.1 example.com\n",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:protected_file_access");
+  });
+
+  it("does not raise risk for plain reads of non-secret system config files", () => {
+    const decision = guardToolCall("read", {
+      path: "/etc/hosts",
+    });
+
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.modules).not.toContain("M2:protected_file_access");
+  });
+});
+
+describe("risk state decay", () => {
+  it("expires attack-chain risk even when the session stays active", () => {
+    const sessionKey = `test-risk-decay-${Date.now()}`;
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-08T00:00:00Z"));
+    try {
+      guardToolCall("read", { path: "/etc/passwd" }, sessionKey);
+
+      for (let index = 0; index < 3; index += 1) {
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        guardOutput("normal progress update", sessionKey);
+      }
+      vi.advanceTimersByTime(60 * 1000);
+
+      const writeDecision = guardToolCall(
+        "write",
+        {
+          path: "/tmp/normal-project-file.txt",
+          content: "safe project output\n",
+        },
+        sessionKey,
+      );
+      const writePolicy = evaluateGuardDecisionPolicy({
+        assessment: writeDecision.riskAssessment,
+        evidenceBundle: writeDecision.evidenceBundle,
+      });
+
+      expect(writePolicy.finalDecision.kind).toBe("allow");
+      expect(writeDecision.evidenceBundle?.chainProgress?.stage).not.toBe("artifact_prepared");
+      expect(writeDecision.evidenceBundle?.taintWriteLabels).toEqual([]);
+    } finally {
+      clearSessionState(sessionKey);
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires artifact taint even when the session stays active", () => {
+    const sessionKey = `test-taint-decay-${Date.now()}`;
+    const artifactPath = "/tmp/generated-script.sh";
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-08T00:00:00Z"));
+    try {
+      guardToolCall("read", { path: "/etc/passwd" }, sessionKey);
+      guardToolCall(
+        "write",
+        {
+          path: artifactPath,
+          content: "echo ok\n",
+        },
+        sessionKey,
+      );
+
+      for (let index = 0; index < 3; index += 1) {
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        guardOutput("normal progress update", sessionKey);
+      }
+      vi.advanceTimersByTime(60 * 1000);
+
+      const execDecision = guardToolCall(
+        "exec",
+        { command: artifactPath },
+        sessionKey,
+      );
+      const execPolicy = evaluateGuardDecisionPolicy({
+        assessment: execDecision.riskAssessment,
+        evidenceBundle: execDecision.evidenceBundle,
+      });
+
+      expect(execPolicy.finalDecision.kind).toBe("allow");
+      expect(execDecision.evidenceBundle?.taintReadLabels).toEqual([]);
+    } finally {
+      clearSessionState(sessionKey);
+      vi.useRealTimers();
+    }
   });
 });
 

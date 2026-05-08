@@ -7,6 +7,7 @@ export type AttackStage =
 
 export interface AttackGraphState {
   stage: AttackStage;
+  updatedAt: number;
 }
 
 export interface AttackGraphEvent {
@@ -16,27 +17,28 @@ export interface AttackGraphEvent {
 export function advanceAttackGraph(
   current: AttackGraphState | undefined,
   event: AttackGraphEvent,
+  atMs: number = Date.now(),
 ): AttackGraphState {
   const stage = current?.stage ?? "idle";
 
   if (stage === "idle" && event.action === "sensitive_read") {
-    return { stage: "sensitive_scope_entered" };
+    return { stage: "sensitive_scope_entered", updatedAt: atMs };
   }
 
   if (stage === "sensitive_scope_entered" && event.action === "artifact_write") {
-    return { stage: "artifact_prepared" };
+    return { stage: "artifact_prepared", updatedAt: atMs };
   }
 
   if (stage === "artifact_prepared" && event.action === "artifact_exec") {
-    return { stage: "execution_ready" };
+    return { stage: "execution_ready", updatedAt: atMs };
   }
 
   if (
     (stage === "artifact_prepared" || stage === "execution_ready")
     && event.action === "external_send"
   ) {
-    return { stage: "exfiltration_ready" };
+    return { stage: "exfiltration_ready", updatedAt: atMs };
   }
 
-  return current ?? { stage: "idle" };
+  return current ?? { stage: "idle", updatedAt: atMs };
 }
