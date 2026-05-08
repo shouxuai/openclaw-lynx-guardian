@@ -4,15 +4,12 @@ import { spawnSync } from "child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { setTimeout as delay } from "timers/promises";
 import { fileURLToPath } from "url";
 import {
   DEFAULT_GATEWAY_CONTAINER,
   DEFAULT_PLUGIN_NAME,
   assessGatewayLogs,
-  buildContainerSubprojectPath,
   buildDevSyncPlan,
-  buildInstallLocalConsoleRuntimeDepsShellCommand,
   findStalePluginManagedDirectories,
   pickGatewayContainer,
   resolveOpenClawHome,
@@ -95,8 +92,8 @@ Options:
   --plugin-name <name>      Override the plugin directory name
   --repo-root <path>        Use a different repo root (for worktrees)
   --logs <count>            Tail this many container log lines after restart (default: 200)
-  --dry-run                 Print the sync plan and runtime-deps command without changing files
-  --skip-restart            Stage files and install runtime deps but do not restart the gateway
+  --dry-run                 Print the sync plan without changing files
+  --skip-restart            Stage and copy files but do not restart the gateway
 `);
 }
 
@@ -257,141 +254,28 @@ function copyPluginIntoContainer(plan, stagePluginPath) {
   ]);
 }
 
-function containerDirectoryExists(containerName, dirPath) {
-  const result = runCommand("docker", [
-    "exec",
-    "-u",
-    "0:0",
-    containerName,
-    "sh",
-    "-lc",
-    `test -d ${shellQuote(dirPath)}`,
-  ], {
-    capture: true,
-    allowFailure: true,
-  });
-
-  return result.status === 0;
-}
-
-function mirrorPluginIntoBundledPath(plan, stagePluginPath, { dryRun = false } = {}) {
-  const bundledPath = plan.containerBundledPluginPath;
-  const bundledRoot = plan.containerBundledExtensionsRoot;
-  if (!bundledPath || !bundledRoot) {
-    return;
-  }
-
-  if (dryRun) {
-    console.log(`[lynx-dev-sync] dry-run bundled mirror path ${bundledPath}`);
-    return;
-  }
-
-  if (!containerDirectoryExists(plan.containerName, bundledPath)) {
-    console.log(`[lynx-dev-sync] bundled plugin path not present; skip mirror ${bundledPath}`);
-    return;
-  }
-
-  runCommand("docker", [
-    "exec",
-    "-u",
-    "0:0",
-    plan.containerName,
-    "sh",
-    "-lc",
-    [
-      "set -eu",
-      `mkdir -p ${shellQuote(bundledRoot)}`,
-      `rm -rf ${shellQuote(bundledPath)}`,
-    ].join(" && "),
-  ]);
-  runCommand("docker", ["cp", stagePluginPath, `${plan.containerName}:${bundledRoot}/`]);
-  runCommand("docker", [
-    "exec",
-    "-u",
-    "0:0",
-    plan.containerName,
-    "sh",
-    "-lc",
-    [
-      "set -eu",
-      `chown -R node:node ${shellQuote(bundledPath)}`,
-      `chmod -R u=rwX,go=rX ${shellQuote(bundledPath)}`,
-    ].join(" && "),
-  ]);
-  console.log(`[lynx-dev-sync] mirrored plugin into bundled path ${bundledPath}`);
-}
-
-function installLocalConsoleRuntimeDeps(plan, { dryRun = false } = {}) {
-  const backendContainerPath = buildContainerSubprojectPath(plan.containerPluginPath, "server/backend");
-  const shellCommand = buildInstallLocalConsoleRuntimeDepsShellCommand({
-    containerPluginPath: plan.containerPluginPath,
-  });
-
-  if (dryRun) {
-    console.log(
-      `[lynx-dev-sync] dry-run runtime deps: docker exec -u node:node ${plan.containerName} sh -lc ${shellQuote(shellCommand)}`,
-    );
-    return;
-  }
-
-  console.log(`[lynx-dev-sync] checking lynx-server backend runtime at ${backendContainerPath}`);
-  runCommand("docker", [
-    "exec",
-    "-u",
-    "node:node",
-    plan.containerName,
-    "sh",
-    "-lc",
-    shellCommand,
-  ]);
-}
-
 function restartGateway(containerName) {
   runCommand("docker", ["restart", containerName]);
 }
 
-async function printRecentLogs(containerName, count, { sinceEpochSeconds } = {}) {
+function printRecentLogs(containerName, count) {
   if (count <= 0) {
     return;
   }
 
-  const deadline = Date.now() + 30_000;
-  let logText = "";
-  let lastAssessment = null;
-  let blockedAssessment = null;
-  let readyAssessment = null;
-
-  while (Date.now() <= deadline) {
-    const logArgs = ["logs"];
-    if (sinceEpochSeconds !== undefined) {
-      logArgs.push("--since", String(sinceEpochSeconds));
-    }
-    logArgs.push("--tail", String(count), containerName);
-
-    const result = runCommand("docker", logArgs, {
-      capture: true,
-      allowFailure: true,
-    });
-    logText = [result.stdout, result.stderr].filter(Boolean).join("\n");
-    lastAssessment = assessGatewayLogs(logText);
-    if (lastAssessment.status === "ready") {
-      readyAssessment = lastAssessment;
-      break;
-    }
-    if (lastAssessment.status === "blocked") {
-      blockedAssessment = lastAssessment;
-    }
-    await delay(1_000);
-  }
-
+  const result = runCommand("docker", ["logs", "--tail", String(count), containerName], {
+    capture: true,
+    allowFailure: true,
+  });
+  const logText = [result.stdout, result.stderr].filter(Boolean).join("\n");
   if (logText.trim().length > 0) {
     process.stdout.write(logText.endsWith("\n") ? logText : `${logText}\n`);
   }
 
-  const finalAssessment = readyAssessment ?? blockedAssessment ?? lastAssessment ?? assessGatewayLogs(logText);
-  console.log(`[lynx-dev-sync] gateway log assessment: ${finalAssessment.status} - ${finalAssessment.reason}`);
-  if (finalAssessment.status === "blocked") {
-    throw new Error(finalAssessment.reason);
+  const assessment = assessGatewayLogs(logText);
+  console.log(`[lynx-dev-sync] gateway log assessment: ${assessment.status} - ${assessment.reason}`);
+  if (assessment.status === "blocked") {
+    throw new Error(assessment.reason);
   }
 }
 
@@ -403,8 +287,6 @@ function logPlan(plan, options) {
   console.log(`  hostHooksPath: ${plan.hostHooksPath}`);
   console.log(`  hostSkillsPath: ${plan.hostSkillsPath}`);
   console.log(`  containerPluginPath: ${plan.containerPluginPath}`);
-  console.log(`  containerBundledPluginPath: ${plan.containerBundledPluginPath}`);
-  console.log(`  localConsoleBackendPath: ${buildContainerSubprojectPath(plan.containerPluginPath, "server/backend")}`);
   console.log(`  dryRun: ${options.dryRun}`);
   console.log(`  skipRestart: ${options.skipRestart}`);
 }
@@ -431,25 +313,20 @@ async function main() {
 
   try {
     if (options.dryRun) {
-      installLocalConsoleRuntimeDeps(plan, { dryRun: true });
-      mirrorPluginIntoBundledPath(plan, stagePluginPath, { dryRun: true });
       console.log("[lynx-dev-sync] dry-run finished");
       return;
     }
 
     prepareContainerPluginPath(plan);
     copyPluginIntoContainer(plan, stagePluginPath);
-    mirrorPluginIntoBundledPath(plan, stagePluginPath);
-    installLocalConsoleRuntimeDeps(plan);
 
     if (options.skipRestart) {
       console.log("[lynx-dev-sync] sync finished without restart (--skip-restart)");
       return;
     }
 
-    const restartSinceEpochSeconds = Math.floor(Date.now() / 1000) - 2;
     restartGateway(plan.containerName);
-    await printRecentLogs(plan.containerName, options.logs, { sinceEpochSeconds: restartSinceEpochSeconds });
+    printRecentLogs(plan.containerName, options.logs);
     console.log("[lynx-dev-sync] sync finished");
   } finally {
     rmSync(stageRoot, { recursive: true, force: true });

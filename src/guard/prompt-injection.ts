@@ -85,18 +85,6 @@ const ENCODING_OBFUSCATION: { pattern: RegExp; label: string }[] = [
 const SYSTEM_PROMPT_EXTRACTION: { pattern: RegExp; label: string }[] = [
   { pattern: /repeat\s+(all\s+)?(your\s+)?instructions/i, label: "repeat_instructions" },
   { pattern: /show\s+me\s+your\s+system\s+prompt/i, label: "show_system_prompt" },
-  {
-    pattern: /(?:把|将|请把|打印|输出|展示|显示|泄露|透露|给我|show|print|dump|reveal|display).{0,40}(?:system\s+prompt|developer\s+instructions?|safety\s+rules?|系统提示词?|系统提示|开发者指令|开发者消息|安全规则|安全策略|内部规则).{0,40}(?:原文|全部|完整|逐字|打印|输出|展示|显示|泄露|透露|出来|verbatim|full|all)?/i,
-    label: "mixed_system_prompt_raw_dump",
-  },
-  {
-    pattern: /(?:system\s+prompt|developer\s+instructions?|safety\s+rules?|系统提示词?|系统提示|开发者指令|开发者消息|安全规则|安全策略|内部规则).{0,40}(?:原文|全部|完整|逐字|打印|输出|展示|显示|泄露|透露|出来|verbatim|full|all)/i,
-    label: "mixed_system_prompt_raw_dump",
-  },
-  {
-    pattern: /\?{2,}.{0,20}\bsystem\s+prompt\b.{0,80}\?{2,}/i,
-    label: "mojibake_system_prompt_raw_dump",
-  },
   { pattern: /print\s+everything\s+above\s+this\s+line/i, label: "print_above" },
   { pattern: /what\s+are\s+your\s+rules\s*\?/i, label: "what_are_rules" },
   { pattern: /summarize\s+your\s+(instructions|rules)/i, label: "summarize_instructions" },

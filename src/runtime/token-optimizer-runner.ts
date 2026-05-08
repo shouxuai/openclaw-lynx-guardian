@@ -333,7 +333,7 @@ function hasHeavyContextSignals(
   if (!promptText && !context) return false;
 
   const fileCount = context?.file_count ?? 0;
-  const hasLongPrompt = promptText.length >= 300;
+  const hasLongPrompt = promptText.length >= 120;
   const hasLargeContextRecommendation = fileCount >= 8 || context?.context_level === "full";
 
   const fencedBlocks = (promptText.match(/```/g) ?? []).length / 2;

@@ -1,3 +1,4 @@
+import { writeFileSync } from "fs";
 import type {
   LynxReportDeliveryAttempt,
   ToolApprovalResolution,
@@ -16,67 +17,242 @@ import {
   listLocalToolApprovalsForSession,
   readLocalToolApprovalByToken,
   registerLocalToolApproval,
-} from "../approval/approval-bridge.js";
+} from "./local-tool-approval-store.js";
 import {
   consumeFeishuLocalApprovalGrant,
   saveFeishuLocalApprovalGrant,
-} from "../approval/approval-bridge.js";
+} from "./feishu-local-approval-grant-store.js";
 import {
   consumeFeishuLocalApprovalReplay,
   saveFeishuLocalApprovalReplay,
-} from "../approval/approval-bridge.js";
+} from "./feishu-local-approval-replay-store.js";
 import {
   matchFeishuRunContinuation,
   saveFeishuRunContinuation,
-} from "../approval/approval-bridge.js";
+} from "./feishu-run-continuation-store.js";
 import {
   clearRecentActiveDeliveryTargetForContext,
   getRecentActiveDeliveryTargets,
   readRecentActiveDeliverySnapshot,
   rememberRecentActiveDeliveryTarget,
-} from "../delivery/recent-delivery.js";
+} from "./recent-active-delivery.js";
 import type {
   RecentActiveDeliverySnapshot,
   RecentActiveDeliveryTarget,
-} from "../delivery/recent-delivery.js";
-import {
-  buildDeliveryTargetSnapshot,
-  buildOutboundDeliveryTarget,
-  describeDeliveryTarget,
-  resolveDeliveryThreadId,
-  summarizeOutgoingMessage,
-} from "../delivery/delivery-targets.js";
-import {
-  appendFeishuNativeApprovalGuidance,
-  buildFeishuNativeToolApprovalReplyPrompt,
-  resolveToolApprovalScopeType,
-  type ToolApprovalScopeType,
-  resolveToolApprovalProtectedTargetSummary,
-} from "../approval/approval-prompts.js";
-import {
-  resolveManagedLynxCheckPromptChannel,
-  resolveManagedLynxCheckSource,
-} from "../lynx-check/setup-helpers.js";
-import {
-  appendHookLifecycleProbe,
-  sendHookFeedbackMessage,
-} from "../hooks/hook-runtime-helpers.js";
-import { deliverLynxReport } from "../delivery/message-delivery.js";
+} from "./recent-active-delivery.js";
+import { deliverLynxReport } from "./lynx-message-delivery.js";
 import {
   readLatestPendingLynxCheckRunIntent,
-} from "../lynx-check/lynx-check-bridge.js";
-import { deliverLynxFeishuApprovalPromptDirectly } from "../delivery/message-delivery.js";
-import { buildApprovalRequestFingerprint } from "../approval/approval-bridge.js";
-import {
-  persistGrantFromApproval,
-  type GrantControlPlaneSync,
-} from "../approval/approval-bridge.js";
-import { hasManagedLynxCheckAuthorization } from "../lynx-check/lynx-check-bridge.js";
-import { appendLocalConsoleWebviewFootnote } from "../console/runtime.js";
+} from "./lynx-check-run-store.js";
+import { deliverLynxFeishuApprovalPromptDirectly } from "./lynx-feishu-direct-delivery.js";
+import { buildApprovalRequestFingerprint } from "./approval-request-fingerprint.js";
+import { persistGrantFromApproval } from "./tool-approval-runtime.js";
+import { buildParamSummary } from "./policy-runtime.js";
+import { hasManagedLynxCheckAuthorization } from "./managed-lynx-check-authorization-store.js";
+import { ensureParentDirectory } from "../discovery/pending-discovery-store.js";
+
+export function describeDeliveryTarget(ctx: any): string {
+  const parts = [
+    ctx?.messageProvider ?? ctx?.source,
+    ctx?.channelId ?? ctx?.channel,
+    ctx?.sessionKey,
+    ctx?.senderId ?? ctx?.userId,
+  ];
+
+  const target = parts
+    .filter((part) => typeof part === "string" && part.trim().length > 0)
+    .join("|");
+
+  return target || "unknown-target";
+}
+
+export function summarizeOutgoingMessage(message: any): string {
+  if (typeof message?.content === "string") {
+    return `text:${message.content.length}`;
+  }
+
+  if (Array.isArray(message?.content)) {
+    return `blocks:${message.content.length}`;
+  }
+
+  return "unknown-payload";
+}
+
+export function resolveToolApprovalProtectedTargetSummary(
+  toolName: string,
+  params: Record<string, any> | undefined,
+): string {
+  const rawPath = normalizeString(params?.file_path ?? params?.path);
+  if (rawPath) {
+    return rawPath.replace(/\s+/g, " ");
+  }
+
+  const command = normalizeString(params?.command);
+  if (command) {
+    return command.replace(/\s+/g, " ");
+  }
+
+  return buildParamSummary(toolName, params ?? {}).replace(/\s+/g, " ");
+}
+
+export function extractApproveCommand(text: string): {
+  approvalId: string;
+  allowDecision?: string;
+  denyDecision?: string;
+} | null {
+  const match = normalizeString(text).match(
+    /\/approve\s+([a-z0-9-]+)\s+([a-z-]+(?:\|[a-z-]+)*)/i,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const approvalId = match[1];
+  const allowedDecisions = match[2]
+    .split("|")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  return {
+    approvalId,
+    allowDecision: allowedDecisions.find((value) => value === "allow-once")
+      ?? allowedDecisions.find((value) => value.startsWith("allow-")),
+    denyDecision: allowedDecisions.find((value) => value === "deny"),
+  };
+}
+
+export function appendFeishuNativeApprovalGuidance(text: string): string {
+  if (
+    text.includes("请在 Feishu 会话回复或webchat中进行审批")
+    || text.includes("请直接在当前飞书会话回复")
+  ) {
+    return text;
+  }
+
+  const approveCommand = extractApproveCommand(text);
+  if (!approveCommand) {
+    return text;
+  }
+
+  const lines = [
+    text.trimEnd(),
+    "",
+    "飞书审批提示：",
+    "请在 Feishu 会话回复或webchat中进行审批。",
+    approveCommand.allowDecision
+      ? `如在 Feishu 审批，请回复 \`/approve ${approveCommand.approvalId} ${approveCommand.allowDecision}\`。`
+      : "",
+    approveCommand.denyDecision
+      ? `如需拒绝，回复 \`/approve ${approveCommand.approvalId} ${approveCommand.denyDecision}\`。`
+      : "",
+    "如在 webchat 审批，可直接在审批窗口中批准或拒绝。",
+    "不要再使用 `/lynx-approve`。",
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
+export function buildFeishuNativeToolApprovalReplyPrompt(params: {
+  approvalId: string;
+  module: string;
+  riskLevel: string;
+  toolName: string;
+  timeoutMs: number;
+  confirmationPhrase: string;
+}): string {
+  const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
+  return [
+    `[Lynx Guardian] ${params.toolName} 已进入原生审批窗口。`,
+    `模块: ${params.module}`,
+    `风险: ${params.riskLevel}`,
+    `请在 ${timeoutSeconds}s 内在 Feishu 会话回复或webchat中进行审批：`,
+    `/approve ${params.approvalId} allow-once`,
+    `/approve ${params.approvalId} deny`,
+    `如果你之前习惯回复“${params.confirmationPhrase}”，本次请直接回复上面的 /approve 命令，或在 webchat 中完成审批。`,
+    "如使用 Feishu，请直接回复上面的 /approve 命令。",
+  ].join("\n");
+}
+
+function isPluginSubsystem(ctx: any): boolean {
+  return normalizeString(ctx?.subsystem).toLowerCase() === "plugins";
+}
+
+function isCronManagedLynxCheckContext(ctx: any): boolean {
+  const trigger = normalizeString(ctx?.trigger).toLowerCase();
+  if (trigger === "cron") {
+    return true;
+  }
+
+  const sessionKey = normalizeString(ctx?.sessionKey).toLowerCase();
+  return sessionKey.startsWith("cron:") || sessionKey.includes(":cron:");
+}
+
+export function resolveManagedLynxCheckSource(ctx: any): "manual" | "scheduled" {
+  return isCronManagedLynxCheckContext(ctx) || isPluginSubsystem(ctx)
+    ? "scheduled"
+    : "manual";
+}
+
+export function resolveManagedLynxCheckPromptChannel(
+  ctx: any,
+  routeHint?: RecentActiveDeliverySnapshot | null,
+): "webchat" | "feishu" | "generic" {
+  const candidates = [
+    normalizeString(ctx?.messageProvider),
+    normalizeString(ctx?.channelId),
+    normalizeString(ctx?.source),
+    normalizeString(routeHint?.messageProvider),
+    normalizeString(routeHint?.channelId),
+  ]
+    .filter(Boolean)
+    .map((value) => value.toLowerCase());
+
+  if (candidates.some((value) => value.includes("feishu"))) {
+    return "feishu";
+  }
+  if (candidates.some((value) => value.includes("webchat"))) {
+    return "webchat";
+  }
+  return "generic";
+}
+
+export function resolveDeliveryThreadId(value: any): string | number | undefined {
+  return typeof value?.messageThreadId === "number" && Number.isFinite(value.messageThreadId)
+    ? value.messageThreadId
+    : typeof value?.threadId === "number" && Number.isFinite(value.threadId)
+      ? value.threadId
+      : normalizeString(value?.messageThreadId ?? value?.threadId) || undefined;
+}
+
+export function buildDeliveryTargetSnapshot(value: any): Partial<RecentActiveDeliverySnapshot> {
+  return {
+    sessionKey: normalizeString(value?.sessionKey) || undefined,
+    channelId: normalizeString(value?.channelId ?? value?.channel) || undefined,
+    messageProvider: normalizeString(value?.messageProvider ?? value?.source) || undefined,
+    senderId: normalizeString(value?.senderId ?? value?.userId) || undefined,
+    bindingId: normalizeString(value?.bindingId) || undefined,
+    to: normalizeString(value?.to ?? value?.recipientId) || undefined,
+    accountId: normalizeString(value?.accountId) || undefined,
+    threadId: resolveDeliveryThreadId(value),
+  };
+}
+
+export function buildOutboundDeliveryTarget(
+  event: any,
+  ctx: any,
+): Partial<RecentActiveDeliverySnapshot> {
+  const currentTarget = buildDeliveryTargetSnapshot(ctx);
+  return {
+    ...currentTarget,
+    bindingId: normalizeString(event?.bindingId) || currentTarget.bindingId,
+    to: normalizeString(event?.to) || currentTarget.to,
+    accountId: normalizeString(event?.accountId) || currentTarget.accountId,
+    threadId: resolveDeliveryThreadId(event) ?? currentTarget.threadId,
+  };
+}
 
 type CreatePluginSetupHelpersParams = {
   config: any;
-  grantControlPlane?: Pick<GrantControlPlaneSync, "baseUrl" | "getToken" | "fetchImpl">;
   hookProbeLogPath: string;
   localApprovalApproverOuIds: string[];
   log: {
@@ -92,7 +268,6 @@ type CreatePluginSetupHelpersParams = {
 export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams) {
   const {
     config,
-    grantControlPlane,
     hookProbeLogPath,
     localApprovalApproverOuIds,
     log,
@@ -123,11 +298,31 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
   }
 
   function appendLifecycleProbe(hookName: string, payload: unknown, ctx: unknown): void {
-    appendHookLifecycleProbe({ hookName, payload, ctx, hookProbeLogPath, log });
+    try {
+      ensureParentDirectory(hookProbeLogPath);
+      writeFileSync(
+        hookProbeLogPath,
+        `${JSON.stringify({ hookName, payload, ctx, timestamp: new Date().toISOString() })}\n`,
+        { encoding: "utf8", flag: "a" },
+      );
+    } catch (err: any) {
+      log.error(`[lynx-guardian] Failed to append lifecycle probe: ${err.message}`);
+    }
   }
 
   async function sendHookFeedback(ctx: any, content: string): Promise<void> {
-    await sendHookFeedbackMessage(ctx, content, log);
+    if (typeof ctx?.sendMessage !== "function" || content.trim().length === 0) {
+      return;
+    }
+
+    try {
+      await ctx.sendMessage({
+        role: "assistant",
+        content,
+      });
+    } catch (err: any) {
+      log.warn(`[lynx-guardian] Failed to send hook feedback: ${err.message}`);
+    }
   }
 
   function resolveLocalToolApprovalReply(params: {
@@ -421,7 +616,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     timeoutMs: number;
   }): string {
     const timeoutSeconds = Math.max(1, Math.round(params.timeoutMs / 1000));
-    const prompt = [
+    return [
       `[Lynx Guardian] 工具 ${params.toolName} 需要 owner 审批。`,
       `模块: ${params.module}`,
       `风险: ${params.riskLevel}`,
@@ -431,10 +626,6 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       "仅接受已配置 owner/approver 的 Feishu ou_id 审批回复。",
       "审批通过后会自动继续执行刚才的请求，无需重新发送。",
     ].join("\n");
-
-    return params.riskLevel === "L3"
-      ? appendLocalConsoleWebviewFootnote(prompt)
-      : prompt;
   }
 
   function buildFeishuLocalApprovalPendingBlockReason(params: {
@@ -443,7 +634,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     module: string;
     riskLevel: string;
   }): string {
-    const blockReason = [
+    return [
       `[Lynx Guardian] ${params.toolName} 正在等待 owner 审批。`,
       `模块: ${params.module}`,
       `风险: ${params.riskLevel}`,
@@ -451,10 +642,6 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       `如需拒绝：${LOCAL_TOOL_APPROVAL_COMMAND} ${params.approvalToken} deny`,
       "审批通过后会自动继续执行刚才的请求，无需重新发送。",
     ].join("\n");
-
-    return params.riskLevel === "L3"
-      ? appendLocalConsoleWebviewFootnote(blockReason)
-      : blockReason;
   }
 
   function buildFeishuApprovedReplayContext(params: {
@@ -487,7 +674,6 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     riskLevel: "L2" | "L3";
     promptText?: string;
     protectedTargetSummary?: string;
-    scopeType?: ToolApprovalScopeType;
     timeoutMs: number;
     grantWindowMs: number;
     approvalSessionKey?: string;
@@ -496,7 +682,6 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       return { handled: false };
     }
 
-    const scopeType = params.scopeType ?? resolveToolApprovalScopeType(params.toolName);
     const requestFingerprint = buildApprovalRequestFingerprint({
       channelProfile: "feishu",
       accountId: params.accountId,
@@ -505,7 +690,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       promptText: params.promptText,
       toolName: params.toolName,
       module: params.module,
-      protectedTargetSummary: scopeType === "singleTool" ? params.protectedTargetSummary : undefined,
+      protectedTargetSummary: params.protectedTargetSummary,
     });
 
     const continuation = matchFeishuRunContinuation({
@@ -926,11 +1111,6 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     riskLevel: "L2" | "L3";
     promptText?: string;
     protectedTargetSummary?: string;
-    sessionKey?: string;
-    chainId?: string;
-    runId?: string;
-    targetFingerprint?: string;
-    scopeType?: ToolApprovalScopeType;
     timeoutMs: number;
     grantWindowMs: number;
     pendingApproval?: {
@@ -951,21 +1131,6 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
 
       resolved = true;
       params.pendingApproval?.pending?.settle(resolution);
-      const sessionKey = params.sessionKey ?? (normalizeString(params.ctx?.sessionKey) || undefined);
-      const runId = params.runId ?? (normalizeString(params.ctx?.runId) || undefined);
-      const chainId = params.chainId ?? runId ?? sessionKey ?? params.approvalId;
-      const targetFingerprint = params.targetFingerprint ?? buildApprovalRequestFingerprint({
-        sessionKey,
-        channelProfile: params.channelProfile,
-        channelId: params.channelId,
-        accountId: params.accountId,
-        conversationId: params.conversationId,
-        requesterOuId: params.requesterOuId,
-        promptText: params.promptText,
-        toolName: params.toolName,
-        module: params.module,
-        protectedTargetSummary: params.protectedTargetSummary,
-      });
       persistGrantFromApproval({
         decision: resolution,
         approvalId: params.approvalId,
@@ -973,28 +1138,10 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
         channelId: params.channelId,
         accountId: params.accountId,
         conversationId: params.conversationId,
-        sessionKey,
-        chainId,
-        runId,
         requesterOuId: params.requesterOuId,
         module: params.module,
         riskLevel: params.riskLevel,
-        toolName: params.toolName,
-        targetFingerprint,
-        scopeType: params.scopeType,
         grantWindowMs: params.grantWindowMs,
-        grantControlPlane: grantControlPlane
-          ? {
-            ...grantControlPlane,
-            chainId,
-            sessionKey,
-            requesterId: normalizeString(params.ctx?.userId ?? params.ctx?.senderId) || params.requesterOuId,
-            approverOuId: params.approverOuIds[0],
-            toolName: params.toolName,
-            targetKind: "tool",
-            targetHash: targetFingerprint,
-          }
-          : undefined,
       });
     };
 
@@ -1187,17 +1334,8 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
 }
 
 export {
-  appendFeishuNativeApprovalGuidance,
-  buildDeliveryTargetSnapshot,
-  buildFeishuNativeToolApprovalReplyPrompt,
-  buildOutboundDeliveryTarget,
   clearRecentActiveDeliveryTargetForContext,
-  describeDeliveryTarget,
   getRecentActiveDeliveryTargets,
   readRecentActiveDeliverySnapshot,
-  resolveManagedLynxCheckPromptChannel,
-  resolveManagedLynxCheckSource,
-  resolveToolApprovalProtectedTargetSummary,
   rememberRecentActiveDeliveryTarget,
-  summarizeOutgoingMessage,
 };
