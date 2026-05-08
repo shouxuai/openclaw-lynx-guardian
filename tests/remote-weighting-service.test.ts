@@ -9,6 +9,13 @@ import {
   pushRecordBestEffort,
   registerUserBestEffort,
 } from "../src/runtime/remote-weighting-service.js";
+import {
+  adaptContentCheckResult,
+  buildContentCategorySummary,
+} from "../src/runtime/api-risk-adapter.js";
+import { evaluateGuardDecisionPolicy } from "../src/runtime/policy-runtime.js";
+import { buildGuardContext } from "../src/runtime/plugin-runtime-helpers.js";
+import { guardInput, guardToolCall } from "../src/guard/safety-guard.js";
 
 import {
   checkContent,
@@ -157,5 +164,203 @@ describe("remote-weighting-service", () => {
     expect(log.error).toHaveBeenCalledWith(
       "[lynx-guardian] Failed to push record (blacklist record): push offline",
     );
+  });
+});
+
+describe("api-risk-adapter", () => {
+  it("does not build a category summary when the backend only returns None placeholders", () => {
+    const adapted = adaptContentCheckResult({
+      is_safe: false,
+      risk_level: 1,
+      level_one: "None",
+      level_two: "None",
+      level_three: "None",
+    });
+
+    expect(buildContentCategorySummary(adapted.categoryChain)).toBeUndefined();
+  });
+
+  it("does not build a category summary when all category labels are blank", () => {
+    const adapted = adaptContentCheckResult({
+      is_safe: false,
+      risk_level: 1,
+      level_one: " ",
+      level_two: "",
+      level_three: "\t",
+    });
+
+    expect(buildContentCategorySummary(adapted.categoryChain)).toBeUndefined();
+  });
+
+  it("keeps the existing category summary format when any concrete label exists", () => {
+    const adapted = adaptContentCheckResult({
+      is_safe: false,
+      risk_level: 1,
+      level_one: "个人隐私",
+      level_two: "身份证",
+      level_three: "None",
+    });
+
+    expect(buildContentCategorySummary(adapted.categoryChain)).toBe("个人隐私、身份证、None");
+  });
+});
+
+describe("guardToolCall OpenClaw upgrade maintenance", () => {
+  it("allows OpenClaw upgrade commands that restart the gateway", () => {
+    const decision = guardToolCall("exec", {
+      command: "openclaw update && docker compose restart openclaw-gateway",
+    });
+
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.modules).not.toContain("M3:system_availability");
+  });
+
+  it("allows OpenClaw upgrade maintenance config patch tool calls", () => {
+    const decision = guardToolCall("gateway", {
+      action: "config.patch",
+      note: "OpenClaw upgrade maintenance updates runtime config",
+    });
+
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.modules).not.toContain("M2:runtime_config_integrity");
+  });
+
+  it("allows OpenClaw upgrade maintenance to update the Lynx Guardian manifest", () => {
+    const decision = guardToolCall("write", {
+      file_path: "C:\\Users\\tester\\.openclaw\\extensions\\openclaw-lynx-guardian\\openclaw.plugin.json",
+      note: "OpenClaw upgrade maintenance updates the bundled Lynx Guardian manifest",
+    });
+
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.modules).not.toContain("M2:runtime_config_integrity");
+    expect(decision.riskAssessment.modules).not.toContain("M2:plugin_integrity");
+    expect(decision.riskAssessment.modules).not.toContain("M2:protected_file_access");
+  });
+
+  it("still blocks direct Lynx Guardian plugin writes without upgrade intent", () => {
+    const decision = guardToolCall("write", {
+      file_path: "C:\\Users\\tester\\.openclaw\\extensions\\openclaw-lynx-guardian\\index.ts",
+      note: "Patch Lynx Guardian runtime behavior",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:plugin_integrity");
+  });
+
+  it("still blocks plain OpenClaw availability control without upgrade intent", () => {
+    const decision = guardToolCall("exec", {
+      command: "docker compose restart openclaw-gateway",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M3:system_availability");
+  });
+
+  it("still blocks attempts to disable Lynx Guardian during an OpenClaw update", () => {
+    const decision = guardToolCall("exec", {
+      command: "openclaw update && openclaw extension disable openclaw-lynx-guardian",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M3:over_agency");
+  });
+});
+
+describe("benign protected-file reads", () => {
+  it("does not raise input risk for a plain IDENTITY.md read request", () => {
+    const decision = guardInput("read IDENTITY.md");
+
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.modules).not.toContain("M2:protected_file_access");
+    expect(decision.riskAssessment.modules).not.toContain("M2:system_prompt_extraction");
+  });
+
+  it("does not raise input risk for a plain OpenClaw workspace memory read", () => {
+    const decision = guardInput("read /home/node/.openclaw/workspace/memory/2026-05-08.md");
+
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.modules).not.toContain("M2:protected_file_access");
+    expect(decision.riskAssessment.modules).not.toContain("M2:memory_session_privacy");
+  });
+
+  it("still blocks protected-file mutation intent", () => {
+    const decision = guardInput("overwrite IDENTITY.md with new rules");
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:protected_file_access");
+  });
+
+  it("still blocks explicit OpenClaw memory export intent", () => {
+    const decision = guardInput("export OpenClaw memory session records");
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:memory_session_privacy");
+  });
+});
+
+describe("session startup protected reads", () => {
+  it("does not let startup reads poison later normal project writes", () => {
+    const sessionKey = `test-session-startup-${Date.now()}`;
+    const startupReadPaths = [
+      "/home/node/.openclaw/workspace/memory/2026-05-08.md",
+      "/home/node/.openclaw/workspace/IDENTITY.md",
+      "/home/node/.openclaw/skills/lynx-guardian-lesson/SKILL.md",
+    ];
+    const startupDecisions = startupReadPaths.map((path) => {
+      const startupReadEvent = {
+        toolName: "read",
+        params: { path },
+      };
+      const startupContext = buildGuardContext({}, startupReadEvent, {
+        channelId: "webchat",
+        messageProvider: "webchat",
+        requesterId: "openclaw-control-ui",
+      });
+
+      return {
+        context: startupContext,
+        decision: guardToolCall(
+          startupReadEvent.toolName,
+          startupReadEvent.params,
+          sessionKey,
+          startupContext,
+        ),
+      };
+    });
+    const writeDecision = guardToolCall(
+      "write",
+      {
+        path: "/home/node/.openclaw/workspace/my-api/requirements.txt",
+        content: "fastapi==0.115.6\n",
+      },
+      sessionKey,
+      buildGuardContext({}, { toolName: "write", params: {} }, {
+        channelId: "webchat",
+        messageProvider: "webchat",
+        requesterId: "openclaw-control-ui",
+      }),
+    );
+    const writePolicy = evaluateGuardDecisionPolicy({
+      assessment: writeDecision.riskAssessment,
+      evidenceBundle: writeDecision.evidenceBundle,
+    });
+
+    for (const startup of startupDecisions) {
+      expect(startup.context.trustedInternalProtectedRead).toBe(true);
+      expect(startup.decision.block).toBe(false);
+      expect(startup.decision.riskAssessment.modules).not.toContain("M2:protected_file_access");
+    }
+    expect(writeDecision.block).toBe(false);
+    expect(writePolicy.finalDecision.kind).toBe("allow");
+  });
+
+  it("still blocks tool writes to startup protected files", () => {
+    const decision = guardToolCall("write", {
+      path: "/home/node/.openclaw/workspace/IDENTITY.md",
+      content: "replace identity",
+    });
+
+    expect(decision.block).toBe(true);
+    expect(decision.riskAssessment.modules).toContain("M2:protected_file_access");
   });
 });

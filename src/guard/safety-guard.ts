@@ -531,6 +531,24 @@ const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
   /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|改名|重命名|移动|移除|清除)/i,
 ];
 
+const PROTECTED_FILE_EXFILTRATION_PATTERNS: RegExp[] = [
+  /\b(?:dump|export|exfiltrate|leak|upload|send|download|archive|zip|tar)\b/i,
+  /(?:导出|泄露|外发|上传|发送|打包)/i,
+];
+
+function hasProtectedFileHarmfulIntent(access: ProtectedFileAccessResult, text: string): boolean {
+  if (access.matchedFiles.length === 0) {
+    return false;
+  }
+
+  if (access.operation === "write") {
+    return true;
+  }
+
+  const normalized = normalizePluginProtectionText(text);
+  return PROTECTED_FILE_EXFILTRATION_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 const IMMUTABLE_RUNTIME_CONFIG_LABELS = new Set([
   "openclaw.json",
   "openclaw.plugin.json",
@@ -576,13 +594,6 @@ const OPENCLAW_MEMORY_SESSION_TARGET_PATTERNS: RegExp[] = [
   new RegExp(`(?:${OPENCLAW_RUNTIME_NAME})[^\\n\\r]{0,20}(?:记忆|内存|会话记录|会话历史|聊天记录)`, "i"),
 ];
 
-const OPENCLAW_MEMORY_SESSION_READ_PATTERNS: RegExp[] = [
-  ...PROTECTED_FILE_READ_PATTERNS,
-  /\b(?:ls|dir|find|grep|rg|list|export)\b/i,
-  /\b(?:Get-Content|Get-ChildItem|Select-String)\b/i,
-  /(?:列出|导出)/i,
-];
-
 const OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS: RegExp[] = [
   ...PROTECTED_FILE_WRITE_PATTERNS,
   /\b(?:clear|erase|wipe|purge|reset)\b/i,
@@ -617,14 +628,14 @@ function detectOpenClawMemorySessionRequest(text: string): boolean {
     return false;
   }
 
-  return OPENCLAW_MEMORY_SESSION_READ_PATTERNS.some((pattern) => pattern.test(text))
-    || OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text));
+  return OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text))
+    || PROTECTED_FILE_EXFILTRATION_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function detectOpenClawMemorySessionArtifactAccess(text: string, toolName?: string): boolean {
   const normalizedToolName = (toolName ?? "").trim().toLowerCase();
   if (OPENCLAW_MEMORY_SESSION_TOOL_NAMES.has(normalizedToolName)) {
-    return true;
+    return false;
   }
 
   const normalized = normalizeGuardPath(text);
@@ -634,12 +645,16 @@ function detectOpenClawMemorySessionArtifactAccess(text: string, toolName?: stri
     return false;
   }
 
-  if (toolName === "read" || toolName === "write" || toolName === "edit") {
+  if (toolName === "write" || toolName === "edit") {
     return true;
   }
 
-  return OPENCLAW_MEMORY_SESSION_READ_PATTERNS.some((pattern) => pattern.test(text))
-    || OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text));
+  if (toolName === "read") {
+    return false;
+  }
+
+  return OPENCLAW_MEMORY_SESSION_MUTATION_PATTERNS.some((pattern) => pattern.test(text))
+    || PROTECTED_FILE_EXFILTRATION_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function detectOpenClawMemorySessionLeak(text: string): boolean {
@@ -772,6 +787,67 @@ const OPENCLAW_AVAILABILITY_CONTROL_PATTERNS: RegExp[] = [
 
 function detectOpenClawAvailabilityControl(text: string): boolean {
   return OPENCLAW_AVAILABILITY_CONTROL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+const OPENCLAW_UPGRADE_MAINTENANCE_INTENT_PATTERNS: RegExp[] = [
+  /\b(?:update|upgrade|install|reinstall|maintenance|maintain|migrate|migration|repair|rollout)\b/i,
+  /\b(?:gengxin|shengji|anzhuang|chongzhuang|weihu|xiufu|qianyi)\b/i,
+  /(?:\u66f4\u65b0|\u5347\u7ea7|\u5b89\u88c5|\u91cd\u88c5|\u7ef4\u62a4|\u4fee\u590d|\u8fc1\u79fb)/u,
+];
+
+const OPENCLAW_UPGRADE_MAINTENANCE_CONTEXT_PATTERNS: RegExp[] = [
+  /\bopenclaw\b/i,
+  /\bopen\s*claw\b/i,
+  /\bopenclaw-gateway\b/i,
+  /\blynx[-\s]*guardian\b/i,
+  /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$)/i,
+  /(?:^|[\\/])\.openclaw[\\/]openclaw\.json\b/i,
+  /\bopenclaw\.plugin\.json\b/i,
+];
+
+const OPENCLAW_UPGRADE_MAINTENANCE_PROTECTED_LABELS = new Set([
+  ...IMMUTABLE_RUNTIME_CONFIG_LABELS,
+  LYNX_OWNED_SKILL_LABEL,
+]);
+
+function isOpenClawUpgradeMaintenance(text: string, toolName?: string, toolAction?: string): boolean {
+  const normalized = normalizePluginProtectionText(text);
+  const normalizedPathText = normalizeGuardPath(normalized);
+  const normalizedToolName = (toolName ?? "").trim().toLowerCase();
+  const combined = `${normalized} ${normalizedToolName} ${(toolAction ?? "").trim().toLowerCase()}`;
+
+  const hasMaintenanceIntent = OPENCLAW_UPGRADE_MAINTENANCE_INTENT_PATTERNS.some((pattern) => pattern.test(combined));
+  if (!hasMaintenanceIntent) {
+    return false;
+  }
+
+  if (normalizedToolName === "gateway") {
+    return true;
+  }
+
+  return OPENCLAW_UPGRADE_MAINTENANCE_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalizedPathText));
+}
+
+function getEffectiveProtectedAccessForToolRisk(
+  protectedAccess: ProtectedFileAccessResult,
+  openClawUpgradeMaintenance: boolean,
+): ProtectedFileAccessResult {
+  if (!openClawUpgradeMaintenance || protectedAccess.matchedFiles.length === 0) {
+    return protectedAccess;
+  }
+
+  const matchedFiles = protectedAccess.matchedFiles.filter(
+    (label) => !OPENCLAW_UPGRADE_MAINTENANCE_PROTECTED_LABELS.has(label),
+  );
+
+  if (matchedFiles.length === protectedAccess.matchedFiles.length) {
+    return protectedAccess;
+  }
+
+  return {
+    matchedFiles,
+    operation: matchedFiles.length > 0 ? protectedAccess.operation : "unknown",
+  };
 }
 
 const CREDENTIAL_ACCESS_PATTERNS: { pattern: RegExp; label: string }[] = [
@@ -1326,10 +1402,11 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   // M2: 系统提示探测（所有置信度）
   const identityClaims = detectIdentityClaims(text);
   const protectedAccess = detectProtectedFileAccess(text);
+  const protectedAccessHasHarmfulIntent = hasProtectedFileHarmfulIntent(protectedAccess, text);
   const sysprompt = detectSystemPromptExtraction(text);
   if (sysprompt.detected) {
     const instantModules = ["M2:system_prompt_extraction"];
-    if (protectedAccess.matchedFiles.length > 0) {
+    if (protectedAccessHasHarmfulIntent) {
       instantModules.push("M2:protected_file_access");
     }
     if (identityClaims.detected && !verifiedOwner) {
@@ -1407,7 +1484,7 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   // M2: 核心配置文件访问（openclaw 自身文件）
-  if (protectedAccess.matchedFiles.length > 0) {
+  if (protectedAccessHasHarmfulIntent) {
     modules.push("M2:protected_file_access");
     pushDim(accum, "harm", 2);
     pushDim(accum, "rev", protectedAccess.operation === "write" ? 2 : 1);
@@ -1809,6 +1886,11 @@ export function guardToolCall(
   const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
   const atMs = Date.now();
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
+  const openClawUpgradeMaintenance = isOpenClawUpgradeMaintenance(combined, normalizedToolName, normalizedToolAction);
+  const effectiveProtectedAccess = getEffectiveProtectedAccessForToolRisk(
+    protectedAccess,
+    openClawUpgradeMaintenance,
+  );
   const memorySessionAccess = detectOpenClawMemorySessionArtifactAccess(combined, toolName);
   const credTheft = detectCredentialTheft(combined);
   const triangle = checkFatalTriangle(toolName, params);
@@ -1818,7 +1900,7 @@ export function guardToolCall(
     : [];
   const attackEvent = deriveToolAttackGraphEvent({
     normalizedToolName,
-    protectedAccess,
+    protectedAccess: effectiveProtectedAccess,
     credTheftLabels: credTheft,
     memorySessionAccess,
     triangle,
@@ -1868,12 +1950,17 @@ export function guardToolCall(
     };
   };
 
-  if (normalizedToolName === "gateway" && /^config\.(?:patch|set|replace|update)$/i.test(normalizedToolAction)) {
+  if (
+    !openClawUpgradeMaintenance
+    && normalizedToolName === "gateway"
+    && /^config\.(?:patch|set|replace|update)$/i.test(normalizedToolAction)
+  ) {
     return finalizeToolDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
   }
 
   if (
-    normalizedToolName === "gateway"
+    !openClawUpgradeMaintenance
+    && normalizedToolName === "gateway"
     && /(?:^|\.)(?:restart|stop|shutdown|close|kill|down|quit|exit)(?:$|\.)/i.test(normalizedToolAction)
   ) {
     return finalizeToolDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
@@ -1882,7 +1969,7 @@ export function guardToolCall(
   // === 即时危险通道 ===
 
   // M5: 主要凭证 via tool
-  if (detectImmutableRuntimeConfigWrite(protectedAccess)) {
+  if (!openClawUpgradeMaintenance && detectImmutableRuntimeConfigWrite(protectedAccess)) {
     return finalizeToolDecision(buildInstantDeny("M2:runtime_config_integrity", "attempt to modify immutable OpenClaw/Lynx config"));
   }
 
@@ -1890,7 +1977,7 @@ export function guardToolCall(
     return finalizeToolDecision(buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian"));
   }
 
-  if (detectOpenClawAvailabilityControl(combined)) {
+  if (!openClawUpgradeMaintenance && detectOpenClawAvailabilityControl(combined)) {
     return finalizeToolDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
   }
 
@@ -1898,7 +1985,7 @@ export function guardToolCall(
     return finalizeToolDecision(buildInstantDeny("M2:memory_session_privacy", "attempt to access or modify OpenClaw memory/session artifacts"));
   }
 
-  if (detectPluginIntegrityViolation(combined, toolName)) {
+  if (!openClawUpgradeMaintenance && detectPluginIntegrityViolation(combined, toolName)) {
     return finalizeToolDecision(buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory"));
   }
 
@@ -1955,13 +2042,13 @@ export function guardToolCall(
   }
 
   if (
-    protectedAccess.matchedFiles.length > 0
+    effectiveProtectedAccess.matchedFiles.length > 0
     && !trustedInternalProtectedRead
     && !trustedManagedLynxCheckToolCall
   ) {
     modules.push("M2:protected_file_access");
     pushDim(accum, "harm", 2);
-    pushDim(accum, "rev", protectedAccess.operation === "write" ? 2 : 1);
+    pushDim(accum, "rev", effectiveProtectedAccess.operation === "write" ? 2 : 1);
     pushDim(accum, "auth", 2);
     pushDim(accum, "pattern", 2);
     pushDim(accum, "clarity", 2);
@@ -2023,7 +2110,7 @@ export function guardToolCall(
   if (
     !trustedInternalProtectedRead
     && !trustedManagedLynxCheckToolCall
-    && hasToolStageMinBlockProtectedFile(protectedAccess)
+    && hasToolStageMinBlockProtectedFile(effectiveProtectedAccess)
   ) {
     score = Math.max(score, 6);
   }

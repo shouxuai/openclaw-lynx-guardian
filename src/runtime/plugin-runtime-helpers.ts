@@ -51,6 +51,8 @@ export function resolveRuntimeEnvironmentProfile(cwd: string): EnvironmentProfil
 const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [
   /[\\/]openclaw[\\/]skills[\\/]healthcheck[\\/]SKILL\.md$/i,
   /[\\/]\.openclaw[\\/]workspace[\\/]memory[\\/]\d{4}-\d{2}-\d{2}\.md$/i,
+  /[\\/]\.openclaw[\\/]workspace[\\/](?:SOUL|IDENTITY|USER|AGENTS|TOOLS|SHIELD|SKILL|MEMORY)\.md$/i,
+  /[\\/]\.openclaw[\\/]skills[\\/][^\\/]+[\\/]SKILL\.md$/i,
 ];
 
 const REMOVED_MANAGED_LYNX_CHECK_SKILL_PATTERNS = [
@@ -161,6 +163,10 @@ function isTrustedInternalProtectedRead(event: any, ctx: any): boolean {
   }
 
   const canonicalPath = canonicalizePath(rawPath);
+  if (TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS.some((pattern) => pattern.test(canonicalPath))) {
+    return true;
+  }
+
   const isManagedLynxCheckRun = ctx?.managedLynxCheckRun === true;
   if (
     isManagedLynxCheckRun
