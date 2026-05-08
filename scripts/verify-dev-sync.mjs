@@ -6,6 +6,7 @@ import {
   DEFAULT_GATEWAY_CONTAINER,
   assessGatewayLogs,
   buildInstallLocalConsoleRuntimeDepsShellCommand,
+  buildPruneOpenClawRuntimeDepsLocksShellCommand,
   buildDevSyncPlan,
   findStalePluginManagedDirectories,
   pickGatewayContainer,
@@ -82,6 +83,14 @@ assert.match(
   }),
   /\/app\/extensions\/openclaw-lynx-guardian\/server\/backend/,
 );
+
+const runtimeDepsLockCleanup = buildPruneOpenClawRuntimeDepsLocksShellCommand({
+  minAgeSeconds: 180,
+});
+assert.match(runtimeDepsLockCleanup, /\/home\/node\/\.openclaw\/plugin-runtime-deps/);
+assert.match(runtimeDepsLockCleanup, /\.openclaw-runtime-deps\.lock/);
+assert.match(runtimeDepsLockCleanup, /\.openclaw-runtime-mirror\.lock/);
+assert.match(runtimeDepsLockCleanup, /LYNX_RUNTIME_LOCK_MIN_AGE_MS='180000'/);
 
 assert.equal(assessGatewayLogs([
   "[lynx-guardian] Plugin loading...",

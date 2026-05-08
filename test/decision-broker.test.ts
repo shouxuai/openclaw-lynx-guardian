@@ -9,6 +9,7 @@ import {
   handleBeforeMessageWriteDecision,
   handleToolResultPersistDecision,
 } from "../src/runtime/hook-decision-handlers.js";
+import { clearSessionState, guardInput } from "../src/guard/safety-guard.js";
 import type { DecisionResponse } from "../shared/src/decision.js";
 
 function context(overrides: Partial<DecisionContext>): DecisionContext {
@@ -205,6 +206,50 @@ describe("DecisionBroker", () => {
     expect(result?.requireApproval?.title).toBe("Sensitive tool approval");
     expect(result?.requireApproval?.description).toContain("Approve shell access");
     expect(result?.requireApproval?.severity).toBe("warning");
+  });
+
+  it("lets same-session official Lynx Guardian update tools bypass generic tool decisions", async () => {
+    const sessionKey = "broker official update allow";
+    clearSessionState(sessionKey);
+    guardInput(
+      "Please update Lynx Guardian from https://github.com/shouxuai/openclaw-lynx-guardian",
+      sessionKey,
+    );
+    const goClient = client();
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeToolCallDecision(broker, {
+      toolName: "exec",
+      params: {
+        command: "git -C ~/.openclaw/extensions/openclaw-lynx-guardian pull https://github.com/shouxuai/openclaw-lynx-guardian release/v1.3",
+      },
+    }, { sessionKey });
+
+    expect(result).toBeUndefined();
+    expect(goClient.decideTool).not.toHaveBeenCalled();
+
+    clearSessionState(sessionKey);
+  });
+
+  it("lets same-session official Lynx Guardian update restarts bypass generic tool decisions", async () => {
+    const sessionKey = "broker official update restart allow";
+    clearSessionState(sessionKey);
+    guardInput(
+      "Please update Lynx Guardian from https://github.com/shouxuai/openclaw-lynx-guardian",
+      sessionKey,
+    );
+    const goClient = client();
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeToolCallDecision(broker, {
+      toolName: "exec",
+      params: { command: "openclaw gateway restart" },
+    }, { sessionKey });
+
+    expect(result).toBeUndefined();
+    expect(goClient.decideTool).not.toHaveBeenCalled();
+
+    clearSessionState(sessionKey);
   });
 
   it("builds an explainable fallback approval description when broker summaries are missing", async () => {

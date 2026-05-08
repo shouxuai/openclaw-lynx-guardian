@@ -4,6 +4,7 @@ export const DEFAULT_GATEWAY_CONTAINER = "openclaw-openclaw-gateway-1";
 export const DEFAULT_PLUGIN_NAME = "openclaw-lynx-guardian";
 export const DEFAULT_CONTAINER_EXTENSIONS_ROOT = "/app/extensions";
 export const DEFAULT_CONTAINER_BUNDLED_EXTENSIONS_ROOT = "/app/dist/extensions";
+export const DEFAULT_OPENCLAW_RUNTIME_DEPS_ROOT = "/home/node/.openclaw/plugin-runtime-deps";
 export const PLUGIN_MANAGED_RESOURCE_PREFIX = "lynx-guardian-";
 
 const DEFAULT_TOP_LEVEL_STAGE_EXCLUDES = new Set([
@@ -155,6 +156,158 @@ export function buildInstallLocalConsoleRuntimeDepsShellCommand({
     `echo "lynx-server backend missing: ${goBackendPath}/lynx-server-*" >&2`,
     "exit 1",
   ].join(" && ");
+}
+
+export function buildPruneOpenClawRuntimeDepsLocksShellCommand({
+  runtimeDepsRoot = DEFAULT_OPENCLAW_RUNTIME_DEPS_ROOT,
+  minAgeSeconds = 120,
+} = {}) {
+  const resolvedMinAgeSeconds = Math.max(0, Math.floor(Number(minAgeSeconds) || 0));
+  const minAgeMs = resolvedMinAgeSeconds * 1000;
+
+  return [
+    "set -eu",
+    `OPENCLAW_RUNTIME_DEPS_ROOT=${shellQuote(runtimeDepsRoot)} LYNX_RUNTIME_LOCK_MIN_AGE_MS=${shellQuote(String(minAgeMs))} node <<'NODE'`,
+    String.raw`const fs = require("fs");
+const path = require("path");
+
+const root = process.env.OPENCLAW_RUNTIME_DEPS_ROOT || "/home/node/.openclaw/plugin-runtime-deps";
+const minAgeMs = Number(process.env.LYNX_RUNTIME_LOCK_MIN_AGE_MS || "120000");
+const lockNames = [".openclaw-runtime-deps.lock", ".openclaw-runtime-mirror.lock"];
+const now = Date.now();
+
+function readProcessCommands() {
+  try {
+    return fs.readdirSync("/proc", { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+      .map((entry) => {
+        const pid = Number(entry.name);
+        try {
+          const cmd = fs.readFileSync("/proc/" + entry.name + "/cmdline", "utf8")
+            .replace(/\0/g, " ")
+            .trim();
+          return { pid, cmd };
+        } catch {
+          return { pid, cmd: "" };
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+const processCommands = readProcessCommands();
+
+function commandForPid(pid) {
+  return processCommands.find((entry) => entry.pid === pid)?.cmd || "";
+}
+
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasActiveRuntimeDepsInstaller() {
+  return processCommands.some(({ cmd }) => (
+    /\b(?:npm|npm-cli\.js)\b/.test(cmd) &&
+    /\binstall\b/.test(cmd) &&
+    (cmd.includes(root) || cmd.includes("plugin-runtime-deps") || cmd.includes("runtime-deps"))
+  ));
+}
+
+function readOwner(lockDir) {
+  const ownerPath = path.join(lockDir, "owner.json");
+  try {
+    const ownerStat = fs.lstatSync(ownerPath);
+    if (ownerStat.isSymbolicLink()) {
+      return { symlink: true, value: null };
+    }
+    const parsed = JSON.parse(fs.readFileSync(ownerPath, "utf8"));
+    return { symlink: false, value: parsed && typeof parsed === "object" ? parsed : null };
+  } catch {
+    return { symlink: false, value: null };
+  }
+}
+
+function shouldRemoveLock(lockDir) {
+  let lockStat;
+  try {
+    lockStat = fs.lstatSync(lockDir);
+  } catch {
+    return { remove: false, reason: "missing" };
+  }
+  if (!lockStat.isDirectory()) {
+    return { remove: false, reason: "not-directory" };
+  }
+
+  const ageMs = now - lockStat.mtimeMs;
+  if (ageMs < minAgeMs) {
+    return { remove: false, reason: "young ageMs=" + Math.round(ageMs) };
+  }
+
+  const owner = readOwner(lockDir);
+  if (owner.symlink) {
+    return { remove: false, reason: "owner-symlink" };
+  }
+
+  if (hasActiveRuntimeDepsInstaller()) {
+    return { remove: false, reason: "active-installer" };
+  }
+
+  const pid = typeof owner.value?.pid === "number" ? owner.value.pid : null;
+  if (pid === null) {
+    return { remove: true, reason: "no-owner ageMs=" + Math.round(ageMs) };
+  }
+
+  const alive = isPidAlive(pid);
+  const cmd = commandForPid(pid);
+  if (!alive) {
+    return { remove: true, reason: "dead-owner pid=" + pid + " ageMs=" + Math.round(ageMs) };
+  }
+
+  if (/\bopenclaw(?:-gateway)?\b/.test(cmd)) {
+    return { remove: true, reason: "gateway-owner pid=" + pid + " ageMs=" + Math.round(ageMs) };
+  }
+
+  return { remove: false, reason: "live-owner pid=" + pid };
+}
+
+let removed = 0;
+let inspected = 0;
+
+if (!fs.existsSync(root)) {
+  console.log("[lynx-dev-sync] runtime deps root not found; skip stale lock cleanup: " + root);
+  process.exit(0);
+}
+
+for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+  if (!entry.isDirectory()) {
+    continue;
+  }
+  for (const lockName of lockNames) {
+    const lockDir = path.join(root, entry.name, lockName);
+    if (!fs.existsSync(lockDir)) {
+      continue;
+    }
+    inspected += 1;
+    const decision = shouldRemoveLock(lockDir);
+    if (!decision.remove) {
+      console.log("[lynx-dev-sync] kept runtime deps lock: " + lockDir + " (" + decision.reason + ")");
+      continue;
+    }
+    fs.rmSync(lockDir, { recursive: true, force: true });
+    removed += 1;
+    console.log("[lynx-dev-sync] removed stale runtime deps lock: " + lockDir + " (" + decision.reason + ")");
+  }
+}
+
+console.log("[lynx-dev-sync] runtime deps lock cleanup: inspected=" + inspected + " removed=" + removed);
+NODE`,
+  ].join("\n");
 }
 
 export function assessGatewayLogs(logText) {

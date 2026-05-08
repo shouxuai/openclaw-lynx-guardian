@@ -1003,6 +1003,82 @@ describe('Safety Guard - Tool Call Guard', () => {
     expect(decision.block).toBe(true);
   });
 
+  it('should allow official Lynx Guardian git update tools after the same-session update request', () => {
+    const sessionKey = 'official update tool allow';
+    clearSessionState(sessionKey);
+
+    guardInput(
+      'Please update Lynx Guardian from https://github.com/shouxuai/openclaw-lynx-guardian',
+      sessionKey,
+    );
+    const pullDecision = guardToolCall('exec', {
+      command: 'git -C ~/.openclaw/extensions/openclaw-lynx-guardian pull https://github.com/shouxuai/openclaw-lynx-guardian release/v1.3',
+    }, sessionKey);
+    const checkoutDecision = guardToolCall('exec', {
+      command: 'git -C ~/.openclaw/extensions/openclaw-lynx-guardian checkout release/v1.3',
+    }, sessionKey);
+
+    expect(pullDecision.riskAssessment.modules).not.toContain('M2:plugin_integrity');
+    expect(pullDecision.block).toBe(false);
+    expect(checkoutDecision.riskAssessment.modules).not.toContain('M2:plugin_integrity');
+    expect(checkoutDecision.block).toBe(false);
+
+    clearSessionState(sessionKey);
+  });
+
+  it('should block official Lynx Guardian git update tools without the same-session update request', () => {
+    const sessionKey = 'official update tool no signal';
+    clearSessionState(sessionKey);
+
+    const decision = guardToolCall('exec', {
+      command: 'git -C ~/.openclaw/extensions/openclaw-lynx-guardian pull https://github.com/shouxuai/openclaw-lynx-guardian release/v1.3',
+    }, sessionKey);
+
+    expect(decision.riskAssessment.modules).toContain('M2:plugin_integrity');
+    expect(decision.riskAssessment.action).toBe('deny');
+    expect(decision.block).toBe(true);
+
+    clearSessionState(sessionKey);
+  });
+
+  it('should keep arbitrary plugin writes blocked after an official update request', () => {
+    const sessionKey = 'official update write deny';
+    clearSessionState(sessionKey);
+
+    guardInput(
+      'Please update Lynx Guardian from https://github.com/shouxuai/openclaw-lynx-guardian',
+      sessionKey,
+    );
+    const decision = guardToolCall('write', {
+      file_path: 'C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian\\src\\blacklist.ts',
+    }, sessionKey);
+
+    expect(decision.riskAssessment.modules).toContain('M2:plugin_integrity');
+    expect(decision.riskAssessment.action).toBe('deny');
+    expect(decision.block).toBe(true);
+
+    clearSessionState(sessionKey);
+  });
+
+  it('should block official update commands that include extra plugin file mutation side effects', () => {
+    const sessionKey = 'official update side effect deny';
+    clearSessionState(sessionKey);
+
+    guardInput(
+      'Please update Lynx Guardian from https://github.com/shouxuai/openclaw-lynx-guardian',
+      sessionKey,
+    );
+    const decision = guardToolCall('exec', {
+      command: 'Set-Content ~/.openclaw/extensions/openclaw-lynx-guardian/src/blacklist.ts "off"; git -C ~/.openclaw/extensions/openclaw-lynx-guardian pull https://github.com/shouxuai/openclaw-lynx-guardian release/v1.3',
+    }, sessionKey);
+
+    expect(decision.riskAssessment.modules).toContain('M2:plugin_integrity');
+    expect(decision.riskAssessment.action).toBe('deny');
+    expect(decision.block).toBe(true);
+
+    clearSessionState(sessionKey);
+  });
+
   it('should allow plugin cache files outside the hard-lock set', () => {
     const decision = guardToolCall('write', {
       file_path: 'C:\\Users\\alice\\.openclaw\\extensions\\openclaw-lynx-guardian\\.cache\\run.log',
@@ -1090,6 +1166,46 @@ describe('Safety Guard - Tool Call Guard', () => {
       expect(decision.riskAssessment.level, command).toBe('L4');
       expect(decision.block, command).toBe(true);
     }
+  });
+
+  it('should allow OpenClaw restart after the same-session official update request', () => {
+    const sessionKey = 'official update restart allow';
+    clearSessionState(sessionKey);
+
+    guardInput(
+      'Please update Lynx Guardian from https://github.com/shouxuai/openclaw-lynx-guardian',
+      sessionKey,
+    );
+    const decision = guardToolCall('exec', {
+      command: 'openclaw gateway restart',
+    }, sessionKey);
+
+    expect(decision.riskAssessment.modules).not.toContain('M3:system_availability');
+    expect(decision.block).toBe(false);
+
+    clearSessionState(sessionKey);
+  });
+
+  it('should keep OpenClaw stop and shutdown blocked after an official update request', () => {
+    const sessionKey = 'official update shutdown deny';
+    clearSessionState(sessionKey);
+
+    guardInput(
+      'Please update Lynx Guardian from https://github.com/shouxuai/openclaw-lynx-guardian',
+      sessionKey,
+    );
+    const decisions = [
+      guardToolCall('exec', { command: 'openclaw gateway stop' }, sessionKey),
+      guardToolCall('exec', { command: 'openclaw shutdown' }, sessionKey),
+    ];
+
+    for (const decision of decisions) {
+      expect(decision.riskAssessment.modules).toContain('M3:system_availability');
+      expect(decision.riskAssessment.action).toBe('deny');
+      expect(decision.block).toBe(true);
+    }
+
+    clearSessionState(sessionKey);
   });
 
   it('should hard-block gateway config patches and restart actions touching OpenClaw runtime control', () => {
