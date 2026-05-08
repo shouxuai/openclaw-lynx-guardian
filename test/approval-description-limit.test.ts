@@ -36,7 +36,7 @@ describe("buildToolApprovalRequest description length", () => {
     expect(request.description.length).toBeLessThanOrEqual(256);
     expect(request.description).toContain("[module]");
     expect(request.description).toContain("[risk] L3");
-    expect(request.description).toContain("Approval resumes the current tool call.");
+    expect(request.description).toContain("批准后继续当前工具调用");
   });
 
   it("compacts approval text without exceeding zero or splitting surrogate pairs", () => {

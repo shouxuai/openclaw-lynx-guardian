@@ -657,13 +657,30 @@ export function createLocalConsoleEventBuilder(): LocalConsoleEventBuilder {
 
     beforeDispatch(input) {
       const items: IngestItemV1[] = [];
+      let dispatchRunId = input.runId;
       const sessionItem = createDerivedSessionUpsert(input);
       if (sessionItem) {
         items.push(sessionItem);
       }
+      if (input.enforcementAction === "block") {
+        dispatchRunId = input.runId
+          ?? buildStableId("dispatch-run", [input.sessionKey, input.contentExcerpt, input.occurredAtMs]);
+        const qaRecordItem = createQARecordUpsert({
+          ...input,
+          runId: dispatchRunId,
+          userPrompt: input.contentExcerpt,
+          status: "blocked",
+          blockedBeforeModel: true,
+          uiInputPolicy: input.payloadJson?.uiInputPolicy === "preserved" ? "preserved" : undefined,
+        } as QARecordSeed);
+        if (qaRecordItem) {
+          items.push(qaRecordItem);
+        }
+      }
       items.push(
         createAuditItem({
           ...input,
+          runId: dispatchRunId,
           hookName: "before_dispatch",
           eventType: "dispatch_route",
           category: "dispatch",

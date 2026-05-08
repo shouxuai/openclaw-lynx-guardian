@@ -386,8 +386,26 @@ function isBenignFullwidthPunctuationOnlyConcealment(
   text: string,
   result: ConcealedIntentDetection,
 ): boolean {
-  if (!result.detected || result.severity !== "low" || result.scoreDelta !== 1) return false;
-  if (!result.matchedFamilies.every((family) => family === "glyph_confusable" || family === "intent_concealment")) {
+  if (!result.matchedFamilies.includes("glyph_confusable")) return false;
+  const concealmentFamilies = new Set([
+    "encoding_escape",
+    "glyph_confusable",
+    "invisible_obfuscation",
+    "fragmented_reassembly",
+    "phonetic_disguise",
+    "intent_concealment",
+  ]);
+  const nonPunctuationConcealment = result.matchedFamilies.some(
+    (family) => concealmentFamilies.has(family) && family !== "glyph_confusable" && family !== "intent_concealment",
+  );
+  if (nonPunctuationConcealment) {
+    return false;
+  }
+  if (
+    result.matchedFamilies.includes("detector_evasion")
+    || result.matchedFamilies.includes("approval_bypass")
+    || result.matchedFamilies.includes("staged_loader_chain")
+  ) {
     return false;
   }
   return !/[\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A]/.test(text);
@@ -1314,14 +1332,13 @@ export function guardInput(text: string, sessionKey?: string, context?: GuardCon
   }
 
   const concealedIntent = detectConcealedIntent(text);
+  const suppressConcealedM4 = isBenignFullwidthPunctuationOnlyConcealment(text, concealedIntent);
 
-  if (shouldInstantDenyConcealedInput(concealedIntent)) {
+  if (!suppressConcealedM4 && shouldInstantDenyConcealedInput(concealedIntent)) {
     return finalizeInputDecision(
       buildInstantDeny("M4:concealed_intent", "attempt to conceal bypass intent with encoding or obfuscation"),
     );
   }
-
-  const suppressConcealedM4 = isBenignFullwidthPunctuationOnlyConcealment(text, concealedIntent);
 
   // === 评分通道 ===
 

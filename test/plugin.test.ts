@@ -1573,10 +1573,19 @@ describe('Plugin Setup', () => {
 
   it('should require native approval for webchat tool guard and only reuse grant after onResolution', async () => {
     vi.stubEnv('OPENCLAW_VERSION', '2026.3.28');
+    const ingestedItems: any[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      if (Array.isArray(body.items)) {
+        ingestedItems.push(...body.items);
+      }
+      return new Response(JSON.stringify({ accepted: body.items?.length ?? 0 }), { status: 200 });
+    }));
     mockApi.config = {
       localConsole: {
-        enabled: false,
+        enabled: true,
         autoStart: false,
+        flushIntervalMs: 1,
       },
       selfSafetyGuard: {
         policy: {
@@ -1617,8 +1626,8 @@ describe('Plugin Setup', () => {
         block: true,
         blockReason: '[Lynx Guardian] blocked local tool',
         riskAssessment: {
-          level: 'L3',
-          score: 8,
+          level: 'L2',
+          score: 6,
           modules: ['M2:protected_file_access'],
           description: 'protected file tool attempt',
           action: 'block',
@@ -1628,8 +1637,8 @@ describe('Plugin Setup', () => {
         block: true,
         blockReason: '[Lynx Guardian] blocked local tool',
         riskAssessment: {
-          level: 'L3',
-          score: 8,
+          level: 'L2',
+          score: 6,
           modules: ['M2:protected_file_access'],
           description: 'protected file tool attempt',
           action: 'block',
@@ -1654,6 +1663,17 @@ describe('Plugin Setup', () => {
           score: 6,
           modules: ['M0:identity_verification'],
           description: 'identity verification tool attempt',
+          action: 'block',
+        },
+      } as any)
+      .mockReturnValueOnce({
+        block: true,
+        blockReason: '[Lynx Guardian] blocked elevated identity verification tool',
+        riskAssessment: {
+          level: 'L3',
+          score: 8,
+          modules: ['M0:identity_verification'],
+          description: 'elevated identity verification tool attempt',
           action: 'block',
         },
       } as any);
@@ -1719,8 +1739,8 @@ describe('Plugin Setup', () => {
 
     const fourthDifferentModule = await toolHandler(
       {
-        toolName: 'exec',
-        params: { command: 'whoami' },
+        toolName: 'read',
+        params: { file_path: 'identity.txt' },
         runId: 'run-webchat-tool-approval',
         toolCallId: 'tool-local-4',
       },
@@ -1730,7 +1750,39 @@ describe('Plugin Setup', () => {
         runId: 'run-webchat-tool-approval',
       },
     );
-    expect(fourthDifferentModule).toMatchObject({
+    expect(fourthDifferentModule).toBeUndefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const sourceApprovalId = 'lynx:ssg:run-webchat-tool-approval:tool-local-1:M2:protected_file_access';
+    const grantHitAuditItems = ingestedItems.filter(
+      (item) =>
+        item.kind === 'auditEvent'
+        && String(item.data?.summary ?? '').includes('Existing approval grant matched'),
+    );
+    expect(grantHitAuditItems.length).toBeGreaterThanOrEqual(2);
+    expect(grantHitAuditItems.every((item) => item.data?.approvalId === sourceApprovalId)).toBe(true);
+    const grantHitToolItems = ingestedItems.filter(
+      (item) =>
+        item.kind === 'toolCallUpsert'
+        && item.data?.enforcementAction === 'allow'
+        && item.data?.approvalId === sourceApprovalId,
+    );
+    expect(grantHitToolItems.length).toBeGreaterThanOrEqual(2);
+
+    const fifthElevatedRisk = await toolHandler(
+      {
+        toolName: 'read',
+        params: { file_path: 'identity-secrets.txt' },
+        runId: 'run-webchat-tool-approval',
+        toolCallId: 'tool-local-5',
+      },
+      {
+        sessionKey: 'sess-webchat-tool-approval',
+        channelId: 'webchat',
+        runId: 'run-webchat-tool-approval',
+      },
+    );
+    expect(fifthElevatedRisk).toMatchObject({
       requireApproval: {
         title: expect.stringContaining('Lynx Guardian'),
       },
@@ -2815,7 +2867,7 @@ describe('Plugin Setup', () => {
     guardSpy.mockRestore();
   });
 
-  it('should route blacklist-backed exec risk to OpenClaw native exec approval without Lynx requireApproval', async () => {
+  it('should reuse one Lynx workflow approval for blacklist-backed exec risks in the same run', async () => {
     vi.stubEnv('OPENCLAW_VERSION', '2026.3.28');
     mockApi.config = {
       localConsole: {
@@ -2917,9 +2969,16 @@ describe('Plugin Setup', () => {
       channelId: 'webchat',
       runId: 'run-api-tool-approval',
     });
-    expect(first).toBeUndefined();
+    expect(first).toMatchObject({
+      requireApproval: {
+        title: expect.stringContaining('Lynx Guardian'),
+        timeoutBehavior: 'deny',
+      },
+    });
+    expect(first?.requireApproval?.description).toContain('执行命令调用');
 
-    const second = await toolHandler(
+    let secondSettled = false;
+    const secondBeforeApprovalPromise = toolHandler(
       {
         ...firstEvent,
         toolCallId: 'tool-api-2',
@@ -2929,7 +2988,18 @@ describe('Plugin Setup', () => {
         channelId: 'webchat',
         runId: 'run-api-tool-approval',
       },
-    );
+    ).then((value: unknown) => {
+      secondSettled = true;
+      return value;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    await first?.requireApproval?.onResolution?.('allow-once');
+
+    const second = await secondBeforeApprovalPromise;
     expect(second).toBeUndefined();
 
     const third = await toolHandler(

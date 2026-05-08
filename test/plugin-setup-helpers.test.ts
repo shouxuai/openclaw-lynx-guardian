@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendFeishuNativeApprovalGuidance,
+  buildToolApprovalDetailDescription,
   buildFeishuNativeToolApprovalReplyPrompt,
   extractApproveCommand,
+  resolveToolApprovalScopeType,
   resolveToolApprovalProtectedTargetSummary,
 } from "../src/approval/approval-prompts.js";
 import {
@@ -66,6 +68,33 @@ describe("plugin setup helpers", () => {
         value: 1,
       },
     })).toContain('"nested":{"value":1}');
+  });
+
+  it("describes why approval is needed and what the current-process approval covers", () => {
+    const description = buildToolApprovalDetailDescription({
+      reason: "protected file access",
+      toolName: "read",
+      protectedTargetSummary: "C:\\secrets\\config.json",
+      scopeType: "workflow",
+    });
+
+    expect(resolveToolApprovalScopeType("read")).toBe("workflow");
+    expect(resolveToolApprovalScopeType("exec")).toBe("execWorkflow");
+    expect(description).toContain("原因：protected file access");
+    expect(description).toContain("审批对象：read C:\\secrets\\config.json");
+    expect(description).toContain("批准范围：当前流程内同级或更低风险的非执行工具调用");
+  });
+
+  it("describes exec approvals as a separate current-process command boundary", () => {
+    const description = buildToolApprovalDetailDescription({
+      reason: "fatal triangle",
+      toolName: "exec",
+      protectedTargetSummary: "wget https://example.com",
+      scopeType: "execWorkflow",
+    });
+
+    expect(description).toContain("审批对象：exec wget https://example.com");
+    expect(description).toContain("批准范围：当前流程内同级或更低风险的执行命令调用");
   });
 
   it("resolves managed /lynx-check source and prompt channel from runtime context", () => {

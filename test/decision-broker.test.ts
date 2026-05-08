@@ -207,6 +207,34 @@ describe("DecisionBroker", () => {
     expect(result?.requireApproval?.severity).toBe("warning");
   });
 
+  it("builds an explainable fallback approval description when broker summaries are missing", async () => {
+    const goClient = client({
+      decideTool: vi.fn(async () => response({
+        stage: "tool_call",
+        action: "require_approval",
+        riskLevel: "L3",
+        requiresApproval: true,
+        audit: {
+          eventSeverity: "warn",
+          policyDecision: "require_approval",
+          enforcementAction: "require_approval",
+          color: "orange",
+        },
+      })),
+    });
+    const broker = new DecisionBroker(goClient);
+
+    const result = await handleBeforeToolCallDecision(broker, {
+      toolName: "read",
+      params: { file_path: "C:\\secrets\\config.json" },
+    }, { sessionKey: "session-1" });
+
+    expect(result?.requireApproval?.description).toContain("原因：Lynx Guardian 需要你确认这次工具调用");
+    expect(result?.requireApproval?.description).toContain("审批对象：read C:\\secrets\\config.json");
+    expect(result?.requireApproval?.description).toContain("风险等级：L3");
+    expect(result?.requireApproval?.description).not.toContain("This tool call requires approval");
+  });
+
   it("keeps broker tool approval descriptions native-schema safe", async () => {
     const goClient = client({
       decideTool: vi.fn(async () => response({

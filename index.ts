@@ -203,7 +203,9 @@ import {
   buildOutboundDeliveryTarget,
 } from "./src/delivery/delivery-targets.js";
 import {
+  buildToolApprovalDetailDescription,
   buildFeishuNativeToolApprovalReplyPrompt,
+  resolveToolApprovalScopeType,
   resolveToolApprovalProtectedTargetSummary,
 } from "./src/approval/approval-prompts.js";
 import {
@@ -703,11 +705,13 @@ export default function setup(api: OpenClawPluginApi) {
     buildVisibleInputGuardWarning,
     resolvePluginRuntimeConfig,
     buildDeliveryTargetSnapshot,
+    buildToolApprovalDetailDescription,
     buildFeishuNativeToolApprovalReplyPrompt,
     buildOutboundDeliveryTarget,
     createPluginSetupHelpers,
     resolveManagedLynxCheckPromptChannel,
     resolveManagedLynxCheckSource,
+    resolveToolApprovalScopeType,
     resolveToolApprovalProtectedTargetSummary,
     log,
     sensitiveDataBlocker,

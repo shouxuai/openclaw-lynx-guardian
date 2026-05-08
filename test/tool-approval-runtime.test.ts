@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildToolApprovalRequest,
   clearApprovalGrants,
+  clearPendingToolApprovals,
+  getOrCreatePendingToolApproval,
   matchApprovalGrant,
   persistGrantFromApproval,
 } from "../src/approval/approval-bridge.js";
@@ -133,6 +135,162 @@ describe("tool approval runtime", () => {
         riskLevel: "L3",
         toolName: "exec",
         targetFingerprint: "cmd:expanded",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("reuses current-process grants for non-exec tools across targets and modules until risk escalates", async () => {
+    clearApprovalGrants();
+
+    await persistGrantFromApproval({
+      decision: "allow-once",
+      approvalId: "approval-process",
+      channelProfile: "webchat",
+      channelId: "web",
+      accountId: "default",
+      conversationId: "conversation-1",
+      sessionKey: "session-1",
+      chainId: "chain-1",
+      runId: "run-1",
+      requesterOuId: "ou-a",
+      module: "M2:protected_file_access",
+      riskLevel: "L2",
+      toolName: "read",
+      targetFingerprint: "file:a",
+      scopeType: "workflow",
+      grantWindowMs: 30_000,
+    } as any);
+
+    expect(
+      matchApprovalGrant({
+        channelProfile: "webchat",
+        channelId: "web",
+        accountId: "default",
+        conversationId: "conversation-1",
+        sessionKey: "session-1",
+        chainId: "chain-1",
+        runId: "run-1",
+        requesterOuId: "ou-a",
+        module: "M0:identity_verification",
+        riskLevel: "L2",
+        toolName: "write",
+        targetFingerprint: "file:b",
+      }),
+    ).toMatchObject({ sourceApprovalId: "approval-process" });
+
+    expect(
+      matchApprovalGrant({
+        channelProfile: "webchat",
+        channelId: "web",
+        accountId: "default",
+        conversationId: "conversation-1",
+        sessionKey: "session-1",
+        chainId: "chain-1",
+        runId: "run-1",
+        requesterOuId: "ou-a",
+        module: "M3:over_agency",
+        riskLevel: "L3",
+        toolName: "read",
+        targetFingerprint: "file:b",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      matchApprovalGrant({
+        channelProfile: "webchat",
+        channelId: "web",
+        accountId: "default",
+        conversationId: "conversation-1",
+        sessionKey: "session-1",
+        chainId: "chain-1",
+        runId: "run-1",
+        requesterOuId: "ou-a",
+        module: "M3:over_agency",
+        riskLevel: "L2",
+        toolName: "exec",
+        targetFingerprint: "cmd:a",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("reuses exec workflow approvals across exec calls without covering non-exec tools", async () => {
+    clearApprovalGrants();
+    clearPendingToolApprovals();
+
+    const firstPending = getOrCreatePendingToolApproval({
+      runId: "run-exec",
+      requesterOuId: "ou-a",
+      module: "fatal_triangle",
+      riskLevel: "L3",
+      scopeType: "execWorkflow",
+      timeoutMs: 30_000,
+      pendingId: "approval-exec-1",
+    } as any);
+    const secondPending = getOrCreatePendingToolApproval({
+      runId: "run-exec",
+      requesterOuId: "ou-a",
+      module: "network_command",
+      riskLevel: "L3",
+      scopeType: "execWorkflow",
+      timeoutMs: 30_000,
+      pendingId: "approval-exec-2",
+    } as any);
+
+    expect(firstPending.created).toBe(true);
+    expect(secondPending.created).toBe(false);
+    expect(secondPending.pending?.pendingId).toBe("approval-exec-1");
+    secondPending.pending?.settle("deny");
+
+    await persistGrantFromApproval({
+      decision: "allow-once",
+      approvalId: "approval-exec-workflow",
+      channelProfile: "webchat",
+      channelId: "web",
+      accountId: "default",
+      conversationId: "conversation-1",
+      sessionKey: "session-1",
+      chainId: "chain-1",
+      runId: "run-exec",
+      requesterOuId: "ou-a",
+      module: "fatal_triangle",
+      riskLevel: "L3",
+      toolName: "exec",
+      targetFingerprint: "cmd:wget",
+      scopeType: "execWorkflow",
+      grantWindowMs: 30_000,
+    } as any);
+
+    expect(
+      matchApprovalGrant({
+        channelProfile: "webchat",
+        channelId: "web",
+        accountId: "default",
+        conversationId: "conversation-1",
+        sessionKey: "session-1",
+        chainId: "chain-1",
+        runId: "run-exec",
+        requesterOuId: "ou-a",
+        module: "network_command",
+        riskLevel: "L3",
+        toolName: "exec",
+        targetFingerprint: "cmd:env",
+      }),
+    ).toMatchObject({ sourceApprovalId: "approval-exec-workflow" });
+
+    expect(
+      matchApprovalGrant({
+        channelProfile: "webchat",
+        channelId: "web",
+        accountId: "default",
+        conversationId: "conversation-1",
+        sessionKey: "session-1",
+        chainId: "chain-1",
+        runId: "run-exec",
+        requesterOuId: "ou-a",
+        module: "network_command",
+        riskLevel: "L3",
+        toolName: "read",
+        targetFingerprint: "file:env",
       }),
     ).toBeUndefined();
   });

@@ -1,7 +1,6 @@
 export type ApprovalSurface =
   | "allow"
   | "hard-deny"
-  | "exec-native"
   | "plugin-native"
   | "block-no-approval-route";
 
@@ -57,16 +56,16 @@ export function resolveToolApprovalSurface(input: ToolApprovalSurfaceInput): Too
   }
 
   if (toolName === "exec") {
-    return input.nativeExecApprovalAvailable
+    return input.systemPluginApprovalAvailable
       ? {
-          surface: "exec-native",
-          requiresOpenClawApprovalContext: true,
-          reason: "exec must use OpenClaw native exec approval",
-        }
-      : {
           surface: "plugin-native",
           requiresOpenClawApprovalContext: false,
-          reason: "native exec approval is unavailable",
+          reason: "exec uses Lynx workflow approval so one prompt can cover the current run",
+        }
+      : {
+          surface: "block-no-approval-route",
+          requiresOpenClawApprovalContext: false,
+          reason: "no approval route for risky exec tool",
         };
   }
 
