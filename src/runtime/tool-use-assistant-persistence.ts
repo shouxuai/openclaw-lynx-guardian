@@ -41,7 +41,7 @@ export function stripToolUseAssistantPreamble<T extends Message>(message: T): T 
   return {
     ...message,
     content,
-  };
+  } as T;
 }
 
 function isToolCallBlock(block: ContentBlock): boolean {
