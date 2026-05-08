@@ -86,6 +86,9 @@ describe("evaluateLocalL4FastPath", () => {
 
     expect(result.matched).toBe(true);
     expect(result.decision?.matchedModules).toContain("local_sensitive_external_send");
+    expect(result.decision?.userMessage).toContain("[Lynx Guardian] 已拦截本次请求");
+    expect(result.decision?.userMessage).toContain("敏感来源与外部发送目标");
+    expect(result.decision?.userMessage).not.toContain("Request combines a sensitive source with an external send target");
   });
 
   it("denies concealed encoded execution before Go", () => {

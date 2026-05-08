@@ -110,6 +110,7 @@ export function buildApprovalRequestFingerprint(input: ApprovalFingerprintInput)
 }
 
 export type ApprovalRiskLevel = "L2" | "L3";
+export type ApprovalGrantScopeType = "singleTool" | "workflow" | "execWorkflow";
 
 const APPROVAL_RISK_ORDER: Record<ApprovalRiskLevel, number> = {
   L2: 2,
@@ -128,6 +129,7 @@ export type ApprovalGrant = {
   requesterOuId?: string;
   toolName?: string;
   targetFingerprint?: string;
+  scopeType?: ApprovalGrantScopeType;
   module: string;
   maxRiskLevel: ApprovalRiskLevel;
   createdAt: number;
@@ -186,6 +188,27 @@ function normalizeGrantToolName(value?: string): string {
   return normalizeGrantScopeValue(value).toLowerCase();
 }
 
+function isExecToolName(value?: string): boolean {
+  return normalizeGrantToolName(value) === "exec";
+}
+
+function normalizeApprovalGrantScopeType(
+  scopeType?: ApprovalGrantScopeType,
+  toolName?: string,
+): ApprovalGrantScopeType {
+  if (scopeType === "workflow" && !isExecToolName(toolName)) {
+    return "workflow";
+  }
+  if (scopeType === "execWorkflow" && isExecToolName(toolName)) {
+    return "execWorkflow";
+  }
+  return "singleTool";
+}
+
+function isWorkflowApprovalScope(scopeType: ApprovalGrantScopeType): boolean {
+  return scopeType === "workflow" || scopeType === "execWorkflow";
+}
+
 function scopeValueMatches(left?: string, right?: string, normalize = normalizeGrantScopeValue): boolean {
   const normalizedLeft = normalize(left);
   const normalizedRight = normalize(right);
@@ -196,14 +219,17 @@ function scopeValueMatches(left?: string, right?: string, normalize = normalizeG
 }
 
 function buildApprovalGrantReplacementKey(grant: ApprovalGrant): string {
+  const scopeType = normalizeApprovalGrantScopeType(grant.scopeType, grant.toolName);
+  const workflowScope = isWorkflowApprovalScope(scopeType);
   return [
-    normalizeGrantScopeValue(grant.module),
+    scopeType,
+    workflowScope ? "" : normalizeGrantScopeValue(grant.module),
     normalizeGrantScopeValue(grant.sessionKey),
     normalizeGrantScopeValue(grant.chainId),
     normalizeGrantScopeValue(grant.runId),
     normalizeGrantScopeValue(grant.requesterOuId),
-    normalizeGrantToolName(grant.toolName),
-    normalizeGrantScopeValue(grant.targetFingerprint),
+    workflowScope ? "" : normalizeGrantToolName(grant.toolName),
+    workflowScope ? "" : normalizeGrantScopeValue(grant.targetFingerprint),
   ].join("::");
 }
 
@@ -218,26 +244,43 @@ function approvalGrantScopeMatches(
     targetFingerprint?: string;
   },
 ): boolean {
-  return scopeValueMatches(grant.sessionKey, input.sessionKey)
+  const scopeType = normalizeApprovalGrantScopeType(grant.scopeType, grant.toolName);
+  const scopeMatches = scopeValueMatches(grant.sessionKey, input.sessionKey)
     && scopeValueMatches(grant.chainId, input.chainId)
     && scopeValueMatches(grant.runId, input.runId)
-    && scopeValueMatches(grant.requesterOuId, input.requesterOuId)
-    && scopeValueMatches(grant.toolName, input.toolName, normalizeGrantToolName)
+    && scopeValueMatches(grant.requesterOuId, input.requesterOuId);
+
+  if (!scopeMatches) {
+    return false;
+  }
+
+  if (scopeType === "workflow") {
+    return !isExecToolName(input.toolName);
+  }
+  if (scopeType === "execWorkflow") {
+    return isExecToolName(input.toolName);
+  }
+
+  return scopeValueMatches(grant.toolName, input.toolName, normalizeGrantToolName)
     && scopeValueMatches(grant.targetFingerprint, input.targetFingerprint);
 }
 
 export function saveApprovalGrant(grant: ApprovalGrant): void {
   pruneApprovalGrants();
-  const sourceKey = buildApprovalGrantSourceKey(grant);
+  const normalizedGrant = {
+    ...grant,
+    scopeType: normalizeApprovalGrantScopeType(grant.scopeType, grant.toolName),
+  };
+  const sourceKey = buildApprovalGrantSourceKey(normalizedGrant);
   if (!sourceKey) {
     return;
   }
 
   const current = approvalGrantsBySource.get(sourceKey) ?? [];
-  const replacementKey = buildApprovalGrantReplacementKey(grant);
+  const replacementKey = buildApprovalGrantReplacementKey(normalizedGrant);
   approvalGrantsBySource.set(sourceKey, [
     ...current.filter((entry) => buildApprovalGrantReplacementKey(entry) !== replacementKey),
-    { ...grant },
+    normalizedGrant,
   ]);
 }
 
@@ -262,10 +305,12 @@ export function matchApprovalGrant(input: {
 
   pruneApprovalGrants();
   return (approvalGrantsBySource.get(sourceKey) ?? []).find(
-    (grant) =>
-      grant.module === input.module
-      && approvalGrantScopeMatches(grant, input)
-      && APPROVAL_RISK_ORDER[grant.maxRiskLevel] >= APPROVAL_RISK_ORDER[input.riskLevel],
+    (grant) => {
+      const scopeType = normalizeApprovalGrantScopeType(grant.scopeType, grant.toolName);
+      return (isWorkflowApprovalScope(scopeType) || grant.module === input.module)
+        && approvalGrantScopeMatches(grant, input)
+        && APPROVAL_RISK_ORDER[grant.maxRiskLevel] >= APPROVAL_RISK_ORDER[input.riskLevel];
+    },
   );
 }
 
@@ -539,6 +584,7 @@ export type PendingToolApproval = {
   runId: string;
   requesterOuId?: string;
   module: string;
+  scopeType: ApprovalGrantScopeType;
   maxRiskLevel: ApprovalRiskLevel;
   createdAt: number;
   expiresAt: number;
@@ -584,6 +630,7 @@ function toPublicPendingApproval(entry: PendingToolApprovalEntry): PendingToolAp
     runId: entry.runId,
     requesterOuId: entry.requesterOuId,
     module: entry.module,
+    scopeType: entry.scopeType,
     maxRiskLevel: entry.maxRiskLevel,
     createdAt: entry.createdAt,
     expiresAt: entry.expiresAt,
@@ -605,6 +652,7 @@ export function getOrCreatePendingToolApproval(params: {
   requesterOuId?: string;
   module: string;
   riskLevel: ApprovalRiskLevel;
+  scopeType?: ApprovalGrantScopeType;
   timeoutMs: number;
   pendingId: string;
 }): { created: boolean; pending?: PendingToolApproval } {
@@ -613,11 +661,13 @@ export function getOrCreatePendingToolApproval(params: {
   }
 
   prunePendingToolApprovals();
+  const scopeType = params.scopeType ?? "singleTool";
   const existing = (pendingByRunId.get(params.runId) ?? []).find(
     (entry) =>
       !entry.settled
       && entry.requesterOuId === params.requesterOuId
-      && entry.module === params.module
+      && entry.scopeType === scopeType
+      && (isWorkflowApprovalScope(scopeType) || entry.module === params.module)
       && APPROVAL_RISK_ORDER[entry.maxRiskLevel] >= APPROVAL_RISK_ORDER[params.riskLevel],
   );
   if (existing) {
@@ -634,6 +684,7 @@ export function getOrCreatePendingToolApproval(params: {
     runId: params.runId,
     requesterOuId: params.requesterOuId,
     module: params.module,
+    scopeType,
     maxRiskLevel: params.riskLevel,
     createdAt,
     expiresAt: createdAt + params.timeoutMs,
@@ -1018,7 +1069,7 @@ export function buildToolApprovalRequest(params: {
 }): ToolApprovalRequest {
   const separator = " | ";
   const riskSegment = `[risk] ${params.riskLevel}`;
-  const suffixSegment = "Approval resumes the current tool call.";
+  const suffixSegment = "批准后继续当前工具调用。";
   const moduleBudget = NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH
     - (separator.length * 2)
     - riskSegment.length
@@ -1075,6 +1126,7 @@ export function persistGrantFromApproval(params: {
   riskLevel: ApprovalRiskLevel;
   toolName?: string;
   targetFingerprint?: string;
+  scopeType?: ApprovalGrantScopeType;
   grantWindowMs: number;
   grantControlPlane?: GrantControlPlaneSync;
 }): Promise<void> | void {
@@ -1083,8 +1135,10 @@ export function persistGrantFromApproval(params: {
   }
 
   const now = Date.now();
+  const scopeType = normalizeApprovalGrantScopeType(params.scopeType, params.toolName);
   saveApprovalGrant({
     grantId: [
+      scopeType,
       params.channelProfile ?? "",
       params.channelId ?? "",
       params.accountId ?? "",
@@ -1107,6 +1161,7 @@ export function persistGrantFromApproval(params: {
     requesterOuId: params.requesterOuId,
     toolName: params.toolName,
     targetFingerprint: params.targetFingerprint,
+    scopeType,
     module: params.module,
     maxRiskLevel: params.riskLevel,
     createdAt: now,
@@ -1134,6 +1189,7 @@ async function syncGrantToControlPlane(params: {
   riskLevel: ApprovalRiskLevel;
   toolName?: string;
   targetFingerprint?: string;
+  scopeType?: ApprovalGrantScopeType;
   grantWindowMs: number;
   grantControlPlane?: GrantControlPlaneSync;
 }): Promise<void> {
@@ -1162,6 +1218,7 @@ async function syncGrantToControlPlane(params: {
     resourceScope: {
       ...(sync.resourceScope ?? {}),
       decision: params.decision,
+      scopeType: normalizeApprovalGrantScopeType(params.scopeType, params.toolName),
       grantWindowMs: params.grantWindowMs,
     },
   });

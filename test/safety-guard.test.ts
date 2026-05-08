@@ -344,6 +344,13 @@ describe('Safety Guard - Input Guard', () => {
     expect(decision.riskAssessment.modules).not.toContain('M4:concealed_intent');
   });
 
+  it('should not treat ordinary Chinese punctuation plus exec as concealed execution', () => {
+    const decision = guardInput('三次独立的 exec 调用？');
+    expect(decision.block).toBe(false);
+    expect(decision.riskAssessment.level).not.toBe('L4');
+    expect(decision.riskAssessment.modules).not.toContain('M4:concealed_intent');
+  });
+
   it('should keep lynx wildcard help at L0 without M4 warning', () => {
     const decision = guardInput('lynx插件里识别通配符一般怎么配置？');
     expect(decision.block).toBe(false);

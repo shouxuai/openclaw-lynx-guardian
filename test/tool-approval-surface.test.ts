@@ -13,7 +13,7 @@ describe("tool approval surface routing", () => {
     }).surface).toBe("hard-deny");
   });
 
-  it("routes risky exec to native exec approval context", () => {
+  it("routes risky exec to Lynx workflow approval so one prompt can cover the current run", () => {
     expect(resolveToolApprovalSurface({
       toolName: "exec",
       riskLevel: "L3",
@@ -21,8 +21,8 @@ describe("tool approval surface routing", () => {
       nativeExecApprovalAvailable: true,
       systemPluginApprovalAvailable: true,
     })).toMatchObject({
-      surface: "exec-native",
-      requiresOpenClawApprovalContext: true,
+      surface: "plugin-native",
+      requiresOpenClawApprovalContext: false,
     });
   });
 

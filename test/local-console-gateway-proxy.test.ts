@@ -1,4 +1,4 @@
-import { createServer, type Server } from "http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
 import type { AddressInfo } from "net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,37 @@ afterEach(async () => {
 });
 
 describe("local console gateway proxy", () => {
+  it("allows private-network webview requests that already reached the OpenClaw gateway", async () => {
+    const fetchImpl = vi.fn(async () => new Response("<html>lynx</html>", {
+      headers: { "content-type": "text/html" },
+      status: 200,
+    }));
+    const handler = createLocalConsoleGatewayProxyHandler({
+      config: {
+        baseUrl: "http://127.0.0.1:31789",
+        requestTimeoutMs: 1_000,
+      },
+      fetchImpl,
+      supervisor: { ensureRunning: vi.fn(async () => true) },
+      logger: { warn: vi.fn(), error: vi.fn() },
+    });
+    const req = mockRequest({
+      remoteAddress: "192.168.121.99",
+      url: "/webview",
+    });
+    const res = mockResponse();
+
+    const handled = await handler(req, res.response);
+
+    expect(handled).toBe(true);
+    expect(res.response.statusCode).toBe(200);
+    expect(res.body()).toBe("<html>lynx</html>");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:31789/webview",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("forwards public query API POST bodies to the local console backend", async () => {
     const upstreamRequests: Array<{
       method?: string;
@@ -42,7 +73,6 @@ describe("local console gateway proxy", () => {
       },
       supervisor: { ensureRunning: vi.fn(async () => true) },
       logger: { warn: vi.fn(), error: vi.fn() },
-      trustedProxyIps: ["127.0.0.1"],
     });
 
     const proxy = createServer((req, res) => {
@@ -91,4 +121,39 @@ async function closeServer(server: Server): Promise<void> {
 
 function portOf(server: Server): number {
   return (server.address() as AddressInfo).port;
+}
+
+function mockRequest(options: {
+  method?: string;
+  remoteAddress: string;
+  url: string;
+}): IncomingMessage {
+  return {
+    headers: {},
+    method: options.method ?? "GET",
+    socket: {
+      remoteAddress: options.remoteAddress,
+    },
+    url: options.url,
+  } as unknown as IncomingMessage;
+}
+
+function mockResponse(): {
+  body: () => string;
+  response: ServerResponse & { statusCode: number };
+} {
+  const chunks: Buffer[] = [];
+  const response = {
+    end: vi.fn((chunk?: string | Buffer) => {
+      if (chunk) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+    }),
+    setHeader: vi.fn(),
+    statusCode: 200,
+  } as unknown as ServerResponse & { statusCode: number };
+  return {
+    body: () => Buffer.concat(chunks).toString("utf8"),
+    response,
+  };
 }

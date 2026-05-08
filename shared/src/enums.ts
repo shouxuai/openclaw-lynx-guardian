@@ -39,6 +39,7 @@ export type IngestDirection = typeof INGEST_DIRECTIONS[number];
 export const APPROVAL_SCOPE_TYPES = [
   "singleTool",
   "workflow",
+  "execWorkflow",
   "timeWindow",
 ] as const;
 export type ApprovalScopeType = typeof APPROVAL_SCOPE_TYPES[number];

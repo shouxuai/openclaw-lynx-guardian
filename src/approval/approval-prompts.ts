@@ -7,6 +7,8 @@ export {
   NATIVE_APPROVAL_DESCRIPTION_MAX_LENGTH,
 } from "./native-approval-description.js";
 
+export type ToolApprovalScopeType = "singleTool" | "workflow" | "execWorkflow";
+
 export function resolveToolApprovalProtectedTargetSummary(
   toolName: string,
   params: Record<string, any> | undefined,
@@ -22,6 +24,32 @@ export function resolveToolApprovalProtectedTargetSummary(
   }
 
   return buildApprovalParamSummary(toolName, params ?? {}).replace(/\s+/g, " ");
+}
+
+export function resolveToolApprovalScopeType(toolName: string): ToolApprovalScopeType {
+  return normalizeString(toolName).toLowerCase() === "exec" ? "execWorkflow" : "workflow";
+}
+
+export function buildToolApprovalDetailDescription(params: {
+  reason: string;
+  toolName: string;
+  protectedTargetSummary?: string;
+  scopeType: ToolApprovalScopeType;
+}): string {
+  const toolName = normalizeString(params.toolName) || "tool";
+  const target = normalizeString(params.protectedTargetSummary);
+  const objectText = target ? `${toolName} ${target}` : toolName;
+  const scopeText = params.scopeType === "workflow"
+    ? "当前流程内同级或更低风险的非执行工具调用"
+    : params.scopeType === "execWorkflow"
+      ? "当前流程内同级或更低风险的执行命令调用"
+      : "仅本次工具调用";
+
+  return [
+    `原因：${normalizeString(params.reason) || "Lynx Guardian 检测到高风险工具调用"}`,
+    `批准范围：${scopeText}`,
+    `审批对象：${objectText}`,
+  ].join("；");
 }
 
 export function extractApproveCommand(text: string): {

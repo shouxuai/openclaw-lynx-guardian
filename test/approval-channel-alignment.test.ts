@@ -439,7 +439,7 @@ describe("approval channel alignment", () => {
     expect(JSON.stringify(result)).not.toContain("/lynx-approve");
   });
 
-  it("does not create a second Lynx approval request for risky exec in native webchat runtimes", async () => {
+  it("creates a Lynx workflow approval request for risky exec in native webchat runtimes", async () => {
     vi.stubEnv("OPENCLAW_VERSION", "2026.3.28");
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: true,
@@ -481,14 +481,110 @@ describe("approval channel alignment", () => {
       },
     );
 
-    expect((result as any)?.requireApproval).toBeUndefined();
+    expect((result as any)?.requireApproval).toMatchObject({
+      title: expect.stringContaining("Lynx Guardian"),
+      timeoutBehavior: "deny",
+    });
     expect((result as any)?.block).not.toBe(true);
     expect(JSON.stringify(result ?? {})).not.toContain("/approve");
-    expect(JSON.stringify(result ?? {})).not.toContain("确认放行本次操作");
+    expect((result as any)?.requireApproval?.description).toContain("执行命令调用");
     guardSpy.mockRestore();
   });
 
-  it("routes blacklist-backed risky exec to native exec approval without Lynx requireApproval", async () => {
+  it("reuses one broker approval for concurrent risky exec calls in the same run", async () => {
+    vi.stubEnv("OPENCLAW_VERSION", "2026.3.28");
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        decisionId: `broker-exec-approval-${Date.now()}`,
+        stage: "tool_call",
+        block: false,
+        action: "require_approval",
+        riskLevel: "L3",
+        score: 80,
+        winningArbiter: "tool_policy",
+        arbiters: [],
+        matchedModules: ["M2:protected_file_access"],
+        requiresApproval: true,
+        approvalRequest: {
+          riskFamily: "M2:protected_file_access",
+          title: "Lynx Guardian approval required",
+          summary: "Approve current exec workflow.",
+          scope: { toolName: "exec" },
+        },
+        audit: {
+          eventSeverity: "warn",
+          policyDecision: "require_approval",
+          enforcementAction: "require_approval",
+          color: "orange",
+        },
+      }),
+    } as Response)));
+    configureOwnerApproval();
+
+    const first = await handlers.before_tool_call(
+      {
+        toolName: "exec",
+        params: { command: "env" },
+        runId: "run-broker-exec-reuse",
+        toolCallId: "tool-broker-exec-1",
+      },
+      {
+        sessionKey: "sess-broker-exec-reuse",
+        channelId: "webchat",
+        runId: "run-broker-exec-reuse",
+      },
+    );
+
+    expect((first as any)?.requireApproval).toMatchObject({
+      title: expect.stringContaining("Lynx Guardian"),
+      timeoutBehavior: "deny",
+    });
+    expect(typeof (first as any)?.requireApproval?.onResolution).toBe("function");
+
+    const secondPromise = handlers.before_tool_call(
+      {
+        toolName: "exec",
+        params: { command: "iptables -L" },
+        runId: "run-broker-exec-reuse",
+        toolCallId: "tool-broker-exec-2",
+      },
+      {
+        sessionKey: "sess-broker-exec-reuse",
+        channelId: "webchat",
+        runId: "run-broker-exec-reuse",
+      },
+    );
+
+    await expect(Promise.race([
+      secondPromise.then(() => "settled"),
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 10)),
+    ])).resolves.toBe("pending");
+
+    await (first as any).requireApproval.onResolution("allow-once");
+    const second = await secondPromise;
+    expect((second as any)?.requireApproval).toBeUndefined();
+    expect((second as any)?.block).not.toBe(true);
+
+    const third = await handlers.before_tool_call(
+      {
+        toolName: "exec",
+        params: { command: "wget -q -O /dev/null https://example.com" },
+        runId: "run-broker-exec-reuse",
+        toolCallId: "tool-broker-exec-3",
+      },
+      {
+        sessionKey: "sess-broker-exec-reuse",
+        channelId: "webchat",
+        runId: "run-broker-exec-reuse",
+      },
+    );
+    expect((third as any)?.requireApproval).toBeUndefined();
+    expect((third as any)?.block).not.toBe(true);
+  });
+
+  it("routes blacklist-backed risky exec to Lynx workflow approval", async () => {
     vi.stubEnv("OPENCLAW_VERSION", "2026.3.28");
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: true,
@@ -533,10 +629,13 @@ describe("approval channel alignment", () => {
       },
     );
 
-    expect((result as any)?.requireApproval).toBeUndefined();
+    expect((result as any)?.requireApproval).toMatchObject({
+      title: expect.stringContaining("Lynx Guardian"),
+      timeoutBehavior: "deny",
+    });
     expect((result as any)?.block).not.toBe(true);
     expect(JSON.stringify(result ?? {})).not.toContain("/approve");
-    expect(JSON.stringify(result ?? {})).not.toContain("确认放行本次操作");
+    expect((result as any)?.requireApproval?.description).toContain("执行命令调用");
     guardSpy.mockRestore();
     blacklistSpy.mockRestore();
   });

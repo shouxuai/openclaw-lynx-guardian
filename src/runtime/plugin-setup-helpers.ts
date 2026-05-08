@@ -49,6 +49,8 @@ import {
 import {
   appendFeishuNativeApprovalGuidance,
   buildFeishuNativeToolApprovalReplyPrompt,
+  resolveToolApprovalScopeType,
+  type ToolApprovalScopeType,
   resolveToolApprovalProtectedTargetSummary,
 } from "../approval/approval-prompts.js";
 import {
@@ -485,6 +487,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     riskLevel: "L2" | "L3";
     promptText?: string;
     protectedTargetSummary?: string;
+    scopeType?: ToolApprovalScopeType;
     timeoutMs: number;
     grantWindowMs: number;
     approvalSessionKey?: string;
@@ -493,6 +496,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       return { handled: false };
     }
 
+    const scopeType = params.scopeType ?? resolveToolApprovalScopeType(params.toolName);
     const requestFingerprint = buildApprovalRequestFingerprint({
       channelProfile: "feishu",
       accountId: params.accountId,
@@ -501,7 +505,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
       promptText: params.promptText,
       toolName: params.toolName,
       module: params.module,
-      protectedTargetSummary: params.protectedTargetSummary,
+      protectedTargetSummary: scopeType === "singleTool" ? params.protectedTargetSummary : undefined,
     });
 
     const continuation = matchFeishuRunContinuation({
@@ -926,6 +930,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
     chainId?: string;
     runId?: string;
     targetFingerprint?: string;
+    scopeType?: ToolApprovalScopeType;
     timeoutMs: number;
     grantWindowMs: number;
     pendingApproval?: {
@@ -976,6 +981,7 @@ export function createPluginSetupHelpers(params: CreatePluginSetupHelpersParams)
         riskLevel: params.riskLevel,
         toolName: params.toolName,
         targetFingerprint,
+        scopeType: params.scopeType,
         grantWindowMs: params.grantWindowMs,
         grantControlPlane: grantControlPlane
           ? {

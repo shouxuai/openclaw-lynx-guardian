@@ -27,6 +27,7 @@ export const INGEST_DIRECTIONS = ["input", "output", "internal"];
 export const APPROVAL_SCOPE_TYPES = [
     "singleTool",
     "workflow",
+    "execWorkflow",
     "timeWindow",
 ];
 export const LYNX_CHECK_SOURCES = ["manual", "scheduled"];
