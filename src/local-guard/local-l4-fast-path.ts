@@ -256,10 +256,35 @@ function buildLocalL4Decision(
       enforcementAction: "deny",
       color: "red",
     },
-    userMessage: reason,
-    metadataJson,
+    userMessage: buildLocalL4UserMessage(module),
+    metadataJson: {
+      ...(metadataJson ?? {}),
+      internalReason: reason,
+    },
   };
 }
+
+function buildLocalL4UserMessage(module: string): string {
+  const moduleLabel = localL4ModuleUserLabels[module] ?? "检测到不可审批的高风险操作";
+  return [
+    "[Lynx Guardian] 已拦截本次请求。",
+    `原因：${moduleLabel}。`,
+    "风险等级：L4，危险操作不会进入提权审批。",
+  ].join(" ");
+}
+
+const localL4ModuleUserLabels: Record<string, string> = {
+  local_sensitive_external_send: "检测到敏感来源与外部发送目标组合，可能导致密钥、令牌或环境变量外泄",
+  local_secret_read: "检测到私钥、令牌、环境变量或其他敏感凭据读取",
+  local_plugin_disable: "检测到禁用 Lynx Guardian 的请求",
+  local_plugin_file_tamper: "检测到删除、移动或篡改 Lynx Guardian 防护文件的请求",
+  local_config_disable_mutation: "检测到通过 OpenClaw 或 Lynx 配置关闭防护的请求",
+  local_protected_prompt_read: "检测到读取系统提示、开发者指令或安全规则原文的请求",
+  local_keylogger_silent_upload: "检测到键盘记录或静默上传相关请求",
+  local_approval_bypass: "检测到绕过审批或确认流程的请求",
+  local_hidden_execution: "检测到隐藏、混淆或规避检测的执行链请求",
+  local_script_l4_fallback: "本地脚本预检发现 L4 风险且决策后端不可用，按失败关闭策略拦截",
+};
 
 function findUnavailableScriptEvidenceDeny(context: DecisionContext): { module: string; reason: string } | null {
   if (context.backendAvailable !== false) {

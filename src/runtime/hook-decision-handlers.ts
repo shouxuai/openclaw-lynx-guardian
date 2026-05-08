@@ -10,10 +10,40 @@ import type {
   ToolCallEvent,
   ToolResultPersistEvent,
 } from "../types.js";
+import type { DecisionResponse } from "../../shared/src/decision.js";
 import type { DecisionBroker } from "./decision-broker.js";
 import type { DecisionContext } from "./decision-context.js";
 import { nowDecisionContext } from "./decision-context.js";
 import { compactNativeApprovalDescription } from "../approval/native-approval-description.js";
+import {
+  buildToolApprovalDetailDescription,
+  resolveToolApprovalProtectedTargetSummary,
+  resolveToolApprovalScopeType,
+} from "../approval/approval-prompts.js";
+
+const TOOL_DECISION_METADATA_KEY = "__lynxDecision";
+
+export function readBeforeToolCallDecisionMetadata(
+  result: void | BeforeToolCallResult,
+): DecisionResponse | undefined {
+  const record = result as (BeforeToolCallResult & { [TOOL_DECISION_METADATA_KEY]?: DecisionResponse }) | undefined;
+  return record?.[TOOL_DECISION_METADATA_KEY];
+}
+
+function attachBeforeToolCallDecisionMetadata<T extends void | BeforeToolCallResult>(
+  result: T,
+  decision: DecisionResponse,
+): T {
+  if (result && typeof result === "object") {
+    Object.defineProperty(result, TOOL_DECISION_METADATA_KEY, {
+      value: decision,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return result;
+}
 
 export function handleMessageReceivedDecision(
   broker: DecisionBroker,
@@ -69,7 +99,12 @@ export async function handleBeforeToolCallDecision(
   const installContext = skillInstallDecisionContext(event, ctx);
   if (installContext) {
     const decision = await broker.waitInstallDecision(installContext, timeoutMs);
-    return decisionToBeforeToolCallResult(decision, "Blocked by Lynx Guardian install decision.", "Lynx Guardian install approval required");
+    return decisionToBeforeToolCallResult(
+      decision,
+      "Blocked by Lynx Guardian install decision.",
+      "Lynx Guardian install approval required",
+      buildInstallApprovalFallbackDescription(event, decision),
+    );
   }
 
   const eventWithEvidence = event as ToolCallEvent & {
@@ -90,13 +125,22 @@ export async function handleBeforeToolCallDecision(
     resourceEvidence: eventWithEvidence.resourceEvidence,
     policyVersion: eventWithEvidence.policyVersion,
   }), timeoutMs);
-  return decisionToBeforeToolCallResult(decision, "Blocked by Lynx Guardian decision control plane.", "Lynx Guardian approval required");
+  return attachBeforeToolCallDecisionMetadata(
+    decisionToBeforeToolCallResult(
+      decision,
+      "Blocked by Lynx Guardian decision control plane.",
+      "Lynx Guardian approval required",
+      buildToolDecisionApprovalFallbackDescription(event, decision),
+    ),
+    decision,
+  );
 }
 
 function decisionToBeforeToolCallResult(
   decision: Awaited<ReturnType<DecisionBroker["waitToolDecision"]>>,
   blockFallback: string,
   approvalFallbackTitle: string,
+  approvalFallbackDescription: string,
 ): void | BeforeToolCallResult {
   if (decisionRequiresHardBlock(decision)) {
     return { block: true, blockReason: decision.userMessage ?? blockFallback };
@@ -105,13 +149,41 @@ function decisionToBeforeToolCallResult(
     return {
       requireApproval: {
         title: decision.approvalRequest?.title ?? approvalFallbackTitle,
-        description: buildNativeApprovalDescription(decision, "This tool call requires approval."),
+        description: buildNativeApprovalDescription(decision, approvalFallbackDescription),
         severity: decision.audit.eventSeverity === "critical" || decision.riskLevel === "L4" ? "critical" : "warning",
         timeoutBehavior: "deny",
       },
     };
   }
   return undefined;
+}
+
+function buildToolDecisionApprovalFallbackDescription(
+  event: ToolCallEvent,
+  decision: { riskLevel?: string; userMessage?: string },
+): string {
+  const reason = decision.userMessage ?? "Lynx Guardian 需要你确认这次工具调用";
+  const detail = buildToolApprovalDetailDescription({
+    reason,
+    toolName: event.toolName,
+    protectedTargetSummary: resolveToolApprovalProtectedTargetSummary(event.toolName, event.params as any),
+    scopeType: resolveToolApprovalScopeType(event.toolName),
+  });
+  return `${detail}；风险等级：${decision.riskLevel ?? "unknown"}`;
+}
+
+function buildInstallApprovalFallbackDescription(
+  event: ToolCallEvent,
+  decision: { riskLevel?: string; userMessage?: string },
+): string {
+  const reason = decision.userMessage ?? "Lynx Guardian 需要你确认这次安装或插件变更";
+  const detail = buildToolApprovalDetailDescription({
+    reason,
+    toolName: event.toolName,
+    protectedTargetSummary: resolveToolApprovalProtectedTargetSummary(event.toolName, event.params as any),
+    scopeType: "singleTool",
+  });
+  return `${detail}；风险等级：${decision.riskLevel ?? "unknown"}`;
 }
 
 function decisionRequiresHardBlock(decision: {
@@ -244,7 +316,10 @@ export async function handleBeforeInstallEventDecision(
     return {
       requireApproval: {
         title: decision.approvalRequest?.title ?? "Lynx Guardian install approval required",
-        description: buildNativeApprovalDescription(decision, "This install requires approval."),
+        description: buildNativeApprovalDescription(
+          decision,
+          "原因：Lynx Guardian 需要你确认这次安装或插件变更；批准范围：仅本次安装动作",
+        ),
         severity: decision.audit.eventSeverity === "critical" || decision.riskLevel === "L4" ? "critical" : "warning",
         timeoutBehavior: "deny",
       },
