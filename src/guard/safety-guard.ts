@@ -232,21 +232,26 @@ function evictStaleSessions(): void {
 }
 
 function getSessionState(sessionKey: string): SessionState {
+  const now = Date.now();
   let state = sessionStates.get(sessionKey);
+  if (state && now - state.lastActiveTime > SESSION_TTL_MS) {
+    sessionStates.delete(sessionKey);
+    state = undefined;
+  }
   if (!state) {
     evictStaleSessions();
     state = {
       recentScores: [],
       rejectedTopics: new Map(),
       lastTopicCategory: "normal",
-      lastActiveTime: Date.now(),
+      lastActiveTime: now,
       operationHistory: [],
       evasiveIntentCnFamilies: [],
       execMasquerade: undefined,
     };
     sessionStates.set(sessionKey, state);
   } else {
-    state.lastActiveTime = Date.now();
+    state.lastActiveTime = now;
   }
   return state;
 }
@@ -478,6 +483,9 @@ function detectIdentityClaims(text: string): IdentityDetectionResult {
 
 // ── Protected File Access (M2) ─────────────────────────────────────
 
+const SYSTEM_STARTUP_FILE_LABEL = "system startup files";
+const SYSTEM_CRITICAL_FILE_LABEL = "system critical files";
+
 const INPUT_STAGE_PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /\bSOUL\.md\b/i, label: "SOUL.md" },
   { pattern: /\bIDENTITY\.md\b/i, label: "IDENTITY.md" },
@@ -490,6 +498,20 @@ const INPUT_STAGE_PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] 
   { pattern: /\bworkspace-state\.json\b/i, label: "workspace-state.json" },
   { pattern: /\bopenclaw\.plugin\.json\b/i, label: "openclaw.plugin.json" },
   { pattern: /\bopenclaw\.json\b/i, label: "openclaw.json" },
+  { pattern: /(?:^|[\s"'`=:;({]|[\\/])(?:~[\\/])?\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zlogin|zshenv|kshrc|cshrc|tcshrc)\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({]|[\\/])\.config[\\/]fish[\\/]config\.fish\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({]|[\\/])\.config[\\/]systemd[\\/]user[\\/][^\\/\s]+\.service\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({]|[\\/])\.config[\\/]autostart[\\/][^\\/\s]+\.desktop\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({])\/etc\/(?:profile|bash\.bashrc|environment|rc\.local|crontab)\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({])\/etc\/(?:cron(?:\.d|\.daily|\.hourly|\.weekly|\.monthly)?|systemd\/system)(?:[\/\s]|$)/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({]|[\\/])(?:Microsoft\.)?(?:PowerShell|VSCode)_profile\.ps1\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({]|[\\/])profile\.ps1\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({])\/etc\/(?:passwd|shadow|group|gshadow|sudoers|hosts|hostname|resolv\.conf|nsswitch\.conf|fstab|crontab|environment|profile|bash\.bashrc|rc\.local|ld\.so\.preload|ld\.so\.conf|sysctl\.conf)\b/i, label: SYSTEM_CRITICAL_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({])\/etc\/(?:sudoers\.d|ssh|pam\.d|security|systemd|cron(?:\.d|\.daily|\.hourly|\.weekly|\.monthly)?|sysctl\.d|modprobe\.d|modules-load\.d|ld\.so\.conf\.d|apt|yum\.repos\.d|pki|ssl)(?:[\/\s]|$)/i, label: SYSTEM_CRITICAL_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({])\/(?:boot|usr\/lib\/systemd\/system|lib\/systemd\/system)(?:[\/\s]|$)/i, label: SYSTEM_CRITICAL_FILE_LABEL },
+  { pattern: /\b[A-Za-z]:[\\/]Windows[\\/]System32[\\/]drivers[\\/]etc[\\/]hosts\b/i, label: SYSTEM_CRITICAL_FILE_LABEL },
+  { pattern: /\b[A-Za-z]:[\\/]Windows[\\/]System32[\\/]config(?:[\\/]|$)/i, label: SYSTEM_CRITICAL_FILE_LABEL },
+  { pattern: /(?:^|[\s"'`=:;({]|[\\/])Startup[\\/][^\\/\s]+\.lnk\b/i, label: SYSTEM_STARTUP_FILE_LABEL },
 ];
 
 const TOOL_STAGE_ONLY_PROTECTED_FILE_PATTERNS: { pattern: RegExp; label: string }[] = [
@@ -514,6 +536,8 @@ const TOOL_STAGE_MIN_BLOCK_PROTECTED_FILE_LABELS = new Set([
   LYNX_OWNED_SKILL_LABEL,
   "MEMORY.md",
   "LYNX_APPROVAL_TEST.md",
+  SYSTEM_STARTUP_FILE_LABEL,
+  SYSTEM_CRITICAL_FILE_LABEL,
 ]);
 
 const PROTECTED_FILE_READ_PATTERNS: RegExp[] = [
@@ -528,6 +552,9 @@ const PROTECTED_FILE_WRITE_PATTERNS: RegExp[] = [
   /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
   /\b(?:File\.(?:delete|unlink|write|rename)|FileUtils\.(?:rm_rf|mv)|remove_tree)\b/i,
   /\bopen\s*\([^)]*,\s*['"][^'"]*[wa+][^'"]*['"]\)/i,
+  /(?:^|\s)(?:>>?|1>>?|&>>)\s*(?:~[\\/])?\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zlogin|zshenv|kshrc|cshrc|tcshrc)\b/i,
+  /(?:^|\s)(?:>>?|1>>?|&>>)\s*\/etc\/(?:passwd|shadow|group|gshadow|sudoers|hosts|hostname|resolv\.conf|nsswitch\.conf|fstab|crontab|environment|profile|bash\.bashrc|rc\.local|ld\.so\.preload|ld\.so\.conf|sysctl\.conf)\b/i,
+  /(?:^|\s)(?:>>?|1>>?|&>>)\s*\/etc\/(?:sudoers\.d|ssh|pam\.d|security|systemd|cron(?:\.d|\.daily|\.hourly|\.weekly|\.monthly)?|sysctl\.d|modprobe\.d|modules-load\.d|ld\.so\.conf\.d|apt|yum\.repos\.d|pki|ssl)(?:[\/\s]|$)/i,
   /(?:修改|编辑|更改|更新|追加|覆盖|重写|删除|改名|重命名|移动|移除|清除)/i,
 ];
 
@@ -547,6 +574,32 @@ function hasProtectedFileHarmfulIntent(access: ProtectedFileAccessResult, text: 
 
   const normalized = normalizePluginProtectionText(text);
   return PROTECTED_FILE_EXFILTRATION_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+const INTENT_SCOPED_PROTECTED_FILE_LABELS = new Set([
+  SYSTEM_STARTUP_FILE_LABEL,
+  SYSTEM_CRITICAL_FILE_LABEL,
+]);
+
+function scopeProtectedAccessByIntent(
+  protectedAccess: ProtectedFileAccessResult,
+  text: string,
+): ProtectedFileAccessResult {
+  if (
+    protectedAccess.matchedFiles.length === 0
+    || hasProtectedFileHarmfulIntent(protectedAccess, text)
+  ) {
+    return protectedAccess;
+  }
+
+  const matchedFiles = protectedAccess.matchedFiles.filter(
+    (label) => !INTENT_SCOPED_PROTECTED_FILE_LABELS.has(label),
+  );
+
+  return {
+    matchedFiles,
+    operation: matchedFiles.length > 0 ? protectedAccess.operation : "unknown",
+  };
 }
 
 const IMMUTABLE_RUNTIME_CONFIG_LABELS = new Set([
@@ -1886,9 +1939,10 @@ export function guardToolCall(
   const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
   const atMs = Date.now();
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
+  const intentScopedProtectedAccess = scopeProtectedAccessByIntent(protectedAccess, combined);
   const openClawUpgradeMaintenance = isOpenClawUpgradeMaintenance(combined, normalizedToolName, normalizedToolAction);
   const effectiveProtectedAccess = getEffectiveProtectedAccessForToolRisk(
-    protectedAccess,
+    intentScopedProtectedAccess,
     openClawUpgradeMaintenance,
   );
   const memorySessionAccess = detectOpenClawMemorySessionArtifactAccess(combined, toolName);
