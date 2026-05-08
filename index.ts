@@ -190,6 +190,7 @@ import { deliverManagedLynxAuditReport } from "./src/runtime/lynx-audit-runtime.
 import {
   adaptContentCheckResult,
   adaptToolCheckResult,
+  buildContentCategorySummary,
 } from "./src/runtime/api-risk-adapter.js";
 import { resolvePluginRuntimeConfig } from "./src/runtime/plugin-runtime-config.js";
 import {
@@ -1160,13 +1161,25 @@ export default function setup(api: OpenClawPluginApi) {
       } else {
         const res = remoteInputCheck.value;
         const adaptedContentCheck = adaptContentCheckResult(res.result);
-        const inputCategorySummary = [
-          adaptedContentCheck.categoryChain.levelOne,
-          adaptedContentCheck.categoryChain.levelTwo,
-          adaptedContentCheck.categoryChain.levelThree,
-        ].join("、");
+        const inputCategorySummary = buildContentCategorySummary(adaptedContentCheck.categoryChain);
         log.info(`[lynx-guardian] Input risk detected: ${JSON.stringify(res)}`);
         if (adaptedContentCheck.externalRiskLevel > 0) {
+          if (!inputCategorySummary) {
+            log.warn("[lynx-guardian] Input risk detected without category labels; skipping prompt injection");
+
+            if (adaptedContentCheck.externalRiskLevel >= 3 && !managedLynxCheckPreauthorized) {
+              return {
+                block: true,
+                blockReason: "[Lynx Guardian] 内容风险级别过高，插件已进行拦截。",
+              } as any;
+            }
+
+            if (adaptedContentCheck.externalRiskLevel >= 3 && managedLynxCheckPreauthorized) {
+              log.info("[lynx-guardian] Managed /lynx-check preauthorized API risk passthrough");
+            }
+            return { prependContext } as any;
+          }
+
           let warning = `重要提醒：内容包含内容风险（${inputCategorySummary}），\n`;
           if (inputCategorySummary.includes("个人隐私")) {
             warning += "包含隐私内容，需要先进行脱敏处理。";

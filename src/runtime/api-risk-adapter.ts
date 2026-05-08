@@ -24,12 +24,26 @@ function normalizeCategoryLabel(value: string | undefined): string {
     : "None";
 }
 
+function isPlaceholderCategoryLabel(value: string): boolean {
+  return normalizeCategoryLabel(value).toLowerCase() === "none";
+}
+
 export function toLegacyRiskLevel(riskLevelValue: number): 0 | 1 | 2 | 3 | 4 {
   if (!Number.isFinite(riskLevelValue)) {
     return 0;
   }
 
   return Math.max(0, Math.min(4, Math.round(riskLevelValue))) as 0 | 1 | 2 | 3 | 4;
+}
+
+export function buildContentCategorySummary(categoryChain: CategoryChain): string | undefined {
+  const labels = [
+    normalizeCategoryLabel(categoryChain.levelOne),
+    normalizeCategoryLabel(categoryChain.levelTwo),
+    normalizeCategoryLabel(categoryChain.levelThree),
+  ];
+
+  return labels.every(isPlaceholderCategoryLabel) ? undefined : labels.join("、");
 }
 
 export function adaptContentCheckResult(
