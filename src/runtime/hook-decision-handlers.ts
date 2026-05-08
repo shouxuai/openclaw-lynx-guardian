@@ -15,6 +15,7 @@ import type { DecisionBroker } from "./decision-broker.js";
 import type { DecisionContext } from "./decision-context.js";
 import { nowDecisionContext } from "./decision-context.js";
 import { compactNativeApprovalDescription } from "../approval/native-approval-description.js";
+import { shouldAllowOfficialLynxGuardianUpdateToolCall } from "../guard/safety-guard.js";
 import {
   buildToolApprovalDetailDescription,
   resolveToolApprovalProtectedTargetSummary,
@@ -96,6 +97,10 @@ export async function handleBeforeToolCallDecision(
   ctx: EventContext,
   timeoutMs = 1500,
 ): Promise<void | BeforeToolCallResult> {
+  if (shouldAllowOfficialLynxGuardianUpdateToolCall(event.toolName, event.params ?? {}, ctx.sessionKey)) {
+    return undefined;
+  }
+
   const installContext = skillInstallDecisionContext(event, ctx);
   if (installContext) {
     const decision = await broker.waitInstallDecision(installContext, timeoutMs);

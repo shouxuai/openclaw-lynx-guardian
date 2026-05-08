@@ -68,6 +68,7 @@ export interface GuardDecision {
   };
   contextHints?: {
     masqueradeTaintLevel?: ExecMasqueradeLevel;
+    officialLynxGuardianUpdate?: boolean;
   };
 }
 
@@ -79,6 +80,7 @@ export interface GuardContext {
   trustedManagedLynxCheckToolCall?: boolean;
   trustedManagedLynxCheckOutput?: boolean;
   trustedManagedLynxCheckPersistence?: boolean;
+  trustedOfficialLynxGuardianUpdateToolCall?: boolean;
 }
 
 interface IdentityDetectionResult {
@@ -99,6 +101,11 @@ interface ExecMasqueradeState {
   level: ExecMasqueradeLevel;
   expiresAt: number;
   reasons: string[];
+}
+
+interface OfficialPluginUpdateIntent {
+  ruleId: string;
+  expiresAt: number;
 }
 
 // ── Weighted Scoring Infrastructure ───────────────────────────────
@@ -212,10 +219,14 @@ interface SessionState {
   lastActiveTime: number;
   operationHistory: OperationCategory[];  // last N operation categories for sequence detection
   execMasquerade?: ExecMasqueradeState;
+  officialPluginUpdateIntent?: OfficialPluginUpdateIntent;
 }
 
 const SESSION_MAX_SIZE = 1000;
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const OFFICIAL_LYNX_GUARDIAN_UPDATE_RULE_ID = "official_lynx_guardian_update";
+const OFFICIAL_LYNX_GUARDIAN_REPO_URL = "https://github.com/shouxuai/openclaw-lynx-guardian";
+const OFFICIAL_PLUGIN_UPDATE_INTENT_TTL_MS = 10 * 60 * 1000;
 
 const sessionStates = new Map<string, SessionState>();
 
@@ -253,6 +264,38 @@ function getSessionState(sessionKey: string): SessionState {
     state.lastActiveTime = Date.now();
   }
   return state;
+}
+
+function rememberOfficialLynxGuardianUpdateIntent(sessionKey: string | undefined, ruleId: string): void {
+  if (!sessionKey || ruleId !== OFFICIAL_LYNX_GUARDIAN_UPDATE_RULE_ID) {
+    return;
+  }
+
+  const state = getSessionState(sessionKey);
+  state.officialPluginUpdateIntent = {
+    ruleId,
+    expiresAt: Date.now() + OFFICIAL_PLUGIN_UPDATE_INTENT_TTL_MS,
+  };
+}
+
+export function hasActiveOfficialLynxGuardianUpdateIntent(sessionKey: string | undefined): boolean {
+  if (!sessionKey) {
+    return false;
+  }
+
+  const state = sessionStates.get(sessionKey);
+  const intent = state?.officialPluginUpdateIntent;
+  if (!intent) {
+    return false;
+  }
+
+  if (intent.expiresAt <= Date.now()) {
+    delete state.officialPluginUpdateIntent;
+    return false;
+  }
+
+  state.lastActiveTime = Date.now();
+  return intent.ruleId === OFFICIAL_LYNX_GUARDIAN_UPDATE_RULE_ID;
 }
 
 // Modules that represent legitimate owner operations — repeated blocks are
@@ -513,7 +556,7 @@ const IMMUTABLE_RUNTIME_CONFIG_LABELS = new Set([
 ]);
 
 const LYNX_PLUGIN_ROOT_PATTERNS: RegExp[] = [
-  /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$)/i,
+  /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$|[\s"'`;),])/i,
 ];
 
 const LYNX_PLUGIN_CACHE_PATTERNS: RegExp[] = [
@@ -525,6 +568,7 @@ const LYNX_PLUGIN_CACHE_PATTERNS: RegExp[] = [
 ];
 
 const MUTATING_TOOL_PATTERNS: RegExp[] = [
+  /\bgit\b[\s\S]{0,160}\b(?:clone|fetch|pull|merge|checkout|switch|restore|reset|clean)\b/i,
   /\b(?:write|edit|modify|update|append|overwrite|rewrite|rename|move|delete|remove|unlink|rm|mv|cp|copy|tee|touch)\b/i,
   /\b(?:Remove-Item|Move-Item|Copy-Item|Rename-Item|Set-Content|Add-Content|Out-File|New-Item)\b/i,
   /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
@@ -672,6 +716,114 @@ function detectPluginIntegrityViolation(text: string, toolName?: string): boolea
   }
 
   return MUTATING_TOOL_PATTERNS.some((pattern) => pattern.test(semanticNormalized));
+}
+
+function isTrustedOfficialLynxGuardianUpdateToolCall(input: {
+  trusted: boolean;
+  toolName: string;
+  command: string;
+  combined: string;
+}): boolean {
+  if (!input.trusted) {
+    return false;
+  }
+
+  if (input.toolName !== "exec" && input.toolName !== "shell" && input.toolName !== "gateway") {
+    return false;
+  }
+
+  const normalized = normalizePluginProtectionText(input.combined);
+  if (hasDisallowedOfficialLynxGuardianUpdateSideEffect(normalized, input.command)) {
+    return false;
+  }
+
+  return hasOfficialLynxGuardianUpdateOperation(normalized)
+    && hasPluginUpdateTarget(normalized)
+    && (hasOfficialLynxGuardianUpdateSource(normalized) || hasGitPluginUpdateTarget(normalized));
+}
+
+export function shouldAllowOfficialLynxGuardianUpdateToolCall(
+  toolName: string,
+  params: Record<string, unknown> = {},
+  sessionKey?: string,
+  context?: Pick<GuardContext, "trustedOfficialLynxGuardianUpdateToolCall">,
+): boolean {
+  const toolAction = (params?.action ?? "") as string;
+  const note = (params?.note ?? "") as string;
+  const raw = (params?.raw ?? "") as string;
+  const command = (params?.command ?? "") as string;
+  const filePath = (params?.file_path ?? params?.path ?? params?.file ?? "") as string;
+  const cwd = (params?.cwd ?? params?.workdir ?? params?.workingDirectory ?? "") as string;
+  const normalizedToolName = toolName.trim().toLowerCase();
+  const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${cwd} ${raw}`;
+  const trusted = context?.trustedOfficialLynxGuardianUpdateToolCall === true
+    || hasActiveOfficialLynxGuardianUpdateIntent(sessionKey);
+
+  return isTrustedOfficialLynxGuardianUpdateToolCall({
+    trusted,
+    toolName: normalizedToolName,
+    command,
+    combined,
+  }) || isTrustedOfficialLynxGuardianUpdateRestartToolCall({
+    trusted,
+    toolName: normalizedToolName,
+    combined,
+  });
+}
+
+function hasOfficialLynxGuardianUpdateSource(text: string): boolean {
+  return text.toLowerCase().includes(OFFICIAL_LYNX_GUARDIAN_REPO_URL);
+}
+
+function hasOfficialLynxGuardianUpdateOperation(text: string): boolean {
+  return /\bgit\b[\s\S]{0,160}\b(?:clone|fetch|pull|merge|checkout|switch|restore)\b/i.test(text);
+}
+
+function hasPluginUpdateTarget(text: string): boolean {
+  return /(?:^|[\\/])\.openclaw[\\/]extensions[\\/]openclaw-lynx-guardian(?:[\\/]|$)/i.test(normalizeGuardPath(text))
+    || /openclaw-lynx-guardian/i.test(text);
+}
+
+function hasGitPluginUpdateTarget(text: string): boolean {
+  return /\bgit\b/i.test(text)
+    && hasPluginUpdateTarget(text);
+}
+
+function hasDisallowedOfficialLynxGuardianUpdateSideEffect(text: string, command: string): boolean {
+  const commandText = normalizePluginProtectionText(command || text);
+  return [
+    /\b(?:rm|del|erase|unlink|Remove-Item|Move-Item|Rename-Item|Set-Content|Add-Content|Out-File|New-Item|tee)\b/i,
+    /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync)\b/i,
+    /\b(?:sed\s+-i|perl\s+-pi|chmod\s+777|icacls\b[\s\S]{0,80}\b\/grant)\b/i,
+    />\s*[^\n\r]*openclaw-lynx-guardian/i,
+    /\bopenclaw\b[\s\S]{0,80}\b(?:extension|plugin)\b[\s\S]{0,40}\b(?:disable|uninstall|remove)\b/i,
+  ].some((pattern) => pattern.test(commandText));
+}
+
+function isTrustedOfficialLynxGuardianUpdateRestartToolCall(input: {
+  trusted: boolean;
+  toolName: string;
+  combined: string;
+}): boolean {
+  if (!input.trusted) {
+    return false;
+  }
+
+  if (input.toolName !== "exec" && input.toolName !== "shell" && input.toolName !== "gateway") {
+    return false;
+  }
+
+  const text = input.combined.toLowerCase();
+  if (/\b(?:stop|shutdown|kill|down|poweroff|halt|disable|deactivate)\b/.test(text)) {
+    return false;
+  }
+
+  if (input.toolName === "gateway") {
+    return /\brestart\b/i.test(input.combined);
+  }
+
+  return /\brestart\b[^\n\r]{0,60}\bopenclaw(?:\s+gateway)?\b/i.test(input.combined)
+    || /\bopenclaw\b[^\n\r]{0,80}\bgateway\b[^\n\r]{0,20}\brestart\b/i.test(input.combined);
 }
 
 function detectProtectedFileAccess(text: string, toolName?: string): ProtectedFileAccessResult {
@@ -1250,7 +1402,21 @@ function shouldInstantDenyConcealedInput(concealedIntent: ConcealedIntentDetecti
 export function guardInput(text: string, sessionKey?: string, context?: GuardContext): GuardDecision {
   const verifiedOwner = context?.verifiedOwner === true;
   const globalAllowlistRule = matchGlobalInputAllowlistRule(text);
-  const finalizeInputDecision = (decision: GuardDecision): GuardDecision => decision;
+  const officialLynxGuardianUpdate = globalAllowlistRule?.id === OFFICIAL_LYNX_GUARDIAN_UPDATE_RULE_ID;
+  const finalizeInputDecision = (decision: GuardDecision): GuardDecision => {
+    if (officialLynxGuardianUpdate && !decision.block) {
+      rememberOfficialLynxGuardianUpdateIntent(sessionKey, OFFICIAL_LYNX_GUARDIAN_UPDATE_RULE_ID);
+      return {
+        ...decision,
+        contextHints: {
+          ...decision.contextHints,
+          officialLynxGuardianUpdate: true,
+        },
+      };
+    }
+
+    return decision;
+  };
 
   // === 即时危险通道（early-return，直接 L4）===
 
@@ -1683,15 +1849,18 @@ export function guardToolCall(
   const verifiedOwner = context?.verifiedOwner === true;
   const trustedInternalProtectedRead = context?.trustedInternalProtectedRead === true;
   const trustedManagedLynxCheckToolCall = context?.trustedManagedLynxCheckToolCall === true;
+  const trustedOfficialLynxGuardianUpdateToolCall = context?.trustedOfficialLynxGuardianUpdateToolCall === true
+    || hasActiveOfficialLynxGuardianUpdateIntent(sessionKey);
 
   const toolAction = (params?.action ?? "") as string;
   const note = (params?.note ?? "") as string;
   const raw = (params?.raw ?? "") as string;
   const command = (params?.command ?? "") as string;
   const filePath = (params?.file_path ?? params?.path ?? params?.file ?? "") as string;
+  const cwd = (params?.cwd ?? params?.workdir ?? params?.workingDirectory ?? "") as string;
   const normalizedToolName = toolName.trim().toLowerCase();
   const normalizedToolAction = toolAction.trim().toLowerCase();
-  const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${raw}`;
+  const combined = `${toolName} ${toolAction} ${note} ${command} ${filePath} ${cwd} ${raw}`;
   const protectedAccess = detectProtectedFileAccess(combined, toolName);
   const memorySessionAccess = detectOpenClawMemorySessionArtifactAccess(combined, toolName);
   const credTheft = detectCredentialTheft(combined);
@@ -1719,6 +1888,11 @@ export function guardToolCall(
   if (
     normalizedToolName === "gateway"
     && /(?:^|\.)(?:restart|stop|shutdown|close|kill|down|quit|exit)(?:$|\.)/i.test(normalizedToolAction)
+    && !isTrustedOfficialLynxGuardianUpdateRestartToolCall({
+      trusted: trustedOfficialLynxGuardianUpdateToolCall,
+      toolName: normalizedToolName,
+      combined,
+    })
   ) {
     return finalizeToolDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
   }
@@ -1734,7 +1908,14 @@ export function guardToolCall(
     return finalizeToolDecision(buildInstantDeny("M3:over_agency", "attempt to disable Lynx Guardian"));
   }
 
-  if (detectOpenClawAvailabilityControl(combined)) {
+  if (
+    detectOpenClawAvailabilityControl(combined)
+    && !isTrustedOfficialLynxGuardianUpdateRestartToolCall({
+      trusted: trustedOfficialLynxGuardianUpdateToolCall,
+      toolName: normalizedToolName,
+      combined,
+    })
+  ) {
     return finalizeToolDecision(buildInstantDeny("M3:system_availability", "attempt to restart or stop OpenClaw"));
   }
 
@@ -1742,7 +1923,15 @@ export function guardToolCall(
     return finalizeToolDecision(buildInstantDeny("M2:memory_session_privacy", "attempt to access or modify OpenClaw memory/session artifacts"));
   }
 
-  if (detectPluginIntegrityViolation(combined, toolName)) {
+  if (
+    detectPluginIntegrityViolation(combined, toolName)
+    && !isTrustedOfficialLynxGuardianUpdateToolCall({
+      trusted: trustedOfficialLynxGuardianUpdateToolCall,
+      toolName: normalizedToolName,
+      command,
+      combined,
+    })
+  ) {
     return finalizeToolDecision(buildInstantDeny("M2:plugin_integrity", "attempt to modify Lynx plugin directory"));
   }
 

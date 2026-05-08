@@ -13,6 +13,7 @@ import {
   buildContainerSubprojectPath,
   buildDevSyncPlan,
   buildInstallLocalConsoleRuntimeDepsShellCommand,
+  buildPruneOpenClawRuntimeDepsLocksShellCommand,
   findStalePluginManagedDirectories,
   pickGatewayContainer,
   resolveOpenClawHome,
@@ -346,6 +347,28 @@ function installLocalConsoleRuntimeDeps(plan, { dryRun = false } = {}) {
   ]);
 }
 
+function pruneOpenClawRuntimeDepsLocks(plan, { dryRun = false } = {}) {
+  const shellCommand = buildPruneOpenClawRuntimeDepsLocksShellCommand();
+
+  if (dryRun) {
+    console.log(
+      `[lynx-dev-sync] dry-run stale runtime lock cleanup: docker exec -u 0:0 ${plan.containerName} sh -lc ${shellQuote(shellCommand)}`,
+    );
+    return;
+  }
+
+  console.log("[lynx-dev-sync] pruning stale OpenClaw runtime-deps locks before restart");
+  runCommand("docker", [
+    "exec",
+    "-u",
+    "0:0",
+    plan.containerName,
+    "sh",
+    "-lc",
+    shellCommand,
+  ]);
+}
+
 function restartGateway(containerName) {
   runCommand("docker", ["restart", containerName]);
 }
@@ -433,6 +456,7 @@ async function main() {
     if (options.dryRun) {
       installLocalConsoleRuntimeDeps(plan, { dryRun: true });
       mirrorPluginIntoBundledPath(plan, stagePluginPath, { dryRun: true });
+      pruneOpenClawRuntimeDepsLocks(plan, { dryRun: true });
       console.log("[lynx-dev-sync] dry-run finished");
       return;
     }
@@ -441,6 +465,7 @@ async function main() {
     copyPluginIntoContainer(plan, stagePluginPath);
     mirrorPluginIntoBundledPath(plan, stagePluginPath);
     installLocalConsoleRuntimeDeps(plan);
+    pruneOpenClawRuntimeDepsLocks(plan);
 
     if (options.skipRestart) {
       console.log("[lynx-dev-sync] sync finished without restart (--skip-restart)");
