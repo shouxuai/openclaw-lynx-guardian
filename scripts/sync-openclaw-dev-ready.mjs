@@ -6,6 +6,7 @@ import { resolve } from "path";
 import { setTimeout as delay } from "timers/promises";
 import {
   DEFAULT_GATEWAY_CONTAINER,
+  buildPruneOpenClawRuntimeDepsLocksShellCommand,
   pickGatewayContainer,
 } from "./dev-sync-lib.mjs";
 import {
@@ -311,7 +312,17 @@ function syncCronStore(containerName, paths) {
   );
 }
 
+function pruneOpenClawRuntimeDepsLocks(containerName) {
+  console.log("[lynx-dev-ready] pruning stale OpenClaw runtime-deps locks before restart");
+  runContainerShell(
+    containerName,
+    buildPruneOpenClawRuntimeDepsLocksShellCommand(),
+    { capture: false },
+  );
+}
+
 async function restartGatewayAndWait(containerName, healthTimeoutMs, readyTimeoutMs, pollMs) {
+  pruneOpenClawRuntimeDepsLocks(containerName);
   runCommand("docker", ["restart", containerName], { capture: false });
   return await waitForGatewayReady(containerName, healthTimeoutMs, readyTimeoutMs, pollMs);
 }
