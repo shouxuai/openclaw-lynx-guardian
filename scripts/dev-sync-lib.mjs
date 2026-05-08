@@ -3,20 +3,13 @@ import path from "path";
 export const DEFAULT_GATEWAY_CONTAINER = "openclaw-openclaw-gateway-1";
 export const DEFAULT_PLUGIN_NAME = "openclaw-lynx-guardian";
 export const DEFAULT_CONTAINER_EXTENSIONS_ROOT = "/app/extensions";
-export const DEFAULT_CONTAINER_BUNDLED_EXTENSIONS_ROOT = "/app/dist/extensions";
 export const PLUGIN_MANAGED_RESOURCE_PREFIX = "lynx-guardian-";
 
-const DEFAULT_TOP_LEVEL_STAGE_EXCLUDES = new Set([
+const DEFAULT_STAGE_EXCLUDES = new Set([
   ".git",
   ".worktrees",
   "dist",
-]);
-
-const DEFAULT_ANY_LEVEL_STAGE_EXCLUDES = new Set([
   "node_modules",
-  "vendor",
-  ".vite",
-  "coverage",
   "test-temp",
 ]);
 
@@ -27,34 +20,14 @@ function normalizeRelativePath(relativePath) {
     .replace(/^\/+/, "");
 }
 
-function shellQuote(value) {
-  return `'${String(value ?? "").replace(/'/g, `'\\''`)}'`;
-}
-
 export function shouldStagePath(relativePath) {
   const normalized = normalizeRelativePath(relativePath);
   if (!normalized) {
     return true;
   }
 
-  const segments = normalized
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-  if (segments.length === 0) {
-    return true;
-  }
-
-  if (DEFAULT_TOP_LEVEL_STAGE_EXCLUDES.has(segments[0])) {
-    return false;
-  }
-
-  if (segments[0] === "backend" && segments[1] === "dist") {
-    return false;
-  }
-
-  return !segments.some((segment) => DEFAULT_ANY_LEVEL_STAGE_EXCLUDES.has(segment));
+  const [topLevel] = normalized.split("/");
+  return !DEFAULT_STAGE_EXCLUDES.has(topLevel);
 }
 
 export function findStalePluginManagedDirectories({
@@ -107,7 +80,6 @@ export function buildDevSyncPlan({
   openclawHome,
   containerName = DEFAULT_GATEWAY_CONTAINER,
   containerExtensionsRoot = DEFAULT_CONTAINER_EXTENSIONS_ROOT,
-  containerBundledExtensionsRoot = DEFAULT_CONTAINER_BUNDLED_EXTENSIONS_ROOT,
 } = {}) {
   if (!repoRoot) {
     throw new Error("repoRoot is required.");
@@ -122,60 +94,31 @@ export function buildDevSyncPlan({
     openclawHome,
     containerName,
     containerExtensionsRoot,
-    containerBundledExtensionsRoot,
     containerPluginPath: `${containerExtensionsRoot}/${pluginName}`,
-    containerBundledPluginPath: `${containerBundledExtensionsRoot}/${pluginName}`,
     hostHooksPath: path.join(openclawHome, "hooks"),
     hostSkillsPath: path.join(openclawHome, "skills"),
   };
 }
 
-export function buildContainerSubprojectPath(containerPluginPath, relativeSubprojectPath) {
-  const pluginPath = String(containerPluginPath ?? "").trim().replace(/\/+$/, "");
-  const subprojectPath = normalizeRelativePath(relativeSubprojectPath);
-
-  if (!pluginPath) {
-    throw new Error("containerPluginPath is required.");
-  }
-  if (!subprojectPath) {
-    throw new Error("relativeSubprojectPath is required.");
-  }
-
-  return `${pluginPath}/${subprojectPath}`;
-}
-
-export function buildInstallLocalConsoleRuntimeDepsShellCommand({
-  containerPluginPath,
-} = {}) {
-  const goBackendPath = buildContainerSubprojectPath(containerPluginPath, "server/backend");
-
-  return [
-    "set -eu",
-    `if find ${shellQuote(goBackendPath)} -maxdepth 1 -type f -name 'lynx-server-*' 2>/dev/null | grep -q .; then echo "lynx-server backend present; skip runtime dependency install"; exit 0; fi`,
-    `echo "lynx-server backend missing: ${goBackendPath}/lynx-server-*" >&2`,
-    "exit 1",
-  ].join(" && ");
-}
-
 export function assessGatewayLogs(logText) {
   const text = String(logText ?? "");
-
-  if (text.includes("[lynx-guardian] Plugin loading...")) {
-    return {
-      status: "ready",
-      reason: "Lynx Guardian started from the in-container staged path.",
-    };
-  }
 
   if (/blocked plugin candidate: world-writable path .*openclaw-lynx-guardian/i.test(text)) {
     return {
       status: "blocked",
-      reason: "OpenClaw still treats the plugin path as world-writable; use the in-container staged copy.",
+      reason: "OpenClaw 仍然把插件目录识别为 world-writable，需要改用容器内安全路径。",
+    };
+  }
+
+  if (text.includes("[lynx-guardian] Plugin loading...")) {
+    return {
+      status: "ready",
+      reason: "Lynx Guardian 已经从容器内安全路径开始加载。",
     };
   }
 
   return {
     status: "unknown",
-    reason: "Recent logs do not contain a clear Lynx Guardian startup marker yet.",
+    reason: "最近日志里没有看到明确的 Lynx Guardian 启动标记。",
   };
 }

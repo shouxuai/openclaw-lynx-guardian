@@ -27,17 +27,10 @@ export function extractContainerHealthStatus(healthText) {
   }
 }
 
-const LYNX_PLUGIN_LOADING_PATTERN = /\[lynx-guardian\] Plugin loading\.\.\./;
-const GATEWAY_READY_PATTERNS = [
-  /listening on ws:\/\/\S+/i,
-  /\[lynx-guardian\] Local console gateway routes registered at \/webview and \/lynx/,
-  /\[lynx-guardian\] starting local console backend .*openclaw-lynx-guardian\/server\/backend\/lynx-server-/,
-];
-
 export function hasGatewayReadyMarkers(logText) {
   const text = String(logText ?? "");
-  return LYNX_PLUGIN_LOADING_PATTERN.test(text)
-    && GATEWAY_READY_PATTERNS.some((pattern) => pattern.test(text));
+  return /\[lynx-guardian\] Plugin loading\.\.\./.test(text)
+    && /listening on ws:\/\/\S+/i.test(text);
 }
 
 export function collectGatewayReadyMarkerLines(logText) {
@@ -46,8 +39,7 @@ export function collectGatewayReadyMarkerLines(logText) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .filter((line) => LYNX_PLUGIN_LOADING_PATTERN.test(line)
-      || GATEWAY_READY_PATTERNS.some((pattern) => pattern.test(line)));
+    .filter((line) => /\[lynx-guardian\] Plugin loading\.\.\./.test(line) || /listening on ws:\/\/\S+/i.test(line));
 }
 
 export function chooseReadyLogText(sinceLogText, tailLogText) {
@@ -63,24 +55,6 @@ export function buildReadySyncSuccessMessage({ containerName, startedAt }) {
   const resolvedContainer = String(containerName ?? "").trim() || DEFAULT_GATEWAY_CONTAINER;
   const resolvedStartedAt = String(startedAt ?? "").trim() || "unknown-start-time";
   return `[lynx-dev-ready] SUCCESS: ${resolvedContainer} restarted and ready at ${resolvedStartedAt}`;
-}
-
-export function buildPackageLocalConsoleServerArgs({
-  packageScriptPath,
-  repoRoot,
-} = {}) {
-  if (!packageScriptPath) {
-    throw new Error("packageScriptPath is required.");
-  }
-  if (!repoRoot) {
-    throw new Error("repoRoot is required.");
-  }
-
-  return [
-    packageScriptPath,
-    "--repo-root",
-    repoRoot,
-  ];
 }
 
 export function resolveCronStoreSyncPaths({

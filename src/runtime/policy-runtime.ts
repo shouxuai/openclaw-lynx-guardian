@@ -1,182 +1,55 @@
-import type { WorkflowAuthorization } from "../approval/approval-bridge.js";
-import type { RiskAssessment, RiskLevel } from "../guard/safety-guard.js";
+import { decidePolicy } from "../guard/policy/policy-engine.js";
+import type { GuardEvidenceBundle } from "../guard/policy/evidence-bundle.js";
+import { scoreEvidence } from "../guard/policy/evidence-scorer.js";
+import type { EvidenceScoreResult } from "../guard/policy/evidence-scorer.js";
+import { resolveRiskLevel } from "../guard/policy/policy-engine.js";
+import type { PolicyDecisionKind, ResolvedRiskLevel, RiskLevelLabel } from "../guard/policy/policy-types.js";
+import type { RiskAssessment } from "../guard/safety-guard.js";
+import { toLegacyRiskLevel } from "./api-risk-adapter.js";
+import type { WorkflowAuthorization } from "./workflow-authorization-store.js";
 
+const DEFAULT_CONFIRMATION_PHRASE = "确认放行本次操作";
 const DEFAULT_APPROVABLE_LEVELS = ["L2", "L3"] as const;
-const APPROVABLE_RISK_LEVELS = new Set<RiskLevel>(["L2", "L3"]);
 
-export type PolicyDecisionKind = "allow" | "warn" | "confirm" | "workflow_auth" | "block" | "deny";
-export type RiskLevelLabel = RiskLevel;
+const POLICY_DECISION_PRIORITY: Record<PolicyDecisionKind, number> = {
+  allow: 0,
+  warn: 1,
+  confirm: 2,
+  workflow_auth: 2,
+  block: 3,
+  deny: 4,
+};
 
-export interface PolicyRuntimeEvaluation {
-  riskLevelLabel: RiskLevelLabel;
-  riskLevelValue: 0 | 1 | 2 | 3 | 4;
+export interface PolicyRuntimeEvaluation extends ResolvedRiskLevel {
   decision: {
     kind: PolicyDecisionKind;
   };
   legacyRiskLevel: 0 | 1 | 2 | 3 | 4;
 }
 
+export interface EvidenceBundleRuntimeEvaluation extends PolicyRuntimeEvaluation {
+  score: EvidenceScoreResult;
+  compatibilityAssessment: CompatibilityRiskAssessment;
+}
+
 export interface GuardPolicyResolution {
   legacyEvaluation: PolicyRuntimeEvaluation;
+  bundleEvaluation?: EvidenceBundleRuntimeEvaluation;
   finalDecision: {
     kind: PolicyDecisionKind;
   };
   effectiveAssessment: RiskAssessment;
 }
 
-export interface GuardPolicyTrace {
-  stage: string;
-  shouldWarn: boolean;
-  raw: {
-    level: RiskAssessment["level"];
-    score: number;
-    modules: string[];
-    action: RiskAssessment["action"];
-    block: boolean;
-    description: string;
-  };
-  legacy: {
-    riskLevel: RiskLevelLabel;
-    decision: PolicyDecisionKind;
-    riskValue: 0 | 1 | 2 | 3 | 4;
-  };
-  final: {
-    decision: PolicyDecisionKind;
-    level: RiskAssessment["level"];
-    score: number;
-    modules: string[];
-    action: RiskAssessment["action"];
-    description: string;
-  };
-}
-
-export interface RiskPolicyConfig {
-  absoluteRejectScore?: number;
-  confirmationPhrase?: string;
-  approvableRiskLevels?: RiskLevel[];
-  allowOneTimeOverrideLevels?: RiskLevel[];
-  toolApprovalTimeoutSeconds?: number;
-  grantWindowSeconds?: number;
-  workflowAuthWindowSeconds?: number;
-  moduleOverrides?: {
-    M2?: {
-      protectedFileAccess?: { allowOneTimeOverride?: boolean };
-    };
-    M3?: {
-      allowOneTimeOverride?: boolean;
-    };
-  };
-}
-
-export interface RiskPolicyOverrideResult {
-  allowed: boolean;
-  confirmationPhrase?: string;
-  reason?: RiskPolicyOverrideReason;
-}
-
-export type RiskPolicyOverrideReason =
-  | "credential_theft"
-  | "level_not_allowed"
-  | "module_not_allowed";
-
-export interface RiskPolicyResult {
-  finalAction: RiskAssessment["action"];
-  override: RiskPolicyOverrideResult;
-}
-
-const MODULE_OVERRIDE_ELIGIBLE: Record<string, boolean> = {
-  "M0:identity_verification": true,
-  "M2:memory_session_privacy": false,
-  "M2:protected_file_access": true,
-  "M2:runtime_config_integrity": false,
-  "M2:plugin_integrity": false,
-  "M3:over_agency": false,
-  "M3:remote_access_control": false,
-  "M3:system_availability": false,
-  "M1:prompt_injection": false,
-  "M2:system_prompt_extraction": false,
-  "M2:system_prompt_leak": false,
-  "M5:credential_theft": false,
-  "M6:malicious_code": false,
-  "fatal_triangle": false,
-};
-
-function isModuleOverridable(mod: string, config: RiskPolicyConfig): boolean {
-  const eligible = MODULE_OVERRIDE_ELIGIBLE[mod];
-  if (eligible === undefined || eligible === false) return false;
-  if (mod.startsWith("M3:")) {
-    return config.moduleOverrides?.M3?.allowOneTimeOverride === true;
-  }
-  if (mod === "M2:protected_file_access") {
-    const m2cfg = config.moduleOverrides?.M2?.protectedFileAccess;
-    return m2cfg === undefined || m2cfg.allowOneTimeOverride !== false;
-  }
-  return true;
-}
-
-function areAllModulesOverridable(modules: string[], config: RiskPolicyConfig): boolean {
-  if (modules.length === 0) return false;
-  return modules.every((mod) => isModuleOverridable(mod, config));
-}
-
-export function resolveRiskPolicy(
-  assessment: RiskAssessment,
-  config: RiskPolicyConfig = {},
-): RiskPolicyResult {
-  let finalAction = assessment.action;
-  let overrideAllowed = false;
-  let confirmationPhrase: string | undefined;
-  let reason: RiskPolicyOverrideReason | undefined;
-
-  if (!areAllModulesOverridable(assessment.modules, config)) {
-    finalAction = "deny";
-    reason = assessment.modules.some((m) => m.startsWith("M5:"))
-      ? "credential_theft"
-      : "module_not_allowed";
-  } else if (assessment.level === "L4") {
-    finalAction = "deny";
-    reason = "level_not_allowed";
-  } else {
-    const allowedLevels = normalizeApprovableRiskLevels(
-      config.approvableRiskLevels ?? config.allowOneTimeOverrideLevels ?? [],
-    );
-    overrideAllowed = allowedLevels.includes(assessment.level);
-    if (!overrideAllowed) {
-      reason = "level_not_allowed";
-    } else if (config.confirmationPhrase) {
-      confirmationPhrase = config.confirmationPhrase;
-    }
-  }
-
-  return {
-    finalAction,
-    override: { allowed: overrideAllowed, confirmationPhrase, reason },
-  };
-}
-
-function normalizeApprovableRiskLevels(value: unknown): RiskLevel[] {
-  const levels = Array.isArray(value) ? value : [];
-  return levels.filter((level): level is RiskLevel =>
-    typeof level === "string" && APPROVABLE_RISK_LEVELS.has(level as RiskLevel),
-  );
-}
-
-interface GuardEvidenceBundleLike {
-  modules?: string[];
-  summary?: string;
-  evidenceItems?: unknown[];
-}
-
-function normalizeConfirmationPhrase(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+export interface CompatibilityRiskAssessment extends RiskAssessment {
+  policyDecisionKind: PolicyDecisionKind;
 }
 
 export function normalizePolicyConfig(policy: any = {}) {
-  const approvableRiskLevels = normalizeApprovableRiskLevels(
+  const approvableRiskLevels =
     policy.approvableRiskLevels
     ?? policy.allowOneTimeOverrideLevels
-    ?? [...DEFAULT_APPROVABLE_LEVELS],
-  );
+    ?? [...DEFAULT_APPROVABLE_LEVELS];
   const toolApprovalTimeoutSeconds = Math.max(
     30,
     Number(policy.toolApprovalTimeoutSeconds ?? 120),
@@ -189,11 +62,10 @@ export function normalizePolicyConfig(policy: any = {}) {
     ),
   );
 
-  const confirmationPhrase = normalizeConfirmationPhrase(policy.confirmationPhrase);
   return {
     absoluteRejectScore: policy.absoluteRejectScore ?? 10,
-    confirmationPhrase,
-    deprecatedConfirmationPhrase: confirmationPhrase,
+    confirmationPhrase: policy.confirmationPhrase ?? DEFAULT_CONFIRMATION_PHRASE,
+    deprecatedConfirmationPhrase: policy.confirmationPhrase ?? DEFAULT_CONFIRMATION_PHRASE,
     approvableRiskLevels,
     allowOneTimeOverrideLevels: approvableRiskLevels,
     moduleOverrides: {
@@ -239,32 +111,123 @@ function mapAssessmentActionToPolicyKind(
   }
 }
 
+function pickStricterPolicyKind(
+  left: PolicyDecisionKind,
+  right: PolicyDecisionKind,
+): PolicyDecisionKind {
+  return POLICY_DECISION_PRIORITY[left] >= POLICY_DECISION_PRIORITY[right]
+    ? left
+    : right;
+}
+
+function pickFinalPolicyKind(
+  legacyKind: PolicyDecisionKind,
+  bundleKind: PolicyDecisionKind,
+): PolicyDecisionKind {
+  const legacyPriority = POLICY_DECISION_PRIORITY[legacyKind];
+  const bundlePriority = POLICY_DECISION_PRIORITY[bundleKind];
+
+  if (bundlePriority > legacyPriority) {
+    return bundleKind;
+  }
+
+  if (bundlePriority < legacyPriority) {
+    return legacyKind;
+  }
+
+  if (legacyKind === "confirm" && bundleKind === "workflow_auth") {
+    return bundleKind;
+  }
+
+  return legacyKind;
+}
+
 export function evaluateRiskAssessment(
   assessment: RiskAssessment,
-  _options?: {
+  options?: {
     workflowCandidate?: boolean;
     workflowAuthorized?: boolean;
     isAuditWhitelisted?: boolean;
     auditBoundaryExceeded?: boolean;
   },
 ): PolicyRuntimeEvaluation {
-  const riskLevelLabel = assessment.level;
+  const riskLevelLabel = assessment.level as RiskLevelLabel;
   const riskLevelValue = riskLevelValueFromLabel(riskLevelLabel);
-  const decisionKind = mapAssessmentActionToPolicyKind(assessment.action);
+  const policyDecision = decidePolicy({
+    riskLevelLabel,
+    riskLevelValue,
+    workflowCandidate: options?.workflowCandidate,
+    workflowAuthorized: options?.workflowAuthorized,
+    isAuditWhitelisted: options?.isAuditWhitelisted ?? false,
+    auditBoundaryExceeded: options?.auditBoundaryExceeded,
+  });
+  const bridgedDecisionKind = pickStricterPolicyKind(
+    policyDecision.kind,
+    mapAssessmentActionToPolicyKind(assessment.action),
+  );
 
   return {
     riskLevelLabel,
     riskLevelValue,
     decision: {
-      kind: decisionKind,
+      kind: bridgedDecisionKind,
     },
-    legacyRiskLevel: riskLevelValue,
+    legacyRiskLevel: toLegacyRiskLevel(riskLevelValue),
+  };
+}
+
+function mapPolicyKindToAssessmentAction(
+  policyKind: PolicyDecisionKind,
+): RiskAssessment["action"] {
+  switch (policyKind) {
+    case "allow":
+      return "allow";
+    case "deny":
+      return "deny";
+    case "block":
+      return "block";
+    default:
+      return "warn";
+  }
+}
+
+export function evaluateEvidenceBundle(
+  bundle: GuardEvidenceBundle,
+): EvidenceBundleRuntimeEvaluation {
+  const score = scoreEvidence(bundle.evidenceItems);
+  const resolvedRisk = resolveRiskLevel({
+    summaryHeat: score.summaryHeat,
+    dimensionScores: score.dimensionScores,
+    chainProgress: bundle.chainProgress,
+    isAuditWhitelisted: bundle.isAuditWhitelisted ?? false,
+  });
+  const decision = decidePolicy({
+    ...resolvedRisk,
+    workflowCandidate: bundle.workflowCandidate,
+    workflowAuthorized: bundle.workflowAuthorized,
+    isAuditWhitelisted: bundle.isAuditWhitelisted ?? false,
+    auditBoundaryExceeded: bundle.auditBoundaryExceeded,
+  });
+
+  return {
+    ...resolvedRisk,
+    decision,
+    legacyRiskLevel: toLegacyRiskLevel(resolvedRisk.riskLevelValue),
+    score,
+    compatibilityAssessment: {
+      level: resolvedRisk.riskLevelLabel,
+      score: score.compatibilityScore,
+      modules: bundle.modules,
+      description: bundle.summary,
+      action: mapPolicyKindToAssessmentAction(decision.kind),
+      policyDecisionKind: decision.kind,
+    },
   };
 }
 
 export function evaluateGuardDecisionPolicy(input: {
   assessment: RiskAssessment;
-  evidenceBundle?: GuardEvidenceBundleLike;
+  evidenceBundle?: GuardEvidenceBundle;
   options?: {
     workflowCandidate?: boolean;
     workflowAuthorized?: boolean;
@@ -274,10 +237,38 @@ export function evaluateGuardDecisionPolicy(input: {
 }): GuardPolicyResolution {
   const legacyEvaluation = evaluateRiskAssessment(input.assessment, input.options);
 
+  if (!input.evidenceBundle) {
+    return {
+      legacyEvaluation,
+      finalDecision: legacyEvaluation.decision,
+      effectiveAssessment: input.assessment,
+    };
+  }
+
+  const bundleEvaluation = evaluateEvidenceBundle({
+    ...input.evidenceBundle,
+    workflowCandidate: input.evidenceBundle.workflowCandidate ?? input.options?.workflowCandidate,
+    workflowAuthorized: input.evidenceBundle.workflowAuthorized ?? input.options?.workflowAuthorized,
+    isAuditWhitelisted: input.evidenceBundle.isAuditWhitelisted ?? input.options?.isAuditWhitelisted,
+    auditBoundaryExceeded:
+      input.evidenceBundle.auditBoundaryExceeded ?? input.options?.auditBoundaryExceeded,
+  });
+  const finalKind = pickFinalPolicyKind(legacyEvaluation.decision.kind, bundleEvaluation.decision.kind);
+  const bundleIsSelected = finalKind === bundleEvaluation.decision.kind
+    && (
+      finalKind !== legacyEvaluation.decision.kind
+      || bundleEvaluation.decision.kind === "workflow_auth"
+    );
+
   return {
     legacyEvaluation,
-    finalDecision: legacyEvaluation.decision,
-    effectiveAssessment: input.assessment,
+    bundleEvaluation,
+    finalDecision: {
+      kind: finalKind,
+    },
+    effectiveAssessment: bundleIsSelected
+      ? bundleEvaluation.compatibilityAssessment
+      : input.assessment,
   };
 }
 
@@ -286,49 +277,6 @@ export function buildPolicyRecordContent(
   content: string,
 ): string {
   return `[policy:${evaluation.riskLevelLabel}/${evaluation.decision.kind}] ${content}`;
-}
-
-function assessmentBlocks(assessment: RiskAssessment): boolean {
-  return assessment.action === "block" || assessment.action === "deny";
-}
-
-export function buildGuardPolicyTrace(input: {
-  stage: string;
-  assessment: RiskAssessment;
-  resolution: GuardPolicyResolution;
-}): GuardPolicyTrace {
-  const final = input.resolution.effectiveAssessment;
-  const shouldWarn =
-    assessmentBlocks(input.assessment)
-    || input.assessment.modules.length > 0
-    || input.resolution.finalDecision.kind !== "allow"
-    || final.modules.length > 0;
-
-  return {
-    stage: input.stage,
-    shouldWarn,
-    raw: {
-      level: input.assessment.level,
-      score: input.assessment.score,
-      modules: input.assessment.modules,
-      action: input.assessment.action,
-      block: assessmentBlocks(input.assessment),
-      description: input.assessment.description,
-    },
-    legacy: {
-      riskLevel: input.resolution.legacyEvaluation.riskLevelLabel,
-      decision: input.resolution.legacyEvaluation.decision.kind,
-      riskValue: input.resolution.legacyEvaluation.riskLevelValue,
-    },
-    final: {
-      decision: input.resolution.finalDecision.kind,
-      level: final.level,
-      score: final.score,
-      modules: final.modules,
-      action: final.action,
-      description: final.description,
-    },
-  };
 }
 
 export function buildApiRiskAssessment(
@@ -347,10 +295,7 @@ export function buildApiRiskAssessment(
   return { level: "L0", score: 0, modules: [], description, action: "allow" };
 }
 
-export function buildOverridePrompt(message: string, confirmationPhrase?: string): string {
-  if (!confirmationPhrase) {
-    return message;
-  }
+export function buildOverridePrompt(message: string, confirmationPhrase: string): string {
   return `${message} 如确认放行本次工作流中的此类操作，请回复"${confirmationPhrase}"。`;
 }
 
@@ -374,7 +319,7 @@ export function formatWorkflowAuthSummary(auth: WorkflowAuthorization): string {
   const moduleNames = auth.allowedModules.map(moduleDisplayName).join("、");
   const scopeDesc = auth.scopeAll ? "全模块（时间窗口）" : moduleNames;
   const lines: string[] = [
-    "📘 **[Lynx Guardian] 工作流授权已回收**",
+    "📣 **[Lynx Guardian] 工作流授权已回收**",
     "",
     `授权范围：${scopeDesc}`,
     `工作流时长：${durationSec}s`,

@@ -2,7 +2,7 @@ import {
   deliverLynxReport,
   type DeliverLynxReportOptions,
   type LynxReportDeliveryResult,
-} from "../delivery/message-delivery.js";
+} from "./lynx-message-delivery.js";
 
 export type ManagedLynxAuditAction =
   | "authorize_run"

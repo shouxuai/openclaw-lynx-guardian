@@ -1,6 +1,10 @@
 import { runDiscoveryAndNotify } from "./discovery-hook-utils.js";
-import { renderDetailedLynxAuditReport } from "../lynx-check/report-template.js";
-import { runMaliciousScriptScan, runSecurityAudit } from "../lynx-check/report-producers.js";
+import { renderDetailedLynxAuditReport } from "./lynx-check-report-template.js";
+import { runMaliciousScriptScan, runSecurityAudit } from "../runtime/security-audit-runner.js";
+import {
+  checkPublicAccessWeighted,
+  isRemoteAvailable,
+} from "../runtime/remote-weighting-service.js";
 import { verifyAllInstalledSkills } from "../skills/skill-guard.js";
 
 type Rating = "高危" | "中高危" | "中危" | "低危";
@@ -216,7 +220,16 @@ export async function buildManualLynxCheckReport(options: {
     discoveryConfig,
     discoveryRuntimePath,
   } = options;
-  const nextPublicAccessResult = publicAccessResult;
+
+  let nextPublicAccessResult = publicAccessResult;
+  if (!nextPublicAccessResult && ipInfo?.type === "next_check") {
+    const publicAccessCheck = await checkPublicAccessWeighted(userId, ipInfo.ip, ipInfo.port);
+    if (isRemoteAvailable(publicAccessCheck)) {
+      nextPublicAccessResult = publicAccessCheck.value;
+    } else {
+      log.warn(`[lynx-guardian] Manual public access weighting unavailable: ${publicAccessCheck.errorMessage}`);
+    }
+  }
 
   const discoverySummary = await runDiscoveryAndNotify(log, null, discoveryConfig, discoveryRuntimePath);
   const auditReport = await runSecurityAudit();

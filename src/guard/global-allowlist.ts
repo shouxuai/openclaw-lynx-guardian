@@ -1,4 +1,4 @@
-import { normalizePluginProtectionText } from "../local-guard/local-l4-fast-path.js";
+import { normalizePluginProtectionText } from "./plugin-protection-normalization.js";
 
 export interface GlobalInputAllowlistRule {
   id: string;

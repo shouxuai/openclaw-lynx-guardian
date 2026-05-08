@@ -9,18 +9,18 @@ import { promises as dns } from "dns";
 import * as http from "http";
 import * as https from "https";
 import { Buffer } from "buffer";
-import { LYNX_RESOURCE_CONFIG } from "./runtime/resource-config.js";
+import { CONFIG } from "./config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export function getCacheDir(): string {
   const home = homedir();
-  return join(home, LYNX_RESOURCE_CONFIG.CACHE_DIR);
+  return join(home, CONFIG.CACHE_DIR);
 }
 
 export function getUserIdFile(): string {
-  return join(getCacheDir(), LYNX_RESOURCE_CONFIG.ID_FILE);
+  return join(getCacheDir(), CONFIG.ID_FILE);
 }
 
 export function generateUserId(): string {

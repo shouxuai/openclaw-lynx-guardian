@@ -1,20 +1,13 @@
 {
   "name": "@shouxuai/openclaw-lynx-guardian",
-  "version": "1.5.0",
+  "version": "1.3.5",
   "private": false,
-  "description": "Lynx Guardian for OpenClaw, providing local audit logging and safety guardrails for agent workflows.",
+  "description": "Lynx – known for its keen vision, symbolizing \"high-resolution perception\" of risks, multidimensionally identifying threats to intelligent agents, and reshaping the security boundaries of agents.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "vitest",
-    "build": "node scripts/build.js",
-    "build:lynx-server": "node scripts/build-local-console.mjs",
-    "package:lynx-server": "node scripts/package-local-console-server.mjs",
-    "dev:lynx-server": "node scripts/start-local-console-dev.mjs",
-    "build:local-console": "npm run build:lynx-server",
-    "package:local-console-server": "npm run package:lynx-server",
-    "dev:local-console": "npm run dev:lynx-server",
-    "verify:local-console": "node scripts/verify-local-console.mjs"
+    "build": "node scripts/build.js"
   },
   "main": "index.ts",
   "types": "index.d.ts",
@@ -31,5 +24,9 @@
     "extensions": [
       "./index.ts"
     ]
+  },
+  "dependencies": {
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7"
   }
 }

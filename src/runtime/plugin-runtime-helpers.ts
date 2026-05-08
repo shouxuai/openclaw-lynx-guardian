@@ -1,49 +1,10 @@
-import { homedir, platform as osPlatform } from "os";
-import { normalize, posix, resolve, win32 } from "path";
+import { homedir } from "os";
+import { normalize, resolve } from "path";
 import type { GuardContext } from "../guard/safety-guard.js";
-
-export type RuntimePlatform =
-  | "windows-host"
-  | "mac-host"
-  | "linux-host"
-  | "docker-runtime"
-  | "unknown";
-
-export interface EnvironmentProfile {
-  platform: RuntimePlatform;
-  pluginSourceRoot: string;
-  pluginRuntimeRoot: string;
-  openclawHome: string;
-  workspaceMountRoot: string;
-  stateDir: string;
-  sessionStoreRoot: string;
-}
-
-type PathFlavor = "win32" | "posix";
-
-function detectPathFlavor(...candidates: Array<string | undefined>): PathFlavor {
-  for (const candidate of candidates) {
-    const value = normalizeString(candidate);
-    if (!value) {
-      continue;
-    }
-
-    if (/^[a-zA-Z]:[\\/]/.test(value) || value.includes("\\")) {
-      return "win32";
-    }
-  }
-
-  return "posix";
-}
-
-function getPathApi(flavor: PathFlavor) {
-  return flavor === "win32" ? win32 : posix;
-}
-
-function normalizeAbsolute(flavor: PathFlavor, value: string): string {
-  const pathApi = getPathApi(flavor);
-  return pathApi.normalize(pathApi.resolve(value));
-}
+import {
+  buildEnvironmentProfile,
+  type EnvironmentProfile,
+} from "../guard/policy/environment-profile.js";
 
 export function canonicalizePath(raw: string): string {
   if (typeof raw !== "string" || raw.length === 0) {
@@ -81,46 +42,10 @@ export function resolveRuntimeHomeDir(): string {
 }
 
 export function resolveRuntimeEnvironmentProfile(cwd: string): EnvironmentProfile {
-  const envHome = normalizeString(process.env.HOME) || normalizeString(process.env.USERPROFILE) || homedir();
-  const rawStateDir = normalizeString(process.env.OPENCLAW_STATE_DIR);
-  const rawWorkspaceDir = normalizeString(process.env.OPENCLAW_WORKSPACE_DIR);
-  const flavor = detectPathFlavor(cwd, rawStateDir, rawWorkspaceDir, envHome);
-  const pathApi = getPathApi(flavor);
-
-  const pluginRuntimeRoot = normalizeAbsolute(flavor, cwd);
-  const pluginSourceRoot = normalizeAbsolute(flavor, cwd);
-  const homeRoot = normalizeAbsolute(flavor, envHome);
-  const openclawHome = normalizeAbsolute(flavor, pathApi.join(homeRoot, ".openclaw"));
-
-  let runtimePlatform: RuntimePlatform = "unknown";
-  if (pluginRuntimeRoot.startsWith("/app/")) {
-    runtimePlatform = "docker-runtime";
-  } else if (flavor === "win32" || osPlatform() === "win32") {
-    runtimePlatform = "windows-host";
-  } else if (osPlatform() === "darwin") {
-    runtimePlatform = "mac-host";
-  } else if (osPlatform() === "linux") {
-    runtimePlatform = "linux-host";
-  }
-
-  const stateDir = rawStateDir
-    ? normalizeAbsolute(flavor, rawStateDir)
-    : openclawHome;
-  const workspaceMountRoot = runtimePlatform === "docker-runtime"
-    ? normalizeAbsolute(flavor, pathApi.join(openclawHome, "workspace"))
-    : rawWorkspaceDir
-      ? normalizeAbsolute(flavor, rawWorkspaceDir)
-      : normalizeAbsolute(flavor, pathApi.join(openclawHome, "workspace"));
-
-  return {
-    platform: runtimePlatform,
-    pluginSourceRoot,
-    pluginRuntimeRoot,
-    openclawHome,
-    workspaceMountRoot,
-    stateDir,
-    sessionStoreRoot: normalizeAbsolute(flavor, pathApi.join(stateDir, "agents", "main", "sessions")),
-  };
+  return buildEnvironmentProfile({
+    cwd,
+    pluginSourceRoot: cwd,
+  });
 }
 
 const TRUSTED_INTERNAL_PROTECTED_READ_PATTERNS = [

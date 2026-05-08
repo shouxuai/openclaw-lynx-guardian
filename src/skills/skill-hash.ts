@@ -8,14 +8,12 @@ import { createHash } from "crypto";
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
 
-export const SKILL_HASH_ALGORITHM = "sha256";
-
 /**
  * Compute SHA-256 hash of a single file.
  */
 export function computeFileHash(filePath: string): string {
   const content = readFileSync(filePath);
-  return createHash(SKILL_HASH_ALGORITHM).update(content).digest("hex");
+  return createHash("sha256").update(content).digest("hex");
 }
 
 /**
@@ -48,7 +46,7 @@ function collectFiles(dirPath: string, basePath: string): string[] {
  */
 export function computeSkillHash(skillPath: string): string {
   const relativePaths = collectFiles(skillPath, skillPath);
-  const hash = createHash(SKILL_HASH_ALGORITHM);
+  const hash = createHash("sha256");
 
   for (const relPath of relativePaths) {
     const fullPath = join(skillPath, relPath);
