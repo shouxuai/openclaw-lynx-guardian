@@ -7,6 +7,7 @@ import type {
 import type { LynxHookRuntimeContext } from "./setup.js";
 import * as messageDelivery from "../delivery/message-delivery.js";
 import * as safetyGuard from "../guard/safety-guard.js";
+import { stripToolUseAssistantPreamble } from "../runtime/tool-use-assistant-persistence.js";
 
 export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRuntimeContext): void {
   const {
@@ -606,7 +607,8 @@ export function registerOutputHooks(api: OpenClawPluginApi, runtime: LynxHookRun
         return;
       }
 
-      let nextMessage = decorateAssistantMessage(originalMessage);
+      let nextMessage = stripToolUseAssistantPreamble(originalMessage);
+      nextMessage = decorateAssistantMessage(nextMessage);
       if (nextMessage.role === "assistant") {
         const currentText = extractMessageText(nextMessage);
         const nextText = appendLocalConsoleWebviewFootnoteForL4Reply(currentText);
