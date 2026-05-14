@@ -106,7 +106,8 @@ test-results/
 *.temp
 
 # Repo-local development material not packaged as extension source
-/test/
+/test/*
+!/test/*.test.ts
 /test-temp
 /tests/
 .worktrees/

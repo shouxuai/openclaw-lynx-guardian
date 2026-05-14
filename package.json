@@ -1,6 +1,6 @@
 {
   "name": "@shouxuai/openclaw-lynx-guardian",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": false,
   "description": "Lynx Guardian for OpenClaw, providing local audit logging and safety guardrails for agent workflows.",
   "license": "MIT",
